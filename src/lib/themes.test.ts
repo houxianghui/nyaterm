@@ -25,14 +25,14 @@ describe("macOS default theme", () => {
 
   it("defines full 16-color terminal palettes", () => {
     for (const id of ["github-dark", "github-light"]) {
-      const t = themes[id].colors.terminal;
+      const t = themes[id]!.colors.terminal;
       for (const key of [
         "background", "foreground", "cursor", "selectionBackground",
         "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
         "brightBlack", "brightRed", "brightGreen", "brightYellow",
         "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
       ]) {
-        expect(t[key], `${id}.${key}`).toBeTypeOf("string");
+        expect(t[key as keyof typeof t], `${id}.${key}`).toBeTypeOf("string");
       }
     }
   });
