@@ -24,9 +24,11 @@
 
 ## 设计目标
 
-### 1. 颜色：macOS 中性灰调默认主题（深色）
+### 1. 颜色：macOS 中性灰调默认主题（深色 + 浅色）
 
 把默认主题改为中性灰蓝调，参照 Apple 系统界面（窗口 `#1d1d1f`、侧栏/面板 `#2a2a2e`、悬停 `#3a3a3e` 一类）。调整目标 token：
+
+**深色（默认）**
 
 | Token | 目标值 | 说明 |
 |-------|--------|------|
@@ -44,9 +46,27 @@
 | `primaryHover` | `#0071e3` | 蓝色系悬停 |
 | `onPrimary` | `#ffffff` | 主色之上文字 |
 
-其余 `danger/success/warning/link/focusRing/scrollThumb/accent` 与上面的新中性灰保持协调（`focusRing` 用 `#0a84ff`、`scrollThumb` 用 `#3a3a40`）。`shadow` 颜色改为柔和偏蓝的黑（见阴影一节）。
+**浅色（同步）**
 
-终端 16 ANSI 调色板同步改为 macOS 终端柔和配色（保持可读性，避免高饱和荧光色）。
+| Token | 目标值 | 说明 |
+|-------|--------|------|
+| `bg` | `#f5f5f7` | 窗口底色 |
+| `bgPanel` | `#ffffff` | 面板/卡片 |
+| `bgTerminal` | `#ffffff` | 终端底色 |
+| `bgHover` | `#e8e8ed` | 悬停 |
+| `bgInput` | `#ffffff` | 输入框 |
+| `bgSectionHeader` | `#f2f2f7` | 分区头 |
+| `border` | `#d2d2d7` | 描边 |
+| `text` | `#1d1d1f` | 正文（近黑） |
+| `textMuted` | `#6e6e73` | 次要 |
+| `textDimmed` | `#98989d` | 更弱 |
+| `primary` | `#0a84ff` | macOS 系统蓝 |
+| `primaryHover` | `#0071e3` | 蓝色系悬停 |
+| `onPrimary` | `#ffffff` | 主色之上文字 |
+
+其余 `danger/success/warning/link/focusRing/scrollThumb/accent` 与上面的新中性灰保持协调（`focusRing` 用 `#0a84ff`、`scrollThumb` 深 `#3a3a40` / 浅 `#d2d2d7`）。`shadow` 颜色改为柔和偏蓝的黑（见阴影一节）。
+
+终端 16 ANSI 调色板同步 mac 化：深/浅两套终端配色都改为 macOS 终端柔和配色（低饱和、可读性优先，避免荧光高饱和色）。
 
 ### 2. 圆角：更大、更连贯
 
@@ -74,7 +94,7 @@
 ## 涉及文件
 
 ### 核心改动
-- `src/lib/themes.ts` — 新增「macOS Dark」主题对象（或原地替换 `githubDark` 的 defaults），对齐默认主题；更新 `DEFAULT_THEME_ID` 与 `themeList` 排序（把 macOS 主题置顶）。
+- `src/lib/themes.ts` — 新增「macOS Dark」+「macOS Light」主题（或原地替换 `githubDark` / `githubLight` 的易错默认值，避免产生冗余主题条目）；对齐深浅两套 UI token 与终端调色盘；更新 `DEFAULT_THEME_ID` 与 `themeList` 排序（macOS 主题置顶）。
 - `src/index.css` — `@theme inline` 块的 `--radius` 标尺，`.active-tab` 改用圆角（个头小的物料）。按需加少量 macOS 风格阴影工具类。
 - `src/components/ui/*.tsx` — `dialog.tsx`/`popover.tsx`/`dropdown-menu.tsx`/`context-menu.tsx` 的阴影与动效类微调。
 - `src/components/dialog/theme/ThemeDesignerDialog.tsx` — 若色板相关标签需要调整（核对项）。
@@ -84,11 +104,14 @@
 
 ## 拆分与顺序（供后续实现计划）
 
-1. 先加 macOS 主题色板 token（`themes.ts`）→ 默认替换，核验整体配色
+1. 先加 macOS 深浅两套色板 token + 终端调色盘（`themes.ts`）→ 默认替换，核验整体配色
 2. 再调圆角标尺 + 关键 ui 组件阴影/动效
 3. 逐屏核验 + 微调
 4. 提交
 
 ## 尚未拍板 / 待实现时确认
 
-- 浅色主题（`github-light` 等）是否同步改 mac 浅色中性灰？本 spec 默认**不同步**，仅把深色默认主题官改成 macOS 中性灰调，浅色留待后续。
+（已落定，无遗留开放项）
+
+- 浅色主题（`github-light` 等）同步改 mac 浅色中性灰：深色默认 + 浅色都官改为 macOS 中性灰调。
+- 终端 16 ANSI 调色板同步 mac 化：深/浅两套终端配色都对齐 macOS 柔和观感。
