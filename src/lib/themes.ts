@@ -65,12 +65,12 @@ export interface Theme {
   colors: ThemeColors;
 }
 
-// ── GitHub Dark ────────────────────────────────────────────────────────────
+// ── macOS Dark ─────────────────────────────────────────────────────────────
 const githubDark = {
   id: "github-dark",
   name: "macOS Dark",
   label: "macOS",
-  swatch: "#0d1117",
+  swatch: "#1d1d1f",
   colors: {
     bg: "#1d1d1f",
     bgPanel: "#2a2a2e",
@@ -749,7 +749,7 @@ const gruvboxDark = {
   },
 } as const satisfies Theme;
 
-// ── GitHub Light ──────────────────────────────────────────────────────────
+// ── macOS Light ────────────────────────────────────────────────────────────
 const githubLight = {
   id: "github-light",
   name: "macOS Light",
