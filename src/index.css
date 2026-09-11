@@ -282,13 +282,6 @@
   }
 }
 
-/* ── Active tab indicator ───────────────────────────────────────────────── */
-.active-tab {
-  border-bottom: 2px solid var(--df-primary, #3b82f6);
-  background-color: color-mix(in srgb, var(--df-primary, #3b82f6) 5%, transparent);
-}
-
-
 /* ── Global resets ──────────────────────────────────────────────────────── */
 html,
 body,
