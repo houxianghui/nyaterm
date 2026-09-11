@@ -359,14 +359,23 @@ jobs:
 
       - name: Move snapshot tag to main commit
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          MAIN_SHA="${{ needs.prepare.outputs.main_sha }}"
 
-          git tag -f "${SNAPSHOT_TAG}" "${{ needs.prepare.outputs.main_sha }}"
-          git push -f origin "refs/tags/${SNAPSHOT_TAG}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" >/dev/null 2>&1; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" \
+              -X PATCH \
+              -f sha="${MAIN_SHA}" \
+              -f force=true
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${SNAPSHOT_TAG}" \
+              -f sha="${MAIN_SHA}"
+          fi
 
       - name: Create or update snapshot release
         shell: bash
