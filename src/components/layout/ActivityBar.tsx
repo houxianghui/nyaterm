@@ -134,7 +134,6 @@ export default function ActivityBar({
   zone,
 }: ActivityBarProps) {
   const { t } = useTranslation();
-  const indicatorSide = side === "left" ? "left-0" : "right-0";
   const tooltipSide = side === "left" ? "right" : "left";
 
   return (
@@ -162,7 +161,6 @@ export default function ActivityBar({
               onHideItem={onHideItem}
               onToggleLabel={onToggleLabel}
               showLabels={showLabels}
-              indicatorSide={indicatorSide}
               tooltipSide={tooltipSide}
               className="flex flex-col items-center gap-0.5 pt-1"
             />
@@ -179,7 +177,6 @@ export default function ActivityBar({
               onHideItem={onHideItem}
               onToggleLabel={onToggleLabel}
               showLabels={showLabels}
-              indicatorSide={indicatorSide}
               tooltipSide={tooltipSide}
               className="mt-auto flex flex-col items-center gap-0.5 pb-1"
             />
@@ -239,7 +236,6 @@ interface DropZoneProps {
   onHideItem: (itemId: string) => void;
   onToggleLabel: () => void;
   showLabels: boolean;
-  indicatorSide: string;
   tooltipSide: "left" | "right";
   className: string;
 }
@@ -257,7 +253,6 @@ function DropZone({
   onHideItem,
   onToggleLabel,
   showLabels,
-  indicatorSide,
   tooltipSide,
   className,
 }: DropZoneProps) {
@@ -460,7 +455,6 @@ function DropZone({
           }
           showLabel={showLabels}
           onSelect={onSelect}
-          indicatorSide={indicatorSide}
           tooltipSide={tooltipSide}
           currentZone={zoneName}
           onMoveItem={onMoveItem}
@@ -499,7 +493,6 @@ function ActivityBarButton({
   active,
   showLabel,
   onSelect,
-  indicatorSide,
   tooltipSide,
   currentZone,
   onMoveItem,
@@ -523,7 +516,6 @@ function ActivityBarButton({
   active: boolean;
   showLabel: boolean;
   onSelect: (id: string) => void;
-  indicatorSide: string;
   tooltipSide: "left" | "right";
   currentZone: ActivityBarZone;
   onMoveItem: (itemId: string, targetZone: ActivityBarZone) => void;
@@ -563,7 +555,7 @@ function ActivityBarButton({
               onPointerUp={onPointerEnd}
               onPointerCancel={onPointerCancel}
               onContextMenu={(event) => event.stopPropagation()}
-              className={`relative flex flex-col items-center justify-center w-full transition-colors ${showLabel ? "min-h-12 gap-0.5 py-1" : "h-9"}`}
+              className={`relative isolate flex flex-col items-center justify-center w-full rounded-md df-hover transition-colors ${showLabel ? "min-h-12 gap-0.5 py-1" : "h-9"}`}
               style={{
                 color: active ? "var(--df-primary)" : "var(--df-text-muted)",
                 cursor: "default",
@@ -584,8 +576,8 @@ function ActivityBarButton({
               )}
               {active && (
                 <span
-                  className={`absolute ${indicatorSide} top-1 bottom-1 w-[2px] rounded-full`}
-                  style={{ backgroundColor: "var(--df-primary)" }}
+                  className="pointer-events-none absolute inset-x-1 inset-y-0.5 -z-10 rounded-md"
+                  style={{ backgroundColor: "var(--df-bg-hover)" }}
                 />
               )}
               <span className="text-[1.125rem] shrink-0">{item.icon}</span>
