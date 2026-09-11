@@ -1,0 +1,120 @@
+name: Debug updater signing
+
+# Temporary diagnostic: the release/snapshot builds fail at the post-bundle signing
+# step with "Wrong password for that key", and an empty password produces the exact
+# same error as a wrong one — so the build logs cannot tell us which is happening.
+# This probe answers that in ~1 minute instead of a ~25 minute Rust build.
+#
+# This repository is public, so every line below must stay value-free: report booleans
+# only, never the password, its length, or a hash of it.
+#
+# Candidate values are passed around as JSON and handed to the signer through env
+# overrides in Node, never through shell interpolation — command substitution strips
+# trailing newlines, which would collapse the two candidates we most need to tell apart.
+#
+# Delete this workflow once signing is green.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: Probe password transport
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Decode key and candidate passwords
+        env:
+          KEY_B64: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_B64 }}
+          PW_B64: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD_B64 }}
+          PW_PLAIN: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const fs = require('fs');
+          const crypto = require('crypto');
+
+          const keyText = Buffer.from(process.env.KEY_B64 || '', 'base64').toString('utf8').trim();
+          fs.writeFileSync('/tmp/probe.key', keyText);
+
+          const rawB64 = process.env.PW_B64 || '';
+          const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
+          const decodedNoTrailingNewline = decoded.replace(/\r?\n$/, '');
+          const plain = process.env.PW_PLAIN ?? '';
+
+          // Booleans only — no values, no lengths.
+          console.log('key_decoded_nonempty:', keyText.length > 0);
+          console.log('b64_secret_present:', rawB64.length > 0);
+          console.log('b64_decodes_nonempty:', decoded.length > 0);
+          console.log('b64_decoded_ends_with_newline:', decoded !== decodedNoTrailingNewline);
+          console.log('b64_decoded_is_only_whitespace:', decoded.length > 0 && decoded.trim() === '');
+          console.log('plain_secret_nonempty:', plain.length > 0);
+          console.log('b64_decoded_equals_plain_secret:', decoded === plain);
+
+          fs.writeFileSync(
+            '/tmp/candidates.json',
+            JSON.stringify({
+              b64_decoded: decoded,
+              b64_decoded_no_newline: decodedNoTrailingNewline,
+              plain_secret: plain,
+            })
+          );
+
+          // Exercise the exact $GITHUB_ENV delimiter transport the real workflows use,
+          // so we can tell a broken transport apart from a wrong secret value.
+          const delimiter = `PROBE_${crypto.randomUUID().replace(/-/g, '')}`;
+          fs.appendFileSync(
+            process.env.GITHUB_ENV,
+            `PROBE_PW<<${delimiter}\n${decoded}\n${delimiter}\n`
+          );
+          NODE
+
+          printf 'probe payload' > /tmp/payload.bin
+
+      - name: Sign with each candidate
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const fs = require('fs');
+          const { execFileSync } = require('child_process');
+
+          const key = fs.readFileSync('/tmp/probe.key', 'utf8');
+          const candidates = JSON.parse(fs.readFileSync('/tmp/candidates.json', 'utf8'));
+
+          // The value that actually survived a $GITHUB_ENV round-trip, i.e. what the real
+          // workflows hand to tauri-action.
+          candidates.github_env_transport = process.env.PROBE_PW ?? '';
+          console.log(
+            'github_env_roundtrip_intact:',
+            candidates.github_env_transport === candidates.b64_decoded
+          );
+
+          let anyPassed = false;
+
+          for (const [label, password] of Object.entries(candidates)) {
+            fs.rmSync('/tmp/payload.bin.sig', { force: true });
+            try {
+              execFileSync('npx', ['--yes', '@tauri-apps/cli@2', 'signer', 'sign', '/tmp/payload.bin'], {
+                env: {
+                  ...process.env,
+                  TAURI_SIGNING_PRIVATE_KEY: key,
+                  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: password,
+                },
+                stdio: 'ignore',
+              });
+            } catch {
+              // A wrong password exits non-zero; absence of the .sig file is the real signal.
+            }
+            const passed = fs.existsSync('/tmp/payload.bin.sig');
+            anyPassed = anyPassed || passed;
+            console.log(`sign_with_${label}:`, passed ? 'PASS' : 'FAIL');
+          }
+
+          if (!anyPassed) {
+            console.log('');
+            console.log('No candidate signed. The stored password does not match this key,');
+            console.log('independent of how it is transported.');
+          }
+          NODE

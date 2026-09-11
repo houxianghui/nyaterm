@@ -199,7 +199,9 @@ jobs:
           // empty string and signing fails with "Wrong password for that key". Carry it
           // as base64 and decode here instead. Do not .trim() this value.
           const passwordB64 = process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD_B64 || '';
-          const password = Buffer.from(passwordB64, 'base64').toString('utf8');
+          // A base64 value produced with `echo` instead of `printf` carries a trailing
+          // newline. Strip that, but nothing else — the password itself is whitespace.
+          const password = Buffer.from(passwordB64, 'base64').toString('utf8').replace(/\r?\n$/, '');
           const passwordDelimiter = `TAURI_PW_${crypto.randomUUID().replace(/-/g, '')}`;
 
           fs.writeFileSync(keyPath, keyText);
