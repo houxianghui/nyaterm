@@ -1329,18 +1329,14 @@ function TabBar({
     const tabButton = (
       <div
         draggable={!usePointerTabDrag}
-        className={`group relative flex items-center gap-2 border-r pl-3 pr-2 text-xs transition-[color,background-color,opacity] duration-200 ${
-          isActive ? "font-semibold" : "font-medium df-hover"
+        className={`group relative flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-[color,background-color,box-shadow,opacity] duration-200 ${
+          isActive ? "" : "df-hover"
         } ${draggedTabId === tab.id ? "opacity-60" : ""}`}
         style={{
-          borderColor: "var(--df-border)",
-          backgroundColor: isActive
-            ? accentColor
-              ? `color-mix(in srgb, ${accentColor} 16%, var(--df-bg))`
-              : "var(--df-bg)"
-            : accentColor
-              ? `color-mix(in srgb, ${accentColor} 12%, var(--df-bg-panel))`
-              : "transparent",
+          backgroundColor: isActive ? "var(--df-bg-panel)" : undefined,
+          boxShadow: isActive
+            ? "0 1px 2px rgb(0 0 0 / 0.08), 0 0 0 1px var(--df-border)"
+            : undefined,
           color: isActive ? "var(--df-text)" : "var(--df-text-muted)",
         }}
         onClick={() => {
@@ -1411,34 +1407,14 @@ function TabBar({
           handleDropAtIndex(getInsertionIndex(event, index), event);
         }}
       >
-        {isActive && (
-          <div
-            className="absolute top-0 left-0 h-[2px] w-full"
-            style={{
-              backgroundColor: accentColor || "var(--df-primary)",
-              boxShadow: `0 1px 4px ${accentColor || "var(--df-primary)"}`,
-            }}
-          />
-        )}
-
-        {isActive && (
-          <div
-            className="absolute bottom-0 left-0 z-10 h-[1px] w-full"
-            style={{ backgroundColor: "var(--df-bg)" }}
+        {accentColor && (
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ backgroundColor: accentColor }}
           />
         )}
 
         {renderTabIcon(tab)}
-
-        <span
-          className="shrink-0 min-w-[1.25em] text-xs font-semibold tabular-nums leading-none"
-          style={{
-            color: isActive ? "var(--df-text-muted)" : "var(--df-text-dimmed)",
-          }}
-          aria-hidden="true"
-        >
-          {index + 1}
-        </span>
 
         <span
           className="max-w-[160px] truncate whitespace-nowrap"
@@ -1454,14 +1430,14 @@ function TabBar({
           broadcastToAll={broadcastToAll}
         />
 
-        <div className="relative ml-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center">
+        <div className="relative flex h-[18px] w-[18px] shrink-0 items-center justify-center">
           {tab.locked ? (
             <div
-              className={`absolute inset-0 flex items-center justify-center rounded transition-all duration-200 ${
+              className={`absolute inset-0 flex items-center justify-center rounded-full transition-all duration-200 ${
                 isActive
                   ? "text-[var(--df-primary)]"
-                  : "text-[var(--df-text-dimmed)] opacity-0 group-hover:opacity-100"
-              } hover:!bg-accent hover:!text-[var(--df-primary)] active:scale-90`}
+                  : "text-[var(--df-text-dimmed)]"
+              } hover:!bg-[var(--df-border)] hover:!text-[var(--df-text)] active:scale-90`}
               title={t("tabCtx.lockedCloseBlocked")}
               onPointerDown={(event) => {
                 event.stopPropagation();
@@ -1477,11 +1453,11 @@ function TabBar({
             <span className="h-2 w-2 rounded-full bg-green-500 animate-breathing" />
           ) : (
             <div
-              className={`absolute inset-0 flex items-center justify-center rounded transition-all duration-200 ${
+              className={`absolute inset-0 flex items-center justify-center rounded-full transition-all duration-200 ${
                 isActive
                   ? "text-[var(--df-text-muted)]"
-                  : "text-[var(--df-text-dimmed)] opacity-0 group-hover:opacity-100"
-              } hover:!bg-red-500/10 hover:!text-red-500 active:scale-90 active:!bg-red-500/20`}
+                  : "text-[var(--df-text-dimmed)]"
+              } hover:!bg-[var(--df-border)] hover:!text-[var(--df-text)] active:scale-90`}
               onPointerDown={(event) => {
                 event.stopPropagation();
               }}
@@ -1662,15 +1638,15 @@ function TabBar({
   return (
     <>
       <div
-        className="flex h-9 shrink-0"
+        className="flex h-9 shrink-0 items-center gap-1 px-2"
         style={{
-          backgroundColor: "var(--df-bg-panel)",
+          backgroundColor: "var(--df-bg-section-header)",
           boxShadow: "inset 0 -1px 0 var(--df-border)",
         }}
       >
         <div
           ref={tabStripRef}
-          className="tab-strip-scroll relative flex min-w-0 flex-1 overflow-x-auto overflow-y-hidden"
+          className="tab-strip-scroll relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden"
           onScroll={handleTabStripScroll}
           onWheel={handleTabStripWheel}
         >
@@ -1682,7 +1658,7 @@ function TabBar({
           )}
 
           <div
-            className="relative flex min-w-6 flex-1 shrink-0"
+            className="relative flex min-w-6 flex-1 shrink-0 self-stretch"
             onDragOver={(event) => {
               if (
                 !draggedTabId &&
@@ -1714,11 +1690,8 @@ function TabBar({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex h-full w-8 shrink-0 items-center justify-center border-l transition-colors df-hover"
-                    style={{
-                      color: "var(--df-text-muted)",
-                      borderColor: "var(--df-border)",
-                    }}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors df-hover"
+                    style={{ color: "var(--df-text-muted)" }}
                     aria-label={t("terminal.openTabs")}
                   >
                     <MdExpandMore className="text-base" />
@@ -1757,11 +1730,9 @@ function TabBar({
             <TooltipTrigger asChild>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="flex h-full w-9 shrink-0 items-center justify-center border-l transition-colors df-hover"
-                  style={{
-                    color: "var(--df-text-muted)",
-                    borderColor: "var(--df-border)",
-                  }}
+                  type="button"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors df-hover"
+                  style={{ color: "var(--df-text-muted)" }}
                   aria-label={t("terminal.newSession")}
                 >
                   <MdAdd className="text-base" />
