@@ -20,6 +20,7 @@ function appearance(overrides: Partial<AppearanceSettings> = {}): AppearanceSett
     font_size: 14,
     font_weight: 400,
     font_weight_bold: 700,
+    bold_default_foreground_highlight: false,
     background_opacity: 1,
     background_image_path: null,
     background_image_fit: "cover",
@@ -65,10 +66,34 @@ describe("terminal surface background variables", () => {
     const terminalColors = buildTerminalThemeColors(themeColors.terminal, appearance());
 
     expect(cssVars["--df-bg-terminal"]).toBe(themeColors.bgTerminal);
+    expect(cssVars["--df-bg-terminal-solid"]).toBe(themeColors.bgTerminal);
     expect(cssVars["--df-terminal-surface-bg"]).toBe(
       "var(--df-terminal-bg, var(--df-bg-terminal))",
     );
     expect(terminalColors.background).toBe(themeColors.terminal.background);
+    expect(terminalColors).not.toHaveProperty("foregroundIntense");
+  });
+
+  it("passes the configured intense foreground only when bold default highlighting is enabled", async () => {
+    const { buildTerminalThemeColors } = await importBackgroundImage();
+    const terminalColors = buildTerminalThemeColors(
+      { ...themeColors.terminal, foregroundIntense: "#abcdef" },
+      appearance({ bold_default_foreground_highlight: true }),
+    );
+
+    expect(terminalColors.foregroundIntense).toBe("#abcdef");
+  });
+
+  it("falls back to the normal foreground for legacy themes without an intense foreground", async () => {
+    const { buildTerminalThemeColors } = await importBackgroundImage();
+    const { foregroundIntense: _foregroundIntense, ...legacyTerminalColors } =
+      themeColors.terminal;
+    const terminalColors = buildTerminalThemeColors(
+      legacyTerminalColors,
+      appearance({ bold_default_foreground_highlight: true }),
+    );
+
+    expect(terminalColors.foregroundIntense).toBe(themeColors.terminal.foreground);
   });
 
   it("keeps background-image transparency for xterm while terminal wrappers provide tint", async () => {
@@ -82,8 +107,23 @@ describe("terminal surface background variables", () => {
     const terminalColors = buildTerminalThemeColors(themeColors.terminal, withWallpaper);
 
     expect(cssVars["--df-bg-terminal"]).toBe("rgba(29, 29, 31, 0.5)");
+    expect(cssVars["--df-bg-terminal-solid"]).toBe(themeColors.bgTerminal);
     expect(cssVars["--df-terminal-surface-bg"]).toBe("var(--df-bg-terminal)");
     expect(terminalColors.background).toBe("rgba(0, 0, 0, 0)");
+  });
+
+  it("keeps intense foreground highlighting while making the terminal background transparent", async () => {
+    const { buildTerminalThemeColors } = await importBackgroundImage();
+    const terminalColors = buildTerminalThemeColors(
+      { ...themeColors.terminal, foregroundIntense: "#abcdef" },
+      appearance({
+        bold_default_foreground_highlight: true,
+        background_image_path: "C:\\wallpapers\\terminal.png",
+      }),
+    );
+
+    expect(terminalColors.background).toBe("rgba(0, 0, 0, 0)");
+    expect(terminalColors.foregroundIntense).toBe("#abcdef");
   });
 
   it("keeps terminal wrappers transparent while the UI terminal surface provides Windows tint", async () => {
@@ -98,6 +138,7 @@ describe("terminal surface background variables", () => {
     const terminalColors = buildTerminalThemeColors(themeColors.terminal, transparentWindow);
 
     expect(cssVars["--df-bg-terminal"]).toBe("rgba(29, 29, 31, 0.6)");
+    expect(cssVars["--df-bg-terminal-solid"]).toBe(themeColors.bgTerminal);
     expect(cssVars["--df-terminal-surface-bg"]).toBe("transparent");
     expect(terminalColors.background).toBe("rgba(0, 0, 0, 0)");
   });
@@ -124,5 +165,50 @@ describe("terminal surface background variables", () => {
     expect(terminalColors.background).toBe("rgba(0, 0, 0, 0)");
     expect(terminalColors.foreground).toBe("#abcdef");
     expect(terminalColors.red).toBe("#ff0000");
+  });
+
+  it("enables transparent window surfaces on macOS below full opacity", async () => {
+    setNavigator(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+      "MacIntel",
+    );
+    const { buildSurfaceCssVariables, buildTerminalThemeColors, isWindowTransparencyEnabled } =
+      await importBackgroundImage();
+    const transparentWindow = appearance({
+      window_transparency: "transparent",
+      window_transparency_tint: 0.6,
+    });
+
+    const cssVars = buildSurfaceCssVariables(themeColors, transparentWindow);
+    const terminalColors = buildTerminalThemeColors(themeColors.terminal, transparentWindow);
+
+    expect(isWindowTransparencyEnabled(transparentWindow)).toBe(true);
+    expect(
+      isWindowTransparencyEnabled(
+        appearance({ window_transparency: "none", window_transparency_tint: 1 }),
+      ),
+    ).toBe(false);
+    expect(cssVars["--df-bg-terminal"]).toBe("rgba(29, 29, 31, 0.6)");
+    expect(cssVars["--df-terminal-surface-bg"]).toBe("transparent");
+    expect(terminalColors.background).toBe("rgba(0, 0, 0, 0)");
+  });
+
+  it("does not enable native window transparency on Linux", async () => {
+    const { buildSurfaceCssVariables, buildTerminalThemeColors, isWindowTransparencyEnabled } =
+      await importBackgroundImage();
+    const transparentWindow = appearance({
+      window_transparency: "transparent",
+      window_transparency_tint: 0.6,
+    });
+
+    const cssVars = buildSurfaceCssVariables(themeColors, transparentWindow);
+    const terminalColors = buildTerminalThemeColors(themeColors.terminal, transparentWindow);
+
+    expect(isWindowTransparencyEnabled(transparentWindow)).toBe(false);
+    expect(cssVars["--df-bg-terminal"]).toBe(themeColors.bgTerminal);
+    expect(cssVars["--df-terminal-surface-bg"]).toBe(
+      "var(--df-terminal-bg, var(--df-bg-terminal))",
+    );
+    expect(terminalColors.background).toBe(themeColors.terminal.background);
   });
 });

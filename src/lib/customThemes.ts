@@ -1,3 +1,4 @@
+import type { AppearanceSettings } from "@/types/global";
 import { isBuiltinThemeId, type TerminalColors, type Theme, type ThemeColors } from "./themes";
 
 export type ThemeColorPath =
@@ -38,6 +39,10 @@ export const UI_THEME_COLOR_FIELDS: readonly ThemeColorField[] = [
 export const TERMINAL_THEME_COLOR_FIELDS: readonly ThemeColorField[] = [
   { path: "terminal.background", labelKey: "settings.themeColorTerminalBackground" },
   { path: "terminal.foreground", labelKey: "settings.themeColorTerminalForeground" },
+  {
+    path: "terminal.foregroundIntense",
+    labelKey: "settings.themeColorTerminalForegroundIntense",
+  },
   { path: "terminal.cursor", labelKey: "settings.themeColorTerminalCursor" },
   { path: "terminal.selectionBackground", labelKey: "settings.themeColorTerminalSelection" },
   { path: "terminal.lineHighlight", labelKey: "settings.themeColorTerminalLineHighlight" },
@@ -88,6 +93,42 @@ export function structuredCloneTheme(theme: Theme): Theme {
   return JSON.parse(JSON.stringify(theme)) as Theme;
 }
 
+/** Appearance patch that inserts or updates a custom theme in the list. */
+export function upsertCustomThemePatch(
+  prev: AppearanceSettings,
+  theme: Theme,
+): Partial<AppearanceSettings> {
+  const prevThemes = prev.custom_themes ?? [];
+  const nextThemes = prevThemes.some((item) => item.id === theme.id)
+    ? prevThemes.map((item) => (item.id === theme.id ? theme : item))
+    : [...prevThemes, theme];
+  return { custom_themes: nextThemes };
+}
+
+/** Appearance patch that appends a custom theme to the list. */
+export function appendCustomThemePatch(
+  prev: AppearanceSettings,
+  theme: Theme,
+): Partial<AppearanceSettings> {
+  return { custom_themes: [...(prev.custom_themes ?? []), theme] };
+}
+
+/**
+ * Appearance patch that removes a custom theme, resetting the active UI/terminal
+ * theme when it pointed at the removed theme.
+ */
+export function removeCustomThemePatch(
+  prev: AppearanceSettings,
+  themeId: string,
+  defaultThemeId: string,
+): Partial<AppearanceSettings> {
+  const nextThemes = (prev.custom_themes ?? []).filter((item) => item.id !== themeId);
+  const patch: Partial<AppearanceSettings> = { custom_themes: nextThemes };
+  if (prev.theme === themeId) patch.theme = defaultThemeId;
+  if (prev.terminal_theme === themeId) patch.terminal_theme = null;
+  return patch;
+}
+
 export function isHexColor(value: string) {
   return /^#[0-9a-f]{6}$/i.test(value.trim());
 }
@@ -104,7 +145,10 @@ export function isCssColor(value: string) {
 export function getThemeColor(theme: Theme, path: ThemeColorPath): string {
   if (path.startsWith("terminal.")) {
     const key = path.slice("terminal.".length) as keyof TerminalColors;
-    return theme.colors.terminal[key];
+    if (key === "foregroundIntense") {
+      return theme.colors.terminal.foregroundIntense ?? theme.colors.terminal.foreground;
+    }
+    return theme.colors.terminal[key] as string;
   }
   return theme.colors[path as keyof Omit<ThemeColors, "terminal">] as string;
 }

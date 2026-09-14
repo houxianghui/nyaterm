@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import type { AppearanceSettings, BackgroundImageFit } from "@/types/global";
 import { invoke } from "./invoke";
 import { logger } from "./logger";
-import { isWindows } from "./platform";
+import { isMacOS, isWindows } from "./platform";
 import type { TerminalColors, ThemeColors } from "./themes";
 
 export const BACKGROUND_IMAGE_FITS = ["cover", "contain", "stretch", "tile"] as const;
@@ -60,7 +60,7 @@ export function windowTransparencyModeForOpacity(opacity: number): "none" | "tra
 export function isWindowTransparencyEnabled(
   appearance: Pick<AppearanceSettings, "window_transparency" | "window_transparency_tint">,
 ) {
-  return isWindows && getWindowTransparencyOpacity(appearance) < 1;
+  return (isWindows || isMacOS) && getWindowTransparencyOpacity(appearance) < 1;
 }
 
 function quoteCssUrl(url: string) {
@@ -169,6 +169,7 @@ export function buildSurfaceCssVariables(
       "--df-bg-panel": bgPanel,
       "--df-bg-panel-solid": colors.bgPanel,
       "--df-bg-terminal": bgTerminal,
+      "--df-bg-terminal-solid": colors.bgTerminal,
       "--df-terminal-surface-bg": "transparent",
       "--df-bg-hover": bgHover,
       "--df-bg-input": bgInput,
@@ -200,6 +201,7 @@ export function buildSurfaceCssVariables(
     "--df-bg-panel": bgPanel,
     "--df-bg-panel-solid": colors.bgPanel,
     "--df-bg-terminal": bgTerminal,
+    "--df-bg-terminal-solid": colors.bgTerminal,
     "--df-terminal-surface-bg": terminalSurfaceBg,
     "--df-bg-hover": bgHover,
     "--df-bg-input": bgInput,
@@ -218,12 +220,20 @@ export function buildTerminalThemeColors(
   terminalColors: TerminalColors,
   appearance: AppearanceSettings,
 ): TerminalColors {
+  const { foregroundIntense, ...baseColors } = terminalColors;
+  const resolvedColors: TerminalColors = appearance.bold_default_foreground_highlight
+    ? {
+        ...baseColors,
+        foregroundIntense: foregroundIntense ?? terminalColors.foreground,
+      }
+    : baseColors;
+
   if (!isTerminalTransparencyEnabled(appearance)) {
-    return terminalColors;
+    return resolvedColors;
   }
 
   return {
-    ...terminalColors,
+    ...resolvedColors,
     background: "rgba(0, 0, 0, 0)",
   };
 }

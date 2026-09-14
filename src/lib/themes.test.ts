@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_THEME_ID, themes } from "./themes";
+import { DEFAULT_THEME_ID, themeList, themes } from "./themes";
 
 describe("macOS default theme", () => {
   it("keeps the default theme id stable", () => {
@@ -34,6 +34,17 @@ describe("macOS default theme", () => {
       ]) {
         expect(t[key as keyof typeof t], `${id}.${key}`).toBeTypeOf("string");
       }
+    }
+  });
+});
+
+describe("built-in terminal foregroundIntense colors", () => {
+  it("defines a distinct valid foregroundIntense for every built-in theme", () => {
+    for (const theme of themeList) {
+      const { foreground, foregroundIntense } = theme.colors.terminal;
+
+      expect(foregroundIntense, theme.id).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(foregroundIntense, theme.id).not.toBe(foreground);
     }
   });
 });

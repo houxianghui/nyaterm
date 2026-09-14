@@ -106,6 +106,7 @@ import type { TerminalOutputDrain } from "./terminalOutputDrain";
 import { AlternateScreenStateTracker } from "./alternateScreenStateTracker";
 import type { Dec2026FrameGate } from "./dec2026FrameGate";
 import { useTerminalExternalDrop } from "./useTerminalExternalDrop";
+import { useTerminalFocusRestore } from "./useTerminalFocusRestore";
 import { useTerminalRefreshEffects } from "./useTerminalRefreshEffects";
 import {
   buildClipboardPathPasteText,
@@ -145,6 +146,10 @@ import {
 } from "./xterminalOutputQueue";
 import type { PerformanceMode, XTerminalProps } from "./xterminalTypes";
 import { shouldSuspendKeywordHighlighter } from "./xterminalKeywordHighlighting";
+import {
+  createSerialModemEventHandler,
+  type SerialModemEventPayload,
+} from "./serialModemTerminalEvents";
 import {
   createZmodemEventHandler,
   type ZmodemEventPayload,
@@ -254,6 +259,10 @@ export default function XTerminal({
   const disconnectedNoticeShownRef = useRef(false);
   const disconnectedCloseRequestedRef = useRef(false);
   const reconnectingRef = useRef(false);
+  // Set when a terminal renderer is torn down while it owned keyboard focus
+  // (e.g. a reconnect swaps the session id) so the rebuilt terminal can take
+  // the focus back once it is ready. See issue #603.
+  const pendingFocusRestoreRef = useRef(false);
   const preservedReconnectContentRef = useRef<TerminalReconnectSnapshot | null>(
     null,
   );
@@ -488,6 +497,11 @@ export default function XTerminal({
         }),
       );
       unlistenBag.add(
+        listen<SerialModemEventPayload>(`serial-modem-event-${sessionId}`, (event) => {
+          wake({ type: "serialModem", payload: event.payload });
+        }),
+      );
+      unlistenBag.add(
         listen<AiCaptureEvent>(`ai-capture-${sessionId}`, (event) => {
           wake({ type: "ai", payload: event.payload });
         }),
@@ -604,6 +618,8 @@ export default function XTerminal({
     searchState,
     searchFlags,
     setSearchFlag,
+    wrapAround,
+    setWrapAround,
     activeMode,
     setActiveMode,
     historyState,
@@ -803,6 +819,11 @@ export default function XTerminal({
       minimumContrastRatio: appearance.minimum_contrast_ratio,
       wordSeparator: interaction.word_separators,
       macOptionIsMeta: interaction.alt_as_meta,
+      // When enabled and an application (e.g. vim with mouse=a) turns on mouse
+      // tracking, normal drag stays text selection and Alt+drag forwards mouse
+      // events to the application (iTerm2-style). Off by default so existing
+      // mouse reporting behavior is unchanged.
+      mouseEventsRequireAlt: interaction.mouse_events_require_alt,
       scrollOnEraseInDisplay: true,
       theme: { ...terminalThemeColors },
       allowTransparency: terminalTransparencyEnabled,
@@ -851,6 +872,15 @@ export default function XTerminal({
       },
       (data) => {
         writeOrderedTerminalStatus(data);
+      },
+    );
+    const serialModemHandler = createSerialModemEventHandler(
+      sessionId,
+      () => tRef.current,
+      {
+        upsertProgress: upsertExternalTransferProgress,
+        complete: completeExternalTransfer,
+        fail: failExternalTransfer,
       },
     );
 
@@ -1532,6 +1562,7 @@ export default function XTerminal({
 
     installXTerminalKeyboardController({
       terminal,
+      isMacOS,
       imeTracker,
       terminalAppSettingsRef,
       sessionTypeRef,
@@ -1970,6 +2001,14 @@ export default function XTerminal({
             }
             zmodemHandler.handle(event.payload);
             break;
+          case "serialModem":
+            if (event.payload.type === "progress") {
+              zmodemActiveRef.current = true;
+            } else if (event.payload.type === "complete" || event.payload.type === "failed") {
+              zmodemActiveRef.current = false;
+            }
+            serialModemHandler.handle(event.payload);
+            break;
           case "ai":
             if (event.payload.type === "commandStart") {
               aiCapturingRef.current = true;
@@ -2068,6 +2107,7 @@ export default function XTerminal({
       updateOutputDrainMode,
       logHibernation,
       zmodemHandler,
+      serialModemHandler,
       replayPendingWakeEvents,
       settleOutputAfterAttach: () =>
         flushFrameGateAndDrain("dynamic_title_attach"),
@@ -2459,6 +2499,7 @@ export default function XTerminal({
       }
       sessionEvents.dispose();
       zmodemHandler.dispose();
+      serialModemHandler.dispose();
       frameGate.dispose({ ackRemaining: true, reason: "terminal_cleanup" });
       if (frameGateRef.current === frameGate) {
         frameGateRef.current = null;
@@ -2483,6 +2524,11 @@ export default function XTerminal({
       if (!isHibernateRendererCleanup) {
         resumeDynamicTitlePublication(sessionId);
       }
+      const previousTextarea = terminal.textarea;
+      pendingFocusRestoreRef.current =
+        Boolean(previousTextarea) &&
+        document.activeElement === previousTextarea &&
+        activeRef.current;
       terminal.dispose();
       terminalRef.current = null;
       setTerminalInstance(null);
@@ -2492,6 +2538,20 @@ export default function XTerminal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hibernated, sessionId, terminalGeneration, terminalTransparencyEnabled]);
+
+  // Restore keyboard focus after an in-place terminal rebuild (reconnect swaps
+  // the session id, hibernate wake, transparency toggle). Without this the
+  // disposed renderer's textarea drops focus to <body> and typing after a
+  // reconnect silently does nothing until the user clicks the terminal.
+  useTerminalFocusRestore({
+    terminalRef,
+    pendingFocusRestoreRef,
+    activeRef,
+    visibleRef,
+    terminalReady,
+    restoringSnapshot,
+    hibernated,
+  });
 
   // Appearance, theme, and interaction settings sync.
   // Declared AFTER the terminal creation effect so effects from these hooks
@@ -2718,11 +2778,13 @@ export default function XTerminal({
           searchQuery={searchQuery}
           searchState={searchState}
           searchFlags={searchFlags}
+          wrapAround={wrapAround}
           activeMode={activeMode}
           historyState={historyState}
           setSearchQuery={handleTerminalSearchQueryChange}
           onModeChange={handleTerminalSearchModeChange}
           onSearchFlagChange={handleTerminalSearchFlagChange}
+          onWrapAroundChange={setWrapAround}
           onNext={handleSearchNext}
           onPrev={handleSearchPrev}
           onClose={handleTerminalSearchClose}

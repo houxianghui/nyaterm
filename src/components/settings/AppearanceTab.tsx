@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useApp } from "@/context/AppContext";
+import { useSettingsDraft } from "@/context/SettingsDraftContext";
 import { useTheme } from "@/context/ThemeContext";
 import {
   BACKGROUND_IMAGE_FITS,
@@ -41,7 +42,7 @@ import {
 } from "@/lib/backgroundImage";
 import { invoke } from "@/lib/invoke";
 import { logger } from "@/lib/logger";
-import { isWindows } from "@/lib/platform";
+import { isMacOS, isWindows } from "@/lib/platform";
 import {
   DEFAULT_TERMINAL_FONT_SIZE,
   MAX_TERMINAL_FONT_SIZE,
@@ -886,12 +887,41 @@ export function AppearanceTab() {
   }, []);
 
   const updateAppearance = useCallback(
-    (patch: Partial<AppearanceSettings>) => {
+    (
+      patch:
+        | Partial<AppearanceSettings>
+        | ((prev: AppearanceSettings) => Partial<AppearanceSettings>),
+    ) => {
       updateAppSettings((prev) => ({
-        appearance: { ...prev.appearance, ...patch },
+        appearance: {
+          ...prev.appearance,
+          ...(typeof patch === "function" ? patch(prev.appearance) : patch),
+        },
       }));
     },
     [updateAppSettings],
+  );
+
+  const { updateCommittedAppSettings } = useSettingsDraft();
+
+  // Theme designer operations (import/save/delete) have immediate-effect
+  // semantics: apply them to the settings draft AND the committed app settings
+  // so they persist and appear in every theme list without restarting.
+  const applyAppearance = useCallback(
+    (
+      patch:
+        | Partial<AppearanceSettings>
+        | ((prev: AppearanceSettings) => Partial<AppearanceSettings>),
+    ) => {
+      updateAppearance(patch);
+      updateCommittedAppSettings((prev) => ({
+        appearance: {
+          ...prev.appearance,
+          ...(typeof patch === "function" ? patch(prev.appearance) : patch),
+        },
+      }));
+    },
+    [updateAppearance, updateCommittedAppSettings],
   );
   const updateUiFontFamily = useCallback(
     (uiFontFamily: string) => updateAppearance({ ui_font_family: uiFontFamily }),
@@ -978,7 +1008,7 @@ export function AppearanceTab() {
         </SettingRow>
       </SettingSection>
 
-      {isWindows && (
+      {(isWindows || isMacOS) && (
         <SettingSection
           title={t("settings.windowTransparency")}
           desc={t("settings.windowTransparencyDesc")}
@@ -995,15 +1025,17 @@ export function AppearanceTab() {
               })
             }
           />
-          <SettingRow
-            label={t("settings.windowTransparencyBlur")}
-            desc={t("settings.windowTransparencyBlurDesc")}
-          >
-            <SettingSwitch
-              checked={appearance.window_transparency_blur ?? false}
-              onChange={(v) => updateAppearance({ window_transparency_blur: v })}
-            />
-          </SettingRow>
+          {isWindows && (
+            <SettingRow
+              label={t("settings.windowTransparencyBlur")}
+              desc={t("settings.windowTransparencyBlurDesc")}
+            >
+              <SettingSwitch
+                checked={appearance.window_transparency_blur ?? false}
+                onChange={(v) => updateAppearance({ window_transparency_blur: v })}
+              />
+            </SettingRow>
+          )}
         </SettingSection>
       )}
 
@@ -1101,6 +1133,16 @@ export function AppearanceTab() {
           </SettingSelect>
         </SettingFieldGrid>
 
+        <SettingRow
+          label={t("settings.boldDefaultForegroundHighlight")}
+          desc={t("settings.boldDefaultForegroundHighlightDesc")}
+        >
+          <SettingSwitch
+            checked={appearance.bold_default_foreground_highlight ?? false}
+            onChange={(v) => updateAppearance({ bold_default_foreground_highlight: v })}
+          />
+        </SettingRow>
+
         <SettingRow label={t("settings.cursorBlink")}>
           <SettingSwitch
             checked={appearance.cursor_blink}
@@ -1114,7 +1156,7 @@ export function AppearanceTab() {
         onClose={() => setThemeDesignerOpen(false)}
         appearance={appearance}
         availableThemes={themeNames}
-        updateAppearance={updateAppearance}
+        applyAppearance={applyAppearance}
       />
     </div>
   );

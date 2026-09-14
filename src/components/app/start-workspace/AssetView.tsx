@@ -120,9 +120,7 @@ export default function AssetView({
     () =>
       ({
         backgroundColor: transparentBackground ? "transparent" : "var(--df-bg-terminal)",
-        "--nyaterm-asset-sticky-bg": transparentBackground
-          ? "transparent"
-          : "var(--df-bg-terminal)",
+        "--nyaterm-asset-sticky-bg": "var(--df-bg-terminal-solid)",
       }) as CSSProperties,
     [transparentBackground],
   );
@@ -222,10 +220,26 @@ export default function AssetView({
 function matchesFilters(connection: SavedConnection, filters: Set<AssetFilterKey>): boolean {
   if (filters.size === 0) return true;
   const asset = connection.asset;
-  if (filters.has("linux") && !isLinuxAsset(asset)) return false;
-  if (filters.has("windows") && !isWindowsAsset(asset)) return false;
-  if (filters.has("gpu") && !hasGpu(asset)) return false;
-  if (filters.has("npu") && !hasNpu(asset)) return false;
+
+  const hasOsFilter = filters.has("linux") || filters.has("windows");
+  if (
+    hasOsFilter &&
+    !(
+      (filters.has("linux") && isLinuxAsset(asset)) ||
+      (filters.has("windows") && isWindowsAsset(asset))
+    )
+  ) {
+    return false;
+  }
+
+  const hasAcceleratorFilter = filters.has("gpu") || filters.has("npu");
+  if (
+    hasAcceleratorFilter &&
+    !((filters.has("gpu") && hasGpu(asset)) || (filters.has("npu") && hasNpu(asset)))
+  ) {
+    return false;
+  }
+
   return true;
 }
 

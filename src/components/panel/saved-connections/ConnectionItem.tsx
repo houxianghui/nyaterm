@@ -353,8 +353,10 @@ export default function ConnectionItem({ conn, indented, depth = 0 }: Connection
   const detailsOpenTimerRef = useRef<number | null>(null);
   const detailsCloseTimerRef = useRef<number | null>(null);
   const suppressDetailsUntilLeaveRef = useRef(false);
+  const itemRef = useRef<HTMLDivElement | null>(null);
   const registerSelf = useCallback(
     (element: HTMLDivElement | null) => {
+      itemRef.current = element;
       registerConnectionElement(conn.id, element);
     },
     [conn.id, registerConnectionElement],
@@ -419,6 +421,12 @@ export default function ConnectionItem({ conn, indented, depth = 0 }: Connection
     closeDetails(true);
   }, [closeDetails]);
 
+  const handleEditConnection = useCallback(() => {
+    closeAndSuppressDetails();
+    itemRef.current?.focus({ preventScroll: true });
+    onEditConnection(conn);
+  }, [closeAndSuppressDetails, conn, onEditConnection]);
+
   useEffect(
     () => () => {
       clearDetailsOpenTimer();
@@ -434,9 +442,25 @@ export default function ConnectionItem({ conn, indented, depth = 0 }: Connection
           ref={registerSelf}
           data-saved-drop-type="connection"
           data-saved-drop-id={conn.id}
+          tabIndex={-1}
           className="relative min-w-full w-max"
           draggable={isDragEnabled && !isPointerDragEnabled}
           onWheel={closeAndSuppressDetails}
+          onKeyDown={(event) => {
+            if (
+              event.target !== event.currentTarget ||
+              event.defaultPrevented ||
+              event.nativeEvent.isComposing ||
+              event.key === "Process" ||
+              event.key !== "Enter"
+            ) {
+              return;
+            }
+
+            event.preventDefault();
+            closeAndSuppressDetails();
+            handleConnectOnly(conn);
+          }}
           onPointerDown={
             isPointerDragEnabled
               ? (e) => {
@@ -595,8 +619,7 @@ export default function ConnectionItem({ conn, indented, depth = 0 }: Connection
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  closeAndSuppressDetails();
-                  onEditConnection(conn);
+                  handleEditConnection();
                 }}
               >
                 <MdEdit className="text-[0.95rem] cursor-pointer" />
@@ -638,8 +661,7 @@ export default function ConnectionItem({ conn, indented, depth = 0 }: Connection
         ) : null}
         <ContextMenuItem
           onClick={() => {
-            closeAndSuppressDetails();
-            onEditConnection(conn);
+            handleEditConnection();
           }}
         >
           <MdEdit className="text-[0.875rem] text-muted-foreground mr-2" />

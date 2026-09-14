@@ -109,8 +109,9 @@ export function VncForm({
   useEffect(() => {
     invoke<SavedPassword[]>("get_saved_passwords")
       .then((items) => {
-        setPasswords(items);
-        if (passwordId && !items.some((item) => item.id === passwordId)) {
+        const usableItems = items.filter((item) => item.has_password === true);
+        setPasswords(usableItems);
+        if (passwordId && !usableItems.some((item) => item.id === passwordId)) {
           setPasswordId("");
         }
       })
@@ -208,6 +209,7 @@ export function VncForm({
             <div className="relative mt-1">
               <Input
                 className="h-8 pr-16 text-xs"
+                data-custom-password-reveal
                 type={showPassword ? "text" : "password"}
                 value={password}
                 placeholder={
