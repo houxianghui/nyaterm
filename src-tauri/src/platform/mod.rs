@@ -13,3 +13,6 @@ pub fn install_external_file_drop_bridge(
 
 pub mod window_transparency;
 pub use window_transparency::{WindowTransparency, apply_to_all_main_windows, apply_to_window};
+
+pub mod dwm_border;
+pub use dwm_border::disable_dwm_border;

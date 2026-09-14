@@ -2,6 +2,7 @@ import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { lazy, type ReactNode, Suspense, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { isMacOS } from "./lib/platform";
 import {
   isModalChildLabel,
   prepareForModalChildClose,
@@ -43,12 +44,35 @@ function ChildWindowLoadingShell() {
 }
 
 function ReadyContent({ children }: { children: ReactNode }) {
-  return <div className="relative h-screen w-full bg-background">{children}</div>;
+  return (
+    <div
+      className={`relative h-screen w-full bg-background${isMacOS ? "" : " rounded-2xl overflow-hidden"}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function useTransparentChildWindowSurface() {
+  useEffect(() => {
+    if (isMacOS) return;
+    const roots = [document.documentElement, document.body];
+    for (const root of roots) {
+      root.dataset.windowTransparency = "true";
+    }
+    return () => {
+      for (const root of roots) {
+        delete root.dataset.windowTransparency;
+      }
+    };
+  }, []);
 }
 
 export default function ChildWindowRouter({ windowType }: { windowType: string }) {
   const { t } = useTranslation();
   const Page = PAGES[windowType];
+
+  useTransparentChildWindowSurface();
 
   useEffect(() => {
     const ownerLabel = new URLSearchParams(window.location.search).get("owner");

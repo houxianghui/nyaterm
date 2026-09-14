@@ -200,9 +200,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPIMAGE_EXTRACT_AND_RUN: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && '1' || '' }}
           NYATERM_GITHUB_GIST_CLIENT_ID: ${{ vars.NYATERM_GITHUB_GIST_CLIENT_ID }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           includeUpdaterJson: false
           args: ${{ matrix.args }}
@@ -328,38 +328,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  build-win7:
-    name: Build Windows 7 x64
-    needs: prepare
-    runs-on: windows-2022
-
-    steps:
-      - name: Checkout main commit
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare.outputs.main_sha }}
-          fetch-depth: 0
-
-      - name: Build Win7 offline installer
-        id: win7
-        uses: ./.github/actions/build-win7
-        with:
-          artifact-version: ${{ env.SNAPSHOT_VERSION }}
-
-      - name: Upload Win7 build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-assets-windows-x64-win7
-          path: ${{ steps.win7.outputs.installer-path }}
-          if-no-files-found: error
-          retention-days: 7
-
   publish-github-release:
     name: Publish GitHub snapshot release
     needs:
       - prepare
       - build
-      - build-win7
     runs-on: ubuntu-latest
 
     permissions:
@@ -386,14 +359,23 @@ jobs:
 
       - name: Move snapshot tag to main commit
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          MAIN_SHA="${{ needs.prepare.outputs.main_sha }}"
 
-          git tag -f "${SNAPSHOT_TAG}" "${{ needs.prepare.outputs.main_sha }}"
-          git push -f origin "refs/tags/${SNAPSHOT_TAG}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" >/dev/null 2>&1; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" \
+              -X PATCH \
+              -f sha="${MAIN_SHA}" \
+              -F force=true
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${SNAPSHOT_TAG}" \
+              -f sha="${MAIN_SHA}"
+          fi
 
       - name: Create or update snapshot release
         shell: bash

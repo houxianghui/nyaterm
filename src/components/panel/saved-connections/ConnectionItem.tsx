@@ -341,7 +341,13 @@ export default function ConnectionItem({ conn, indented, depth = 0 }: Connection
       ? t("savedConnections.connectSelected")
       : t("savedConnections.connect");
   const directConnectLabel = t("savedConnections.connect");
-  const iconStyle = { color: isSelected || isKeyboardActive ? "var(--df-primary)" : iconDef.color };
+  const iconStyle = {
+    color: isSelected
+      ? "var(--df-on-primary)"
+      : isKeyboardActive
+        ? "var(--df-primary)"
+        : iconDef.color,
+  };
   const indentLeft = indented ? `${8 + depth * 16 + 16}px` : "0.5rem";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsOpenTimerRef = useRef<number | null>(null);
@@ -498,11 +504,11 @@ export default function ConnectionItem({ conn, indented, depth = 0 }: Connection
             />
           )}
           <div
-            className={`group/item relative flex min-w-full w-max items-center gap-2 py-1.5 px-2 rounded cursor-pointer transition-colors df-hover ${isTarget && dragTarget.position === "inside" ? "ring-1 ring-primary/60" : ""}`}
+            className={`group/item relative flex min-w-full w-max items-center gap-2 py-1.5 px-2 rounded-md mx-1 cursor-pointer transition-colors df-hover ${isTarget && dragTarget.position === "inside" ? "ring-1 ring-primary/60" : ""}`}
             style={{
               ...(indented ? { paddingLeft: `${8 + depth * 16 + 16}px` } : undefined),
               backgroundColor: isSelected
-                ? "color-mix(in srgb, var(--df-primary) 10%, transparent)"
+                ? "var(--df-primary)"
                 : isKeyboardActive
                   ? "color-mix(in srgb, var(--df-primary) 7%, transparent)"
                   : undefined,
@@ -532,8 +538,11 @@ export default function ConnectionItem({ conn, indented, depth = 0 }: Connection
                   <span
                     className="shrink-0 whitespace-nowrap text-xs font-medium"
                     style={{
-                      color:
-                        isSelected || isKeyboardActive ? "var(--df-primary)" : "var(--df-text)",
+                      color: isSelected
+                        ? "var(--df-on-primary)"
+                        : isKeyboardActive
+                          ? "var(--df-primary)"
+                          : "var(--df-text)",
                     }}
                   >
                     {conn.name}

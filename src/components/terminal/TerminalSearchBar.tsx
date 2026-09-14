@@ -122,7 +122,7 @@ export default function TerminalSearchBar({
         <input
           ref={inputRef}
           type="text"
-          className="min-w-0 flex-1 bg-transparent outline-none text-xs px-1 py-1"
+          className="min-w-0 flex-1 rounded-full bg-[var(--df-bg-hover)] px-3 py-1 text-xs outline-none transition-shadow focus:shadow-md"
           style={{ color: "var(--df-text)" }}
           placeholder={t("terminalCtx.find")}
           value={searchQuery}

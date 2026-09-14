@@ -26,6 +26,7 @@ import {
   MdMenu,
   MdMenuBook,
   MdMerge,
+  MdMoreHoriz,
   MdOutlineMonitorHeart,
   MdOutlineStickyNote2,
   MdPalette,
@@ -61,11 +62,17 @@ import QuitConfirmDialog from "@/components/dialog/app/QuitConfirmDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuPortal,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useApp } from "@/context/AppContext";
@@ -107,20 +114,6 @@ import type {
 import ImportDialog from "../dialog/connections/ImportDialog";
 import { resolveConnectionIcon } from "../icons";
 import NyaTermLogo from "../NyaTermLogo";
-import {
-  Menubar,
-  MenubarCheckboxItem,
-  MenubarContent,
-  MenubarItem,
-  MenubarMenu,
-  MenubarPortal,
-  MenubarSeparator,
-  MenubarShortcut,
-  MenubarSub,
-  MenubarSubContent,
-  MenubarSubTrigger,
-  MenubarTrigger,
-} from "../ui/menubar";
 
 function AscendIcon({ className }: { className?: string }) {
   return (
@@ -890,13 +883,6 @@ export default function Header({
     }));
   };
 
-  const menuKeys = [
-    { key: "file", label: t("menu.file") },
-    { key: "view", label: t("menu.view") },
-    { key: "terminal", label: t("menu.terminal") },
-    { key: "help", label: t("menu.help") },
-  ];
-
   const buildActivityBarPanelMenuItems = (side: "left" | "right"): MenuItem[] => {
     const seen = new Set<string>();
     const hiddenItems = new Set(appSettings.ui.activity_bar_layout.hidden_items ?? []);
@@ -1447,33 +1433,33 @@ export default function Header({
     };
   }, [appWindow.label]);
 
-  const renderMenuItem = (item: MenuItem, idx: number) => {
+  const renderMenuItem = (item: MenuItem, idx: number, keyPrefix: string) => {
     if (item.separator) {
-      return <MenubarSeparator key={`sep-${idx}`} />;
+      return <DropdownMenuSeparator key={`${keyPrefix}-sep-${idx}`} />;
     }
 
     if (item.submenu) {
       return (
-        <MenubarSub key={item.label}>
-          <MenubarSubTrigger disabled={item.disabled} className="gap-2">
+        <DropdownMenuSub key={`${keyPrefix}-${item.label}`}>
+          <DropdownMenuSubTrigger disabled={item.disabled} className="gap-2">
             {item.icon && (
               <DynamicIcon name={item.icon} className="text-[1rem] text-[var(--df-text-muted)]" />
             )}
             <span className="flex-1">{item.label}</span>
-          </MenubarSubTrigger>
-          <MenubarPortal>
-            <MenubarSubContent>
-              {item.submenu.map((sub, i) => renderMenuItem(sub, i))}
-            </MenubarSubContent>
-          </MenubarPortal>
-        </MenubarSub>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuPortal>
+            <DropdownMenuSubContent>
+              {item.submenu.map((sub, i) => renderMenuItem(sub, i, keyPrefix))}
+            </DropdownMenuSubContent>
+          </DropdownMenuPortal>
+        </DropdownMenuSub>
       );
     }
 
     if (item.checked !== undefined) {
       return (
-        <MenubarCheckboxItem
-          key={item.label}
+        <DropdownMenuCheckboxItem
+          key={`${keyPrefix}-${item.label}`}
           checked={item.checked}
           disabled={item.disabled}
           onCheckedChange={() => {
@@ -1486,14 +1472,14 @@ export default function Header({
             </span>
           )}
           <span className="flex-1">{item.label}</span>
-          {item.shortcut && <MenubarShortcut>{item.shortcut}</MenubarShortcut>}
-        </MenubarCheckboxItem>
+          {item.shortcut && <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut>}
+        </DropdownMenuCheckboxItem>
       );
     }
 
     return (
-      <MenubarItem
-        key={item.label}
+      <DropdownMenuItem
+        key={`${keyPrefix}-${item.label}`}
         disabled={item.disabled}
         onClick={() => {
           item.action?.();
@@ -1511,8 +1497,8 @@ export default function Header({
             {t("updater.hasNewVersion")}
           </span>
         )}
-        {item.shortcut && <MenubarShortcut>{item.shortcut}</MenubarShortcut>}
-      </MenubarItem>
+        {item.shortcut && <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut>}
+      </DropdownMenuItem>
     );
   };
 
@@ -1847,10 +1833,7 @@ export default function Header({
   ]);
 
   return (
-    <header
-      className="h-10 border-b flex items-center gap-2 px-2 select-none shrink-0"
-      style={{ backgroundColor: "var(--df-bg-panel)", borderColor: "var(--df-border)" }}
-    >
+    <header className="h-10 flex items-center gap-2 px-2 select-none shrink-0">
       <div className={`flex items-center gap-2 shrink-0${isMacOS ? " pl-[84px]" : ""}`}>
         {!isMacOS && (
           <NyaTermLogo className="h-5 w-5 shrink-0" onDoubleClick={handleToggleMaximizeWindow} />
@@ -1869,27 +1852,64 @@ export default function Header({
         )}
 
         {!isMacOS && (
-          <Menubar className="border-none bg-transparent h-auto p-0 gap-1 shadow-none">
-            {menuKeys.map(({ key, label }) => (
-              <MenubarMenu key={key}>
-                <MenubarTrigger
-                  className="relative cursor-default px-2.5 py-1 text-xs font-medium rounded-md transition-colors text-[var(--df-text-muted)] data-[state=open]:text-[var(--df-primary)] data-[state=open]:bg-[color-mix(in_srgb,var(--df-primary)_10%,transparent)] hover:bg-[color-mix(in_srgb,var(--df-text-muted)_10%,transparent)] focus:bg-[color-mix(in_srgb,var(--df-text-muted)_10%,transparent)] focus:text-[var(--df-text-muted)] data-[state=open]:focus:bg-[color-mix(in_srgb,var(--df-primary)_10%,transparent)] data-[state=open]:focus:text-[var(--df-primary)] outline-none"
-                  {...(key === "help" && showUpdateDot ? { onClick: onHelpMenuOpen } : {})}
-                >
-                  {label}
-                  {key === "help" && showUpdateDot && (
-                    <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-                    </span>
-                  )}
-                </MenubarTrigger>
-                <MenubarContent align="start" className="min-w-[180px]">
-                  {menus[key].map((item, idx) => renderMenuItem(item, idx))}
-                </MenubarContent>
-              </MenubarMenu>
-            ))}
-          </Menubar>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="text-[var(--df-text-muted)] hover:bg-[color-mix(in_srgb,var(--df-text-muted)_10%,transparent)] hover:text-[var(--df-text)]"
+            aria-label={t("menu.newSession")}
+            onClick={onNewSession}
+          >
+            <MdAdd className="text-base" />
+          </Button>
+        )}
+
+        {!isMacOS && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="text-[var(--df-text-muted)] hover:bg-[color-mix(in_srgb,var(--df-text-muted)_10%,transparent)] hover:text-[var(--df-text)]"
+            aria-label={t("menu.commandPalette")}
+            onClick={() => onOpenCommandPalette?.()}
+          >
+            <MdSearch className="text-base" />
+          </Button>
+        )}
+
+        {!isMacOS && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="relative text-[var(--df-text-muted)] hover:bg-[color-mix(in_srgb,var(--df-text-muted)_10%,transparent)] hover:text-[var(--df-text)]"
+                aria-label={t("menu.more")}
+                onClick={showUpdateDot ? onHelpMenuOpen : undefined}
+              >
+                <MdMoreHoriz className="text-base" />
+                {showUpdateDot && (
+                  <span className="absolute top-0.5 right-0.5 flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                  </span>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              className="min-w-[200px] max-h-[70vh] overflow-y-auto"
+            >
+              {menus.file.map((item, idx) => renderMenuItem(item, idx, "file"))}
+              <DropdownMenuSeparator />
+              {menus.view.map((item, idx) => renderMenuItem(item, idx, "view"))}
+              <DropdownMenuSeparator />
+              {menus.terminal.map((item, idx) => renderMenuItem(item, idx, "terminal"))}
+              <DropdownMenuSeparator />
+              {menus.help.map((item, idx) => renderMenuItem(item, idx, "help"))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
 

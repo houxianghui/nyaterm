@@ -30,7 +30,7 @@ export default function PanelHeader({
       <div className="flex min-w-0 flex-1 items-baseline gap-2">
         <span
           className={cn(
-            "shrink-0 truncate text-[0.6875rem] font-semibold uppercase tracking-[0.16em]",
+            "shrink-0 truncate text-[0.75rem] font-semibold",
             titleClassName,
           )}
           style={{ color: "var(--df-text-muted)" }}

@@ -481,15 +481,6 @@ export default function SettingsPage() {
         <AppContext.Provider value={nestedAppContextValue}>
           <div className="flex min-h-0 flex-1 overflow-hidden bg-background">
             <div className="flex w-14 shrink-0 flex-col border-r border-border/70 bg-muted/20 sm:w-48 lg:w-56">
-              <div
-                className="flex items-center justify-center gap-3 border-b border-border/70 px-3 py-4 sm:justify-start sm:px-4 sm:py-5"
-                data-tauri-drag-region
-              >
-                <MdSettings className="shrink-0 text-2xl text-primary" />
-                <h1 className="hidden text-lg font-semibold sm:block lg:text-xl">
-                  {t("settings.title")}
-                </h1>
-              </div>
               <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3 sm:px-3 sm:py-4">
                 <div className="flex flex-col gap-2">
                   {categories.map((category) => {
@@ -591,13 +582,6 @@ export default function SettingsPage() {
             </div>
 
             <div className="flex flex-1 min-h-0 min-w-0 flex-col">
-              <div
-                className="flex shrink-0 items-center justify-between border-b border-border/70 bg-background/90 px-4 py-4 backdrop-blur sm:px-6 sm:py-5"
-                data-tauri-drag-region
-              >
-                <h3 className="text-lg font-semibold sm:text-2xl">{activeTabConfig?.label}</h3>
-              </div>
-
               <div
                 ref={scrollContainerRef}
                 onScroll={(e) => {

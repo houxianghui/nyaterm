@@ -99,6 +99,7 @@ fn install_main_window_bridges(window: &tauri::WebviewWindow) {
         );
     }
     apply_window_transparency_for_window(window);
+    crate::platform::disable_dwm_border(window);
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

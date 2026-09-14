@@ -21,17 +21,25 @@
 
 @theme {
   --font-sans:
-    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", "Helvetica Neue", Arial, sans-serif;
+    system-ui, -apple-system, "SF Pro Text", "SF Pro Display", BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC",
+    "Helvetica Neue", Arial, sans-serif;
   --font-display:
-    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", "Helvetica Neue", Arial, sans-serif;
+    system-ui, -apple-system, "SF Pro Text", "SF Pro Display", BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC",
+    "Helvetica Neue", Arial, sans-serif;
   --font-mono:
     "JetBrainsMono Nerd Font Mono", "JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Monaco,
     Consolas, "Liberation Mono", monospace;
 
   --color-primary: var(--df-primary);
   --color-primary-hover: var(--df-primary-hover);
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06), 0 1px 3px rgb(0 0 0 / 0.08);
+  --shadow-md: 0 4px 8px rgb(0 0 0 / 0.10), 0 1px 3px rgb(0 0 0 / 0.06);
+  --shadow-lg: 0 8px 24px rgb(0 0 0 / 0.16), 0 2px 8px rgb(0 0 0 / 0.08);
+  --shadow-xl: 0 16px 40px rgb(0 0 0 / 0.22), 0 4px 12px rgb(0 0 0 / 0.10);
 }
 
 @theme inline {
@@ -77,7 +85,7 @@
 
 /* ── Map shadcn CSS vars to existing --df-* theme system ───────────────── */
 :root {
-  --radius: 0.5rem;
+  --radius: 0.625rem;
   --df-terminal-surface-bg: var(--df-terminal-bg, var(--df-bg-terminal));
   --background: var(--df-bg);
   --foreground: var(--df-text);
@@ -274,13 +282,6 @@
   }
 }
 
-/* ── Active tab indicator ───────────────────────────────────────────────── */
-.active-tab {
-  border-bottom: 2px solid var(--df-primary, #3b82f6);
-  background-color: color-mix(in srgb, var(--df-primary, #3b82f6) 5%, transparent);
-}
-
-
 /* ── Global resets ──────────────────────────────────────────────────────── */
 html,
 body,
@@ -322,6 +323,19 @@ html[data-window-transparency="true"],
 body[data-window-transparency="true"],
 body[data-window-transparency="true"] #root {
   background-color: transparent !important;
+}
+
+/* UI animations kill-switch: appearance.ui_animations = false sets
+   data-ui-animations="off" on the root element. */
+html[data-ui-animations="off"],
+html[data-ui-animations="off"] *,
+html[data-ui-animations="off"] *::before,
+html[data-ui-animations="off"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
 }
 
 .nyaterm-wallpaper-shell[data-window-transparency="true"] .xterm,

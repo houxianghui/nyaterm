@@ -299,8 +299,8 @@ export function FileExplorerPathBar({
   return (
     <div
       ref={containerRef}
-      className="relative flex items-center border-b px-2 py-1"
-      style={{ borderColor: "var(--df-border)", minHeight: "26px" }}
+      className="relative m-1.5 flex items-center rounded-full bg-[var(--df-bg-hover)] px-3 py-1 transition-shadow focus-within:shadow-md"
+      style={{ minHeight: "26px" }}
       onKeyDown={(event) => {
         if (
           !isEditingPath &&
@@ -471,7 +471,7 @@ export function FileExplorerPathBar({
       {showHistory && (
         <div
           role="listbox"
-          className="terminal-scroll absolute inset-x-0 top-full z-30 mt-px overflow-y-auto rounded-b-md border shadow-lg"
+          className="terminal-scroll absolute inset-x-0 top-full z-30 mt-1 overflow-y-auto rounded-md border shadow-lg"
           style={{
             backgroundColor: "var(--df-bg-panel)",
             borderColor: "var(--df-border)",

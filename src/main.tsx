@@ -20,6 +20,7 @@ import {
   signalChildWindowLoadStarted,
 } from "./lib/childWindowLifecycle";
 import { DEFAULT_THEME_ID, themes } from "./lib/themes";
+import { isMacOS } from "./lib/platform";
 import { installWebviewReloadGuard } from "./lib/webviewReloadGuard";
 
 // Apply cached theme synchronously before React renders to avoid flash
@@ -47,6 +48,13 @@ const windowType = params.get("window");
 
 if (windowType) {
   void signalChildWindowLoadStarted().catch(() => {});
+  // Child windows are native-transparent off macOS (rounded chrome is drawn by the
+  // webview), so the page surface must be transparent from the very first paint —
+  // waiting for a React effect leaves an opaque square flash.
+  if (!isMacOS) {
+    document.documentElement.dataset.windowTransparency = "true";
+    document.body.dataset.windowTransparency = "true";
+  }
   // Child window: lightweight provider stack, no full App
   // These entry points are independent and should load in parallel; serial awaits would add an
   // unnecessary chunk round trip to every child-window open.
@@ -55,8 +63,8 @@ if (windowType) {
   // the parent reveal a stable surface without reintroducing the macOS white or empty window.
   childRoot.render(
     <div
-      className="flex h-screen w-full items-center justify-center bg-background"
-      style={{ backgroundColor: "var(--df-bg, #0d1117)" }}
+      className="flex h-screen w-full items-center justify-center"
+      style={isMacOS ? { backgroundColor: "var(--df-bg, #0d1117)" } : undefined}
       aria-busy="true"
     >
       <span className="size-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />

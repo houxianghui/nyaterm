@@ -1245,6 +1245,8 @@ export interface AppearanceSettings {
   minimum_contrast_ratio: number;
   /** Allow opening multiple side panels at once, stacked vertically. */
   panel_multi_open: boolean;
+  /** Enable interface transition/animation effects. */
+  ui_animations: boolean;
   /** Internal native window transparency marker. */
   window_transparency: WindowTransparency;
   /** Surface opacity for transparent windows, 0.0 to 1.0. Low values may reveal windows behind the app. */

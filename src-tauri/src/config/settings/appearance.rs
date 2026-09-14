@@ -40,6 +40,8 @@ pub struct AppearanceSettings {
     pub minimum_contrast_ratio: f64,
     #[serde(default = "default_false")]
     pub panel_multi_open: bool,
+    #[serde(default = "default_true")]
+    pub ui_animations: bool,
     /// Internal transparency marker retained for persisted settings
     /// compatibility. The visible UI derives behavior from
     /// `window_transparency_tint`: 1.0 is opaque, below 1.0 is transparent.
@@ -179,6 +181,7 @@ impl Default for AppearanceSettings {
             terminal_theme: None,
             minimum_contrast_ratio: default_minimum_contrast_ratio(),
             panel_multi_open: false,
+            ui_animations: true,
             window_transparency: String::from("none"),
             window_transparency_tint: default_window_transparency_tint(),
             window_transparency_blur: false,
@@ -243,6 +246,13 @@ mod tests {
         let settings: AppearanceSettings = serde_json::from_value(serde_json::json!({})).unwrap();
 
         assert!(!settings.window_transparency_blur);
+    }
+
+    #[test]
+    fn deserialized_default_enables_ui_animations() {
+        let settings: AppearanceSettings = serde_json::from_value(serde_json::json!({})).unwrap();
+
+        assert!(settings.ui_animations);
     }
 
     #[test]

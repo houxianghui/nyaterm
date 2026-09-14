@@ -29,7 +29,7 @@ export default function FloatingPanel({
     <div
       data-floating-panel-id={panelId}
       className={cn(
-        "absolute inset-y-0 z-30 flex min-w-0 overflow-visible shadow-2xl",
+        "absolute inset-y-0 z-30 flex min-w-0 overflow-visible",
         isLeft ? "left-0 flex-row" : "right-0 flex-row",
       )}
       style={{
@@ -39,7 +39,7 @@ export default function FloatingPanel({
       {!isLeft && <ResizeHandle direction="horizontal" onResize={onResize} />}
       <aside
         className={cn(
-          "relative flex min-w-0 flex-1 flex-col overflow-hidden",
+          "relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-md shadow-2xl",
           isLeft ? "border-r" : "border-l",
         )}
         style={{

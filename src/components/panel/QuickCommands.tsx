@@ -794,7 +794,7 @@ function QuickCommands({ onSend, onSendToAll, sendDisabled = false }: QuickComma
       : "";
   }, [allCategories, newCategoryDraft]);
   const headerControlClassName =
-    "h-7 border-0 bg-[var(--df-bg-hover)] py-1 text-xs text-[var(--df-text)] shadow-none";
+    "h-7 rounded-full border-0 bg-[var(--df-bg-hover)] py-1 text-xs text-[var(--df-text)] shadow-none transition-shadow focus-visible:shadow-md";
   const getCommandCategoryName = useCallback(
     (cmd: QuickCommand) =>
       cmd.category_id

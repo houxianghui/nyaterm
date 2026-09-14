@@ -969,6 +969,13 @@ export function AppearanceTab() {
             onChange={(v) => updateAppearance({ panel_multi_open: v })}
           />
         </SettingRow>
+
+        <SettingRow label={t("settings.uiAnimations")} desc={t("settings.uiAnimationsDesc")}>
+          <SettingSwitch
+            checked={appearance.ui_animations}
+            onChange={(v) => updateAppearance({ ui_animations: v })}
+          />
+        </SettingRow>
       </SettingSection>
 
       {isWindows && (

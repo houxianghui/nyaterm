@@ -30,6 +30,7 @@ function appearance(overrides: Partial<AppearanceSettings> = {}): AppearanceSett
     terminal_theme: null,
     minimum_contrast_ratio: 1,
     panel_multi_open: false,
+    ui_animations: true,
     window_transparency: "none",
     window_transparency_tint: 1,
     window_transparency_blur: false,
@@ -80,7 +81,7 @@ describe("terminal surface background variables", () => {
     const cssVars = buildSurfaceCssVariables(themeColors, withWallpaper);
     const terminalColors = buildTerminalThemeColors(themeColors.terminal, withWallpaper);
 
-    expect(cssVars["--df-bg-terminal"]).toBe("rgba(13, 17, 23, 0.5)");
+    expect(cssVars["--df-bg-terminal"]).toBe("rgba(29, 29, 31, 0.5)");
     expect(cssVars["--df-terminal-surface-bg"]).toBe("var(--df-bg-terminal)");
     expect(terminalColors.background).toBe("rgba(0, 0, 0, 0)");
   });
@@ -96,7 +97,7 @@ describe("terminal surface background variables", () => {
     const cssVars = buildSurfaceCssVariables(themeColors, transparentWindow);
     const terminalColors = buildTerminalThemeColors(themeColors.terminal, transparentWindow);
 
-    expect(cssVars["--df-bg-terminal"]).toBe("rgba(13, 17, 23, 0.6)");
+    expect(cssVars["--df-bg-terminal"]).toBe("rgba(29, 29, 31, 0.6)");
     expect(cssVars["--df-terminal-surface-bg"]).toBe("transparent");
     expect(terminalColors.background).toBe("rgba(0, 0, 0, 0)");
   });

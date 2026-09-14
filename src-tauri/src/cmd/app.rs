@@ -357,6 +357,16 @@ pub async fn open_child_window(
     .resizable(resizable)
     .always_on_top(options.always_on_top.unwrap_or(false));
 
+    #[cfg(not(target_os = "macos"))]
+    {
+        // macOS child windows keep native (already rounded) decorations; elsewhere the
+        // webview draws its own rounded chrome, so the native surface must be transparent.
+        builder = builder.transparent(true);
+        // The DWM shadow on undecorated Windows windows also paints a 1px square border,
+        // which clashes with the webview-drawn rounded corners.
+        builder = builder.shadow(false);
+    }
+
     #[cfg(target_os = "macos")]
     {
         builder = builder
@@ -392,6 +402,8 @@ pub async fn open_child_window(
     let window = builder
         .build()
         .map_err(|error| AppError::Config(error.to_string()))?;
+
+    crate::platform::disable_dwm_border(&window);
 
     // macOS addChildWindow:ordered: can bypass builder.visible(false) and place the window
     // above its parent. Order it out immediately after build so the WebView's first frame and

@@ -10,6 +10,7 @@ import {
 } from "react";
 import LockScreen from "@/components/dialog/app/LockScreen";
 import { useAppLockState } from "@/hooks/useAppLockState";
+import { isMacOS } from "@/lib/platform";
 import { useIdleLock } from "@/hooks/useIdleLock";
 import { DEFAULT_AI_SETTINGS } from "@/lib/aiSettings";
 import { DEFAULT_CLOUD_SYNC_SETTINGS } from "@/lib/cloudSync";
@@ -65,6 +66,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
     ui_font_size: 16,
     minimum_contrast_ratio: 1,
     panel_multi_open: false,
+    ui_animations: true,
     window_transparency: "none",
     window_transparency_tint: 1,
     window_transparency_blur: false,
@@ -308,6 +310,13 @@ export function ChildAppProvider({ children }: { children: ReactNode }) {
   }, [appSettings.appearance.ui_font_size]);
 
   useEffect(() => {
+    document.documentElement.dataset.uiAnimations = appSettings.appearance
+      .ui_animations
+      ? "on"
+      : "off";
+  }, [appSettings.appearance.ui_animations]);
+
+  useEffect(() => {
     const fontFamily = appSettings.appearance.ui_font_family;
     document.documentElement.style.setProperty("--font-sans", fontFamily);
     document.documentElement.style.setProperty("--font-display", fontFamily);
@@ -472,9 +481,11 @@ export function ChildAppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider value={contextValue}>
       {!appStateReady ? (
         <div
-          className="flex h-screen w-full items-center justify-center bg-background"
+          className="flex h-screen w-full items-center justify-center"
           aria-busy="true"
-          style={{ backgroundColor: "var(--df-bg, #0d1117)" }}
+          style={
+            isMacOS ? { backgroundColor: "var(--df-bg, #0d1117)" } : undefined
+          }
         >
           <span className="size-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         </div>

@@ -304,7 +304,7 @@ export default function AppLayout({
 
   return (
     <div
-      className="nyaterm-wallpaper-shell font-display relative h-full min-h-0 overflow-hidden"
+      className="nyaterm-wallpaper-shell font-display relative h-full min-h-0 overflow-hidden rounded-2xl"
       data-wallpaper-enabled={backgroundEnabled ? "true" : "false"}
       data-window-transparency={windowTransparencyEnabled ? "true" : "false"}
       data-window-transparency-blur={
@@ -322,7 +322,7 @@ export default function AppLayout({
           style={backgroundLayerStyle}
         />
       )}
-      <div className="relative z-10 flex h-full min-h-0 flex-col">
+      <div className="relative z-10 flex h-full min-h-0 flex-col gap-[3px] p-1.5">
         <Header
           {...header}
           onToggleLeft={() => {
@@ -333,7 +333,7 @@ export default function AppLayout({
           }}
         />
 
-        <main className="flex-1 flex overflow-hidden relative">
+        <main className="flex-1 flex overflow-hidden relative gap-[3px]">
           {!isMacOS && (leftMobileOpen || rightMobileOpen) && (
             <div
               className="absolute inset-0 bg-black/50 z-40 lg:hidden"
@@ -361,10 +361,10 @@ export default function AppLayout({
                 }}
                 className={
                   isMacOS
-                    ? "relative flex flex-col"
+                    ? "relative flex flex-col rounded-md overflow-hidden shadow-sm"
                     : `
-                    fixed inset-y-0 left-10 z-40 flex flex-col shadow-xl transition-transform duration-200
-                    lg:relative lg:left-0 lg:translate-x-0 lg:z-0 lg:shadow-none
+                    fixed inset-y-0 left-10 z-40 flex flex-col rounded-md overflow-hidden shadow-xl transition-transform duration-200
+                    lg:relative lg:left-0 lg:translate-x-0 lg:z-0 lg:shadow-sm
                     ${
                       leftMobileOpen
                         ? "translate-x-0"
@@ -414,7 +414,7 @@ export default function AppLayout({
           )}
 
           <section
-            className="flex-1 flex flex-col relative min-w-0 origin-top-left"
+            className="flex-1 flex flex-col relative min-w-0 origin-top-left rounded-md overflow-hidden gap-[3px]"
             style={{
               backgroundColor: backgroundEnabled
                 ? "transparent"
@@ -484,7 +484,7 @@ export default function AppLayout({
                     height: bottomPanel.quickCmdHeight,
                     backgroundColor: "var(--df-bg-panel)",
                   }}
-                  className="shrink-0 overflow-hidden"
+                  className="shrink-0 overflow-hidden rounded-md"
                 >
                   <QuickCommands
                     onSend={bottomPanel.onCommandSend}
@@ -513,7 +513,7 @@ export default function AppLayout({
                         }
                       : {}),
                   }}
-                  className={serialSendVisible ? "shrink-0 overflow-hidden" : "hidden"}
+                  className={serialSendVisible ? "shrink-0 overflow-hidden rounded-md" : "hidden"}
                 >
                   <SerialSendPanel
                     serialSessionId={bottomPanel.activeSerialSessionId}
@@ -546,14 +546,13 @@ export default function AppLayout({
                 style={{
                   width: rightPanelOpen ? uiConfig.right_width : 0,
                   backgroundColor: "var(--df-bg-panel)",
-                  borderColor: "var(--df-border)",
                 }}
                 className={
                   isMacOS
-                    ? `relative flex flex-col overflow-hidden ${rightPanelOpen ? "border-l" : "hidden"}`
+                    ? `relative flex flex-col overflow-hidden rounded-md shadow-sm ${rightPanelOpen ? "" : "hidden"}`
                     : `
-                    fixed inset-y-0 right-10 z-50 flex flex-col overflow-hidden shadow-xl transition-transform duration-200 border-l
-                    md:relative md:right-0 md:translate-x-0 md:z-0 md:shadow-none
+                    fixed inset-y-0 right-10 z-50 flex flex-col overflow-hidden rounded-md shadow-xl transition-transform duration-200
+                    md:relative md:right-0 md:translate-x-0 md:z-0 md:shadow-sm
                     ${
                       rightPanelOpen && rightMobileOpen
                         ? "translate-x-0"
