@@ -54,6 +54,11 @@
 - 主干快照构建改为手动触发（`workflow_dispatch`），快照 release 标签通过 REST API 更新
 - 使用本分支自己的 Tauri 更新签名密钥对
 - 移除 Windows 7 构建目标
+<img width="1920" height="1032" alt="image" src="https://github.com/user-attachments/assets/726dc223-c06a-4e0c-b55c-9db5b3490b31" />
+<img width="800" height="560" alt="image" src="https://github.com/user-attachments/assets/f8da9b06-7c45-4b19-8fb1-6e7be7efa746" />
+
+<img width="1920" height="1032" alt="image" src="https://github.com/user-attachments/assets/9d90ca1b-376b-43ec-b781-2b18d229d7fa" />
+<img width="800" height="560" alt="image" src="https://github.com/user-attachments/assets/ad2f73b4-6aea-45b7-8e3e-326eaf3099ff" />
 
 ---
 
