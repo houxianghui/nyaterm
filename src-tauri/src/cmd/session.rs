@@ -36,6 +36,11 @@ pub struct StartRecordingRequest {
 }
 
 #[tauri::command]
+pub fn get_default_local_shell() -> String {
+    core::default_local_shell_path()
+}
+
+#[tauri::command]
 pub async fn create_ssh_session(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -275,7 +280,7 @@ pub async fn create_telnet_session(
     startup_command: Option<StartupCommandPayload>,
 ) -> AppResult<String> {
     let pending_creation = state.begin_session_creation(create_request_id).await;
-    let (guard, _cancel_rx) = match pending_creation {
+    let (guard, cancel_rx) = match pending_creation {
         Some((guard, cancel_rx)) => (Some(guard), Some(cancel_rx)),
         None => (None, None),
     };
@@ -349,6 +354,7 @@ pub async fn create_telnet_session(
         cfg,
         connection_id,
         Some(window.label().to_string()),
+        cancel_rx,
         startup_command.map(|command| core::TelnetStartupCommand {
             command: command.command,
             delay_ms: command.delay_ms,
@@ -913,6 +919,7 @@ pub async fn write_to_session(
             &session_id,
             SessionCommand::Write {
                 data: data.into_bytes(),
+                raw: false,
                 automated,
                 origin,
                 sensitivity,
@@ -947,6 +954,26 @@ pub async fn write_to_session(
     }
 
     result
+}
+
+#[tauri::command]
+pub async fn write_bytes_to_session(
+    state: tauri::State<'_, Arc<SessionManager>>,
+    session_id: String,
+    data: Vec<u8>,
+) -> AppResult<()> {
+    state
+        .send_command(
+            &session_id,
+            SessionCommand::Write {
+                data,
+                raw: true,
+                automated: false,
+                origin: InputOrigin::Keyboard,
+                sensitivity: InputSensitivity::Normal,
+            },
+        )
+        .await
 }
 
 #[tauri::command]

@@ -13,12 +13,13 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useApp } from "@/context/AppContext";
 import { invoke } from "@/lib/invoke";
+import { settleCutClipboard, type CopyEntryOutcome } from "@/lib/sftpClipboard";
 import { filterEnqueueUploadRequests } from "@/lib/transferDuplicateResolution";
 import { pruneRetainedTransfers as pruneTransferMap } from "@/lib/transferRetention";
 
 export type TransferDirection = "upload" | "download" | "copy";
 export type TransferKind = "file" | "directory";
-export type TransferSource = "sftp" | "zmodem" | "serial_modem";
+export type TransferSource = "sftp" | "rdp" | "zmodem" | "serial_modem";
 export type TransferStatus =
   | "queued"
   | "transferring"
@@ -56,6 +57,10 @@ export interface EnqueueCopyRequest {
   source: CopyEndpointRequest;
   target: CopyEndpointRequest;
   duplicateStrategyOverride?: string;
+  moveSource?: boolean;
+  clipboardTimestamp?: number;
+  sourceStartedAt?: string;
+  targetStartedAt?: string;
 }
 
 interface QueuedTransferRequest {
@@ -68,6 +73,10 @@ interface QueuedTransferRequest {
   sourceEndpoint?: CopyEndpointRequest;
   targetEndpoint?: CopyEndpointRequest;
   duplicateStrategyOverride?: string;
+  moveSource?: boolean;
+  clipboardTimestamp?: number;
+  sourceStartedAt?: string;
+  targetStartedAt?: string;
 }
 
 export interface ExternalTransferProgress {
@@ -108,6 +117,10 @@ export interface TransferItem {
   timestamp: number;
   queueState?: "pending" | "running";
   source?: TransferSource;
+  moveSource?: boolean;
+  clipboardTimestamp?: number;
+  sourceStartedAt?: string;
+  targetStartedAt?: string;
 }
 
 interface TransferContextValue {
@@ -146,6 +159,7 @@ interface TransferEventPayload {
   item_count_total?: number;
   item_count_completed?: number;
   error_msg?: string;
+  source?: TransferSource;
 }
 
 function createTransferId() {
@@ -285,7 +299,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
             queueState:
               existing?.queueState ??
               (queuedTransfersRef.current.has(p.id) ? "running" : undefined),
-            source: existing?.source ?? "sftp",
+            source: p.source ?? existing?.source ?? "sftp",
           });
           return pruneRetainedTransfers(next, now);
         });
@@ -295,6 +309,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       setTransferMap((prev) => {
         const existing = prev.get(p.id);
         if (!existing) return pruneRetainedTransfers(prev, now);
+        if (existing.moveSource && p.status === "completed") return prev;
         const next = new Map(prev);
         let updated: TransferItem;
 
@@ -393,6 +408,12 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       }
 
       if (p.status === "completed" && !p.parent_id) {
+        if (p.source === "rdp" && p.direction === "download") {
+          toast.success(t("fileTransfer.readyToPaste"), {
+            description: p.local_path,
+          });
+          return;
+        }
         if (p.direction === "download") {
           toast.success(
             kind === "directory"
@@ -568,19 +589,52 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         try {
           if (request.direction === "copy") {
             if (!request.sourceEndpoint || !request.targetEndpoint) {
-              throw new Error("Copy transfer is missing source or target endpoint");
+              throw new Error(
+                "Copy transfer is missing source or target endpoint",
+              );
             }
-            await invoke("copy_file_entry", {
-              request: {
-                source: request.sourceEndpoint,
-                target: request.targetEndpoint,
-                fileName: request.fileName,
-                isDirectory: request.kind === "directory",
-                transferId: nextQueued.id,
-                duplicateStrategyOverride: request.duplicateStrategyOverride,
+            const outcome = await invoke<CopyEntryOutcome>(
+              request.moveSource ? "move_file_entry" : "copy_file_entry",
+              {
+                request: {
+                  source: request.sourceEndpoint,
+                  target: request.targetEndpoint,
+                  fileName: request.fileName,
+                  isDirectory: request.kind === "directory",
+                  transferId: nextQueued.id,
+                  duplicateStrategyOverride: request.duplicateStrategyOverride,
+                  sourceStartedAt: request.sourceStartedAt,
+                  targetStartedAt: request.targetStartedAt,
+                },
               },
-            });
-          } else if (request.direction === "upload" && request.kind === "directory") {
+            );
+            if (request.moveSource) {
+              settleCutClipboard(
+                request.sourceEndpoint.sessionId,
+                request.clipboardTimestamp,
+                request.sourceEndpoint.path,
+                outcome,
+              );
+              setTransferMap((prev) => {
+                const existing = prev.get(nextQueued.id);
+                if (!existing) return prev;
+                const next = new Map(prev);
+                next.set(nextQueued.id, {
+                  ...existing,
+                  status: outcome === "copied" ? "completed" : "cancelled",
+                  queueState: undefined,
+                  timestamp: Date.now(),
+                });
+                return pruneRetainedTransfers(next);
+              });
+            }
+            window.dispatchEvent(
+              new CustomEvent("file-explorer-paste-finished"),
+            );
+          } else if (
+            request.direction === "upload" &&
+            request.kind === "directory"
+          ) {
             await invoke("upload_local_directory", {
               sessionId: request.sessionId,
               localPath: request.localPath,
@@ -612,6 +666,12 @@ export function TransferProvider({ children }: { children: ReactNode }) {
             });
           }
         } catch (error) {
+          if (request.moveSource) {
+            toast.error(String(error));
+            window.dispatchEvent(
+              new CustomEvent("file-explorer-paste-finished"),
+            );
+          }
           setTransferMap((prev) => {
             const existing = prev.get(nextQueued.id);
             if (
@@ -856,8 +916,15 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       remotePath: item.remotePath,
       kind: item.kind,
       direction: item.direction,
+      moveSource: item.moveSource,
+      clipboardTimestamp: item.clipboardTimestamp,
+      sourceStartedAt: item.sourceStartedAt,
+      targetStartedAt: item.targetStartedAt,
       sourceEndpoint:
-        item.direction === "copy" && item.sourceSessionId && item.sourceKind && item.sourcePath
+        item.direction === "copy" &&
+        item.sourceSessionId &&
+        item.sourceKind &&
+        item.sourcePath
           ? {
               sessionId: item.sourceSessionId,
               kind: item.sourceKind,
@@ -929,6 +996,10 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           timestamp: Date.now() + index,
           queueState: "pending",
           source: "sftp",
+          moveSource: transfer.moveSource,
+          clipboardTimestamp: transfer.clipboardTimestamp,
+          sourceStartedAt: transfer.sourceStartedAt,
+          targetStartedAt: transfer.targetStartedAt,
         });
       });
       return next;
@@ -968,13 +1039,19 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         copies.map((copy) => ({
           sessionId: copy.target.sessionId,
           fileName: copy.fileName,
-          localPath: copy.target.kind === "local" ? copy.target.path : copy.source.path,
-          remotePath: copy.target.kind === "remote" ? copy.target.path : copy.source.path,
+          localPath:
+            copy.target.kind === "local" ? copy.target.path : copy.source.path,
+          remotePath:
+            copy.target.kind === "remote" ? copy.target.path : copy.source.path,
           kind: copy.kind,
           direction: "copy" as const,
           sourceEndpoint: copy.source,
           targetEndpoint: copy.target,
           duplicateStrategyOverride: copy.duplicateStrategyOverride,
+          moveSource: copy.moveSource,
+          clipboardTimestamp: copy.clipboardTimestamp,
+          sourceStartedAt: copy.sourceStartedAt,
+          targetStartedAt: copy.targetStartedAt,
         })),
       ),
     [enqueueTransfers],
@@ -1115,7 +1192,11 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <TransferContext.Provider value={contextValue}>{children}</TransferContext.Provider>;
+  return (
+    <TransferContext.Provider value={contextValue}>
+      {children}
+    </TransferContext.Provider>
+  );
 }
 
 export function useTransfer(): TransferContextValue {

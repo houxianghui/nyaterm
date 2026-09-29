@@ -33,6 +33,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useApp } from "@/context/AppContext";
 import { getErrorMessage } from "@/lib/errors";
 import { invoke } from "@/lib/invoke";
+import { isWindows } from "@/lib/platform";
 import { isValidSerialBaudRate, MAX_SERIAL_BAUD_RATE, MIN_SERIAL_BAUD_RATE } from "@/lib/serial";
 import { validateSshAgentForwardingEndpoints } from "@/lib/sshAgent";
 import type {
@@ -64,6 +65,7 @@ const MIN_SFTP_SHELL_DETECTION_TIMEOUT_MS = 100;
 const MAX_SFTP_SHELL_DETECTION_TIMEOUT_MS = 60_000;
 const DEFAULT_RDP_USERNAME = "Administrator";
 const CUSTOM_ICON_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "bmp", "gif"];
+const FALLBACK_LOCAL_SHELL = isWindows ? "powershell.exe" : "/bin/bash";
 const DEFAULT_SSH_ALGORITHMS: SshAlgorithmPreferences = {
   mode: "compatible",
   kex: [],
@@ -73,6 +75,7 @@ const DEFAULT_SSH_ALGORITHMS: SshAlgorithmPreferences = {
 };
 const DEFAULT_SFTP_SETTINGS: SftpSettings = {
   enabled: true,
+  compatibility_mode: false,
   cwd_follow_mode: "shell_integration",
   shell_detection_timeout_ms: DEFAULT_SFTP_SHELL_DETECTION_TIMEOUT_MS,
   filename_encoding: "",
@@ -116,6 +119,7 @@ function normalizeSshAlgorithms(
 function normalizeSftpSettings(value: SavedConnection["sftp"] | undefined): SftpSettings {
   return {
     enabled: value?.enabled ?? true,
+    compatibility_mode: value?.compatibility_mode ?? false,
     cwd_follow_mode: value?.cwd_follow_mode || "shell_integration",
     shell_detection_timeout_ms:
       value?.shell_detection_timeout_ms ?? DEFAULT_SFTP_SHELL_DETECTION_TIMEOUT_MS,
@@ -271,7 +275,8 @@ export default function NewSessionPage() {
   >("zmodem");
 
   // Local Terminal States
-  const [shellPath, setShellPath] = useState("powershell.exe");
+  const [defaultLocalShell, setDefaultLocalShell] = useState(FALLBACK_LOCAL_SHELL);
+  const [shellPath, setShellPath] = useState(FALLBACK_LOCAL_SHELL);
   const [shellArgs, setShellArgs] = useState("");
   const [workingDir, setWorkingDir] = useState("");
   const [dynamicTabTitle, setDynamicTabTitle] = useState(false);
@@ -292,6 +297,16 @@ export default function NewSessionPage() {
   const [recordingMode, setRecordingMode] = useState<RecordingMode>("transcript");
 
   useEffect(() => {
+    invoke<string>("get_default_local_shell")
+      .then((value) => {
+        const resolvedShell = value.trim();
+        if (!resolvedShell) return;
+        setDefaultLocalShell(resolvedShell);
+        if (!editId) {
+          setShellPath((current) => (current === FALLBACK_LOCAL_SHELL ? resolvedShell : current));
+        }
+      })
+      .catch(() => undefined);
     invoke<Group[]>("get_groups")
       .then(setGroups)
       .catch((e) => setError(getErrorMessage(e)));
@@ -387,7 +402,7 @@ export default function NewSessionPage() {
           setTelnetSendNaws(found.send_naws ?? true);
           setTelnetSendSga(found.send_sga ?? true);
         } else if (found.type === "local_terminal") {
-          setShellPath(found.shell_path || "powershell.exe");
+          setShellPath(found.shell_path || FALLBACK_LOCAL_SHELL);
           setShellArgs(found.shell_args || "");
           setWorkingDir(found.working_dir || "");
           setDynamicTabTitle(found.dynamic_tab_title ?? false);
@@ -437,6 +452,12 @@ export default function NewSessionPage() {
       .then(setCustomIcons)
       .catch((e) => setError(getErrorMessage(e)));
   }, [appSettings.recording.auto_start, appSettings.recording.default_mode, editId, t]);
+
+  useEffect(() => {
+    if (initialData?.type === "local_terminal" && !initialData.shell_path?.trim()) {
+      setShellPath(defaultLocalShell);
+    }
+  }, [defaultLocalShell, initialData]);
 
   const loadSerialPorts = useCallback(async () => {
     setSerialPortsLoading(true);
@@ -504,7 +525,7 @@ export default function NewSessionPage() {
     setParity("none");
     setStopBits("1");
     setSerialModemUploadProtocol("zmodem");
-    setShellPath("powershell.exe");
+    setShellPath(defaultLocalShell);
     setShellArgs("");
     setWorkingDir("");
     setDynamicTabTitle(false);
@@ -540,7 +561,7 @@ export default function NewSessionPage() {
     setShowIconPicker(false);
     setError("");
     setConnecting(false);
-  }, [appSettings.recording.auto_start, appSettings.recording.default_mode, currentTab]);
+  }, [appSettings.recording.auto_start, appSettings.recording.default_mode, currentTab, defaultLocalShell]);
 
   const handleTabChange = useCallback((value: string) => {
     setCurrentTab(value);

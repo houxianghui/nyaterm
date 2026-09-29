@@ -4,6 +4,8 @@ import {
   MdAutoAwesome,
   MdBookmarkAdd,
   MdContentCopy,
+  MdContentCut,
+  MdContentPaste,
   MdCopyAll,
   MdCreateNewFolder,
   MdDelete,
@@ -13,6 +15,7 @@ import {
   MdEdit,
   MdFileOpen,
   MdFolderCopy,
+  MdFolderOpen,
   MdInfo,
   MdKeyboardArrowRight,
   MdKeyboardDoubleArrowRight,
@@ -22,12 +25,14 @@ import {
   MdOpenInNew,
   MdRefresh,
   MdSend,
+  MdTerminal,
   MdUpload,
   MdVisibility,
 } from "react-icons/md";
 import type { AICustomActionConfig } from "@/types/global";
 import {
   ContextMenuContent,
+  ContextMenuGroup,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuSub,
@@ -61,27 +66,120 @@ interface FileExplorerEntryContextMenuProps {
   onNewSymlink?: (directoryPath: string) => void;
   onUpload: (directoryPath: string) => void;
   onUploadFolder: (directoryPath: string) => void;
+  onUploadFolderContents: (directoryPath: string) => void;
   onDownload: (rows: FileExplorerTreeRow[]) => void;
   onSendToPeer?: (rows: FileExplorerTreeRow[]) => void;
-  onSendToTarget?: (
-    rows: FileExplorerTreeRow[],
-    targetSessionId: string,
-  ) => void;
+  onSendToTarget?: (rows: FileExplorerTreeRow[], targetSessionId: string) => void;
   onRename: (row: FileExplorerTreeRow) => void;
   onMove: (rows: FileExplorerTreeRow[]) => void;
   onDelete: (rows: FileExplorerTreeRow[]) => void;
   onAddToFavorites: (row: FileExplorerTreeRow) => void;
   onCopyPath: (row: FileExplorerTreeRow, mode: "dir" | "name" | "full") => void;
-  onSendToTerminal?: (
-    row: FileExplorerTreeRow,
-    mode: "dir" | "name" | "full",
-  ) => void;
+  onSendToTerminal?: (row: FileExplorerTreeRow, mode: "dir" | "name" | "full") => void;
+  onEnterDirectoryInTerminal?: (row: FileExplorerTreeRow) => void;
+  onOpenDirectoryInNewTerminal?: (row: FileExplorerTreeRow) => void;
   onProperties: (row: FileExplorerTreeRow) => void;
+  onCopyEntries?: (rows: FileExplorerTreeRow[]) => void;
+  onCutEntries?: (rows: FileExplorerTreeRow[]) => void;
+  onPaste?: () => void;
+  canPaste?: boolean;
   onAIAction: (row: FileExplorerTreeRow, action: AICustomActionConfig) => void;
 }
 
 function rowsContain(rows: FileExplorerTreeRow[], target: FileExplorerTreeRow) {
   return rows.some((row) => row.path === target.path);
+}
+
+interface FileExplorerContextMenuActionBarProps {
+  onCut?: () => void;
+  onCopy?: () => void;
+  onPaste?: () => void;
+  onRename?: () => void;
+  onDelete?: () => void;
+  canCut?: boolean;
+  canCopy?: boolean;
+  canPaste?: boolean;
+  canRename?: boolean;
+  canDelete?: boolean;
+}
+
+export function FileExplorerContextMenuActionBar({
+  onCut,
+  onCopy,
+  onPaste,
+  onRename,
+  onDelete,
+  canCut = false,
+  canCopy = false,
+  canPaste = false,
+  canRename = false,
+  canDelete = false,
+}: FileExplorerContextMenuActionBarProps) {
+  const { t } = useTranslation();
+
+  return (
+    <>
+      <ContextMenuGroup className="grid grid-cols-5 gap-0.5 p-0.5">
+        <ContextMenuItem
+          className="h-12 min-w-0 flex-col justify-center gap-1 px-0.5 py-1 text-[0.625rem] leading-none"
+          disabled={!canCut}
+          onClick={onCut}
+          title={t("fileExplorer.cmCut")}
+        >
+          <MdContentCut className="size-4" />
+          <span className="line-clamp-2 w-full text-center leading-[1.05]">
+            {t("fileExplorer.cmCut")}
+          </span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          className="before:bg-border/70 before:absolute before:top-1/2 before:-left-px before:h-5 before:w-px before:-translate-y-1/2 h-12 min-w-0 flex-col justify-center gap-1 px-0.5 py-1 text-[0.625rem] leading-none"
+          disabled={!canCopy}
+          onClick={onCopy}
+          title={t("fileExplorer.cmCopy")}
+        >
+          <MdContentCopy className="size-4" />
+          <span className="line-clamp-2 w-full text-center leading-[1.05]">
+            {t("fileExplorer.cmCopy")}
+          </span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          className="before:bg-border/70 before:absolute before:top-1/2 before:-left-px before:h-5 before:w-px before:-translate-y-1/2 h-12 min-w-0 flex-col justify-center gap-1 px-0.5 py-1 text-[0.625rem] leading-none"
+          disabled={!canPaste}
+          onClick={onPaste}
+          title={t("fileExplorer.cmPaste")}
+        >
+          <MdContentPaste className="size-4" />
+          <span className="line-clamp-2 w-full text-center leading-[1.05]">
+            {t("fileExplorer.cmPaste")}
+          </span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          className="before:bg-border/70 before:absolute before:top-1/2 before:-left-px before:h-5 before:w-px before:-translate-y-1/2 h-12 min-w-0 flex-col justify-center gap-1 px-0.5 py-1 text-[0.625rem] leading-none"
+          disabled={!canRename}
+          onClick={onRename}
+          title={t("fileExplorer.cmRename")}
+        >
+          <MdEdit className="size-4" />
+          <span className="line-clamp-2 w-full text-center leading-[1.05]">
+            {t("fileExplorer.cmRename")}
+          </span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          className="before:bg-border/70 before:absolute before:top-1/2 before:-left-px before:h-5 before:w-px before:-translate-y-1/2 h-12 min-w-0 flex-col justify-center gap-1 px-0.5 py-1 text-[0.625rem] leading-none"
+          disabled={!canDelete}
+          onClick={onDelete}
+          title={t("fileExplorer.cmDelete")}
+          variant="destructive"
+        >
+          <MdDelete className="size-4" />
+          <span className="line-clamp-2 w-full text-center leading-[1.05]">
+            {t("fileExplorer.cmDelete")}
+          </span>
+        </ContextMenuItem>
+      </ContextMenuGroup>
+      <ContextMenuSeparator />
+    </>
+  );
 }
 
 export default function FileExplorerEntryContextMenu({
@@ -105,6 +203,7 @@ export default function FileExplorerEntryContextMenu({
   onNewSymlink,
   onUpload,
   onUploadFolder,
+  onUploadFolderContents,
   onDownload,
   onSendToPeer,
   onSendToTarget,
@@ -114,7 +213,13 @@ export default function FileExplorerEntryContextMenu({
   onAddToFavorites,
   onCopyPath,
   onSendToTerminal,
+  onEnterDirectoryInTerminal,
+  onOpenDirectoryInNewTerminal,
   onProperties,
+  onCopyEntries,
+  onCutEntries,
+  onPaste,
+  canPaste = false,
   onAIAction,
 }: FileExplorerEntryContextMenuProps) {
   const { t } = useTranslation();
@@ -127,12 +232,30 @@ export default function FileExplorerEntryContextMenu({
   const isFile = !!target && !target.entry.is_dir;
   const showOpenInternal = isFile && editorType === "external";
   const showOpenExternal = isFile && editorType === "internal";
+  const showActionBar = !!onCopyEntries || !!onCutEntries || !!onPaste;
+  const hasActionableTarget = !!target && !target.isRoot && actionRows.length > 0;
 
   return (
     <ContextMenuContent
-      className="min-w-[200px]"
+      className={showActionBar ? "w-64 max-w-[calc(100vw-1rem)] min-w-0" : "min-w-[200px]"}
       onCloseAutoFocus={onCloseAutoFocus}
     >
+      {showActionBar && (
+        <FileExplorerContextMenuActionBar
+          onCut={() => onCutEntries?.(actionRows)}
+          onCopy={() => onCopyEntries?.(actionRows)}
+          onPaste={onPaste}
+          onRename={() => {
+            if (target && activeSessionId) onRename(target);
+          }}
+          onDelete={() => onDelete(actionRows)}
+          canCut={hasActionableTarget && !!onCutEntries}
+          canCopy={hasActionableTarget && !!onCopyEntries}
+          canPaste={canPaste && !!onPaste}
+          canRename={hasActionableTarget && !!activeSessionId}
+          canDelete={hasActionableTarget}
+        />
+      )}
       {target ? (
         <>
           <ContextMenuItem
@@ -198,6 +321,12 @@ export default function FileExplorerEntryContextMenu({
                         <MdDriveFolderUpload className="text-[0.875rem] text-muted-foreground mr-2" />
                         {t("fileExplorer.uploadFolder")}
                       </ContextMenuItem>
+                      <ContextMenuItem
+                        onClick={() => onUploadFolderContents(targetDirectory)}
+                      >
+                        <MdDriveFolderUpload className="text-[0.875rem] text-muted-foreground mr-2" />
+                        {t("fileExplorer.uploadFolderContents")}
+                      </ContextMenuItem>
                     </ContextMenuSubContent>
                   </ContextMenuSub>
                   <ContextMenuItem onClick={() => onDownload(actionRows)}>
@@ -250,14 +379,16 @@ export default function FileExplorerEntryContextMenu({
 
           {!target.isRoot && (
             <>
-              <ContextMenuItem
-                onClick={() => {
-                  if (activeSessionId) onRename(target);
-                }}
-              >
-                <MdEdit className="text-[0.875rem] text-muted-foreground mr-2" />
-                {t("fileExplorer.cmRename")}
-              </ContextMenuItem>
+              {!showActionBar && (
+                <ContextMenuItem
+                  onClick={() => {
+                    if (activeSessionId) onRename(target);
+                  }}
+                >
+                  <MdEdit className="text-[0.875rem] text-muted-foreground mr-2" />
+                  {t("fileExplorer.cmRename")}
+                </ContextMenuItem>
+              )}
               <ContextMenuItem
                 onClick={() => {
                   if (activeSessionId) onMove(actionRows);
@@ -266,13 +397,15 @@ export default function FileExplorerEntryContextMenu({
                 <MdDriveFileMove className="text-[0.875rem] text-muted-foreground mr-2" />
                 {t("fileExplorer.cmMove")}
               </ContextMenuItem>
-              <ContextMenuItem
-                variant="destructive"
-                onClick={() => onDelete(actionRows)}
-              >
-                <MdDelete className="text-[0.875rem] mr-2" />
-                {t("fileExplorer.cmDelete")}
-              </ContextMenuItem>
+              {!showActionBar && (
+                <ContextMenuItem
+                  variant="destructive"
+                  onClick={() => onDelete(actionRows)}
+                >
+                  <MdDelete className="text-[0.875rem] mr-2" />
+                  {t("fileExplorer.cmDelete")}
+                </ContextMenuItem>
+              )}
               <ContextMenuSeparator />
             </>
           )}
@@ -287,34 +420,66 @@ export default function FileExplorerEntryContextMenu({
             </>
           )}
 
-          <ContextMenuItem onClick={() => onCopyPath(target, "full")}>
-            <MdContentCopy className="text-[0.875rem] text-muted-foreground mr-2" />
-            {t("fileExplorer.cmCopyPath")}
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => onCopyPath(target, "name")}>
-            <MdCopyAll className="text-[0.875rem] text-muted-foreground mr-2" />
-            {t("fileExplorer.cmCopyName")}
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => onCopyPath(target, "dir")}>
-            <MdFolderCopy className="text-[0.875rem] text-muted-foreground mr-2" />
-            {t("fileExplorer.cmCopyDirPath")}
-          </ContextMenuItem>
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <MdContentCopy className="text-[0.875rem] text-muted-foreground mr-2" />
+              {t("fileExplorer.cmCopyInfo")}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem onClick={() => onCopyPath(target, "full")}>
+                <MdContentCopy className="text-[0.875rem] text-muted-foreground mr-2" />
+                {t("fileExplorer.cmCopyPath")}
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => onCopyPath(target, "name")}>
+                <MdCopyAll className="text-[0.875rem] text-muted-foreground mr-2" />
+                {t("fileExplorer.cmCopyName")}
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => onCopyPath(target, "dir")}>
+                <MdFolderCopy className="text-[0.875rem] text-muted-foreground mr-2" />
+                {t("fileExplorer.cmCopyDirPath")}
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
 
           {terminalInputEnabled && onSendToTerminal && (
             <>
               <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => onSendToTerminal(target, "full")}>
-                <MdKeyboardReturn className="text-[0.875rem] text-muted-foreground mr-2" />
-                {t("fileExplorer.cmTerminalPath")}
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => onSendToTerminal(target, "name")}>
-                <MdKeyboardArrowRight className="text-[0.875rem] text-muted-foreground mr-2" />
-                {t("fileExplorer.cmTerminalName")}
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => onSendToTerminal(target, "dir")}>
-                <MdKeyboardDoubleArrowRight className="text-[0.875rem] text-muted-foreground mr-2" />
-                {t("fileExplorer.cmTerminalDirPath")}
-              </ContextMenuItem>
+              <ContextMenuSub>
+                <ContextMenuSubTrigger>
+                  <MdTerminal className="text-[0.875rem] text-muted-foreground mr-2" />
+                  {t("fileExplorer.cmTerminal")}
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent>
+                  {target.entry.is_dir &&
+                    !target.entry.is_symlink &&
+                    onEnterDirectoryInTerminal &&
+                    onOpenDirectoryInNewTerminal && (
+                      <>
+                        <ContextMenuItem onClick={() => onEnterDirectoryInTerminal(target)}>
+                          <MdFolderOpen className="text-[0.875rem] text-muted-foreground mr-2" />
+                          {t("fileExplorer.cmEnterDirectory")}
+                        </ContextMenuItem>
+                        <ContextMenuItem onClick={() => onOpenDirectoryInNewTerminal(target)}>
+                          <MdOpenInNew className="text-[0.875rem] text-muted-foreground mr-2" />
+                          {t("fileExplorer.cmOpenDirectoryNewTerminal")}
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                      </>
+                    )}
+                  <ContextMenuItem onClick={() => onSendToTerminal(target, "full")}>
+                    <MdKeyboardReturn className="text-[0.875rem] text-muted-foreground mr-2" />
+                    {t("fileExplorer.cmTerminalPath")}
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => onSendToTerminal(target, "name")}>
+                    <MdKeyboardArrowRight className="text-[0.875rem] text-muted-foreground mr-2" />
+                    {t("fileExplorer.cmTerminalName")}
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => onSendToTerminal(target, "dir")}>
+                    <MdKeyboardDoubleArrowRight className="text-[0.875rem] text-muted-foreground mr-2" />
+                    {t("fileExplorer.cmTerminalDirPath")}
+                  </ContextMenuItem>
+                </ContextMenuSubContent>
+              </ContextMenuSub>
             </>
           )}
 

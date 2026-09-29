@@ -59,8 +59,10 @@ import {
   sendStartupCommandToSession,
 } from "./lib/appSessionFactory";
 import {
+  buildDirectoryChangeCommand,
   buildReconnectCwdStartupCommand,
   carryOverSessionCwd,
+  isTerminalDirectoryPath,
 } from "./lib/terminalSessionCwd";
 import {
   buildPanelOpenUpdate,
@@ -148,16 +150,13 @@ import {
   collectSessionPanes,
   findPaneBySessionId,
   findSessionPaneById,
+  findSessionPaneBySessionId,
   findTabBySessionId,
   getActivePane,
   getActiveSessionTabDisplayName,
   getReleasedSessionIds,
 } from "./lib/workspaceTabs";
-import {
-  getDynamicTitle,
-  startDynamicTitles,
-  useDynamicTitles,
-} from "./lib/dynamicTabTitles";
+import { getDynamicTitle, startDynamicTitles, useDynamicTitles } from "./lib/dynamicTabTitles";
 import type {
   AppSettings,
   AssetMetadata,
@@ -288,6 +287,8 @@ function App() {
   // Mobile state
   const [mobileLeftOpen, setMobileLeftOpen] = useState(false);
   const [mobileRightOpen, setMobileRightOpen] = useState(false);
+  const [paneFocusMode, setPaneFocusMode] = useState(false);
+  const [nativeFullscreen, setNativeFullscreen] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [showSyncGroupDialog, setShowSyncGroupDialog] = useState(false);
@@ -829,6 +830,57 @@ function App() {
   const activeConnection = activePane?.connectionId
     ? (savedConnections.find((connection) => connection.id === activePane.connectionId) ?? null)
     : null;
+
+  useEffect(() => {
+    if (paneFocusMode && !activePane) {
+      setPaneFocusMode(false);
+    }
+  }, [activePane, paneFocusMode]);
+
+  useEffect(() => {
+    if (!paneFocusMode) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPaneFocusMode(false);
+    };
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  }, [paneFocusMode]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      window.dispatchEvent(
+        new CustomEvent("nyaterm:refresh-terminals", {
+          detail: { nativeFullscreen, paneFocusMode },
+        }),
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [paneFocusMode, nativeFullscreen]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenResize: (() => void) | undefined;
+    let unlistenFocus: (() => void) | undefined;
+    void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+      if (disposed) return;
+      const currentWindow = getCurrentWindow();
+      const syncFullscreen = async () => {
+        const fullscreen = await currentWindow.isFullscreen().catch(() => false);
+        if (!disposed) setNativeFullscreen(fullscreen);
+      };
+      await syncFullscreen();
+      unlistenResize = await currentWindow.onResized(() => void syncFullscreen());
+      unlistenFocus = await currentWindow.onFocusChanged(() => void syncFullscreen());
+    });
+    return () => {
+      disposed = true;
+      unlistenResize?.();
+      unlistenFocus?.();
+    };
+  }, []);
   const [aiIntent, setAiIntent] = useState<AIOpenIntent | null>(null);
   const [terminalWindows, setTerminalWindows] = useState<TerminalWindowNode | null>(null);
   const previousActiveTabIdRef = useRef<string | null>(null);
@@ -2293,8 +2345,13 @@ function App() {
   // --- Tab context-menu callbacks ---
 
   const handleDuplicateSession = useCallback(
-    async (tab: Tab, startupCommand?: StartupCommandRequest) => {
-      const pane = getActivePane(tab);
+    async (
+      tab: Tab,
+      startupCommand?: StartupCommandRequest,
+      sourcePane?: SessionPane,
+      workingDir?: string,
+    ) => {
+      const pane = sourcePane ?? getActivePane(tab);
       if (!canCreateSessionFromPane(pane)) return;
       if (startupCommand && isSftpOnlyPane(pane, liveSessionsById)) return;
 
@@ -2315,7 +2372,12 @@ function App() {
           current ? insertTabAfterInLeaf(current, tab.id, tabId, tabId) : current,
         );
         try {
-          const sessionId = await createSessionForPane(pane, createRequestId, startupCommand);
+          const sessionId = await createSessionForPane(
+            pane,
+            createRequestId,
+            startupCommand,
+            workingDir,
+          );
           if (!hasTab(tabId)) {
             await closeStaleCreatedSession(sessionId);
             return;
@@ -3113,6 +3175,20 @@ function App() {
     void handleToggleSessionRecordingById(activePane.sessionId, "transcript");
   }, [activePane, handleToggleSessionRecordingById, isLocked]);
 
+  const handleTogglePaneFocus = useCallback(() => {
+    if (!activePane) return;
+    setPaneFocusMode((current) => !current);
+  }, [activePane]);
+
+  const handleToggleNativeFullscreen = useCallback(() => {
+    void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+      const currentWindow = getCurrentWindow();
+      const fullscreen = await currentWindow.isFullscreen();
+      await currentWindow.setFullscreen(!fullscreen);
+      setNativeFullscreen(!fullscreen);
+    });
+  }, []);
+
   useGlobalShortcuts(
     {
       onNewSession: () => handleNewSession(),
@@ -3129,6 +3205,8 @@ function App() {
       onSwitchTab: handleSwitchTab,
       onToggleLeftSidebar: handleToggleLeftSidebar,
       onToggleRightSidebar: handleToggleRightSidebar,
+      onTogglePaneFocus: handleTogglePaneFocus,
+      onToggleNativeFullscreen: handleToggleNativeFullscreen,
       onZoomIn: handleZoomIn,
       onZoomOut: handleZoomOut,
       onResetZoom: handleResetZoom,
@@ -3297,9 +3375,59 @@ function App() {
     activeRemoteStatsEnabled,
     uiConfig.remote_stats_interval ?? 3,
   );
-  const networkHistoryStore = useNetworkHistory(
-    remoteStats.sessionId,
-    remoteStats.stats,
+  const networkHistoryStore = useNetworkHistory(remoteStats.sessionId, remoteStats.stats);
+
+  const handleOpenDirectoryInNewTerminal = useCallback(
+    (sessionId: string, path: string) => {
+      const source = tabs
+        .map((tab) => ({
+          tab,
+          pane: findSessionPaneBySessionId(tab.root, sessionId),
+        }))
+        .find(({ pane }) => pane?.paneKind === "terminal");
+      const tab = source?.tab;
+      const pane = source?.pane;
+      const session = liveSessionsById?.get(sessionId);
+      if (
+        !tab ||
+        !pane ||
+        pane.paneKind !== "terminal" ||
+        !session?.connected ||
+        isSftpOnlyPane(pane, liveSessionsById) ||
+        (pane.type !== "SSH" && pane.type !== "Local")
+      ) {
+        toast.error(t("fileExplorer.directoryTerminalUnavailable"));
+        return;
+      }
+      if (pane.type === "Local") {
+        if (!isTerminalDirectoryPath(path)) {
+          toast.error(t("fileExplorer.directoryTerminalInvalidPath"));
+          return;
+        }
+        void handleDuplicateSession(tab, undefined, pane, path);
+        return;
+      }
+      const command = buildDirectoryChangeCommand(path, "posix");
+      if (!command) {
+        toast.error(t("fileExplorer.directoryTerminalInvalidPath"));
+        return;
+      }
+      void handleDuplicateSession(
+        tab,
+        {
+          command,
+          delayMs: appSettings.interaction.duplicate_session_command_delay_ms,
+        },
+        pane,
+      );
+    },
+    [
+      appSettings.interaction.duplicate_session_command_delay_ms,
+      handleDuplicateSession,
+      liveSessionsById,
+      t,
+      tabs,
+    ],
   );
   const headerStatusMode = normalizeHeaderStatusMode(uiConfig.header_status_mode);
   const headerStatusVisible = uiConfig.header_status_visible !== false;
@@ -3753,6 +3881,7 @@ function App() {
         onSessionDisconnect={handleDisconnectSessionById}
         canReconnect={canReconnectSessionById}
         onCommandSend={handleHistoryCommand}
+        onOpenDirectoryInNewTerminal={handleOpenDirectoryInNewTerminal}
         onToggleSessionRecording={handleToggleSessionRecording}
         onSaveSessionTranscript={handleSaveSessionTranscript}
       />
@@ -3774,6 +3903,7 @@ function App() {
       handleDisconnectSessionById,
       handleEditConnection,
       handleHistoryCommand,
+      handleOpenDirectoryInNewTerminal,
       handleNewSession,
       handleOpenTemporarySshLink,
       handleReconnectSessionById,
@@ -3836,6 +3966,9 @@ function App() {
         t={t}
         uiConfig={uiConfig}
         appearance={appSettings.appearance}
+        paneFocusMode={paneFocusMode}
+        nativeFullscreen={nativeFullscreen}
+        onExitPaneFocus={() => setPaneFocusMode(false)}
         header={{
           onNewSession: () => handleNewSession(),
           onAbout: () => setShowAbout(true),
@@ -3923,6 +4056,7 @@ function App() {
           layout: terminalWindows,
           tabsById,
           focusedTabId: activeTabId,
+          paneFocusMode,
           unreadTabIds,
           disconnectedTabIds,
           sessionInfoById: liveSessionsById,

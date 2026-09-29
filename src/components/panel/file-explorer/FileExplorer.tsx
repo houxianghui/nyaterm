@@ -29,12 +29,15 @@ import {
   MdContentCopy,
   MdCreateNewFolder,
   MdDriveFolderUpload,
+  MdFolderOpen,
   MdFolderOff,
   MdInfo,
   MdLink,
   MdNoteAdd,
+  MdOpenInNew,
   MdRefresh,
   MdSyncLock,
+  MdTerminal,
   MdUpload,
 } from "react-icons/md";
 import { PiColumnsPlusRightBold } from "react-icons/pi";
@@ -48,6 +51,7 @@ import type { NewItemDialogData } from "@/components/dialog/file-explorer/NewIte
 import type { NewSymlinkDialogData } from "@/components/dialog/file-explorer/NewSymlinkDialog";
 import type { PropertiesDialogData } from "@/components/dialog/file-explorer/PropertiesDialog";
 import ExternalFileDropOverlay from "@/components/ExternalFileDropOverlay";
+import { PasteConfirmDialog } from "@/components/dialog/file-explorer/PasteConfirmDialog";
 import PanelHeader from "@/components/layout/PanelHeader";
 import { Button } from "@/components/ui/button";
 import {
@@ -79,14 +83,32 @@ import { getErrorMessage } from "@/lib/errors";
 import { MAX_EDITOR_FILE_BYTES } from "@/lib/fileEditorLimits";
 import { invoke } from "@/lib/invoke";
 import { logger } from "@/lib/logger";
-import { sendSessionInput, sendSessionInputWithSync } from "@/lib/sessionInput";
+import {
+  buildTerminalCommandInput,
+  sendSessionInput,
+  sendSessionInputWithSync,
+} from "@/lib/sessionInput";
+import {
+  buildDirectoryChangeCommand,
+  getDirectoryShell,
+} from "@/lib/terminalSessionCwd";
+import { isWindows } from "@/lib/platform";
+import {
+  selectionToClipboardEntries,
+  type FileClipboardMode,
+} from "@/lib/sftpClipboard";
 import { matchesKeyEvent } from "@/lib/shortcutRegistry";
 import { getSessionInputPeerIds } from "@/lib/syncInputGroups";
 import { cn, formatSize } from "@/lib/utils";
 import type { FileWindowTarget } from "@/lib/windowManager";
-import { openAutoUpload, openFilePreview, openRemoteFileEditor } from "@/lib/windowManager";
+import {
+  openAutoUpload,
+  openFilePreview,
+  openRemoteFileEditor,
+} from "@/lib/windowManager";
 import {
   findOpenFileDocument,
+  findSessionPaneBySessionId,
   findSessionPaneById,
 } from "@/lib/workspaceTabs";
 import type {
@@ -105,7 +127,9 @@ import {
   FileExplorerPathBar,
 } from "./FileExplorerPathBar";
 import { FileExplorerToolbar } from "./FileExplorerToolbar";
-import FileExplorerEntryContextMenu from "./FileExplorerEntryContextMenu";
+import FileExplorerEntryContextMenu, {
+  FileExplorerContextMenuActionBar,
+} from "./FileExplorerEntryContextMenu";
 import FileExplorerTree from "./FileExplorerTree";
 import { FileListItem } from "./FileListItem";
 import {
@@ -158,6 +182,7 @@ import {
   type FileExplorerTreeEntry,
   type FileExplorerTreeRow,
 } from "./fileExplorerTreeModel";
+import { useFileExplorerClipboard } from "./useFileExplorerClipboard";
 import { useFileExplorerTree } from "./useFileExplorerTree";
 
 const MemoizedFileExplorer = memo(FileExplorer);
@@ -626,6 +651,7 @@ function FileExplorer(props: FileExplorerProps) {
               activeSessionType={toFileExplorerSessionType(selectedTarget)}
               activeConnectionId={null}
               activeSessionName={selectedTarget.name}
+              onOpenDirectoryInNewTerminal={props.onOpenDirectoryInNewTerminal}
               headerMeta={`${selectedTarget.name} · ${
                 selectedTarget.connected
                   ? t("fileExplorer.connected")
@@ -651,6 +677,7 @@ function FileExplorer(props: FileExplorerProps) {
 
   return (
     <div ref={containerRef} className="relative h-full min-h-0">
+      <PasteConfirmDialog />
       <FileExplorerPane
         {...props}
         activeSessionName={
@@ -695,6 +722,7 @@ function FileExplorerPane({
   activeConnectionId,
   activeSessionName,
   terminalInputEnabled = true,
+  onOpenDirectoryInNewTerminal,
   headerMeta,
   headerActions,
   peerEndpoint,
@@ -2219,6 +2247,85 @@ function FileExplorerPane({
     [activeSessionId, broadcastToAll, syncGroups, tabs, terminalInputEnabled],
   );
 
+  const enterDirectoryInTerminal = useCallback(
+    async (path: string) => {
+      if (!activeSessionId || !terminalInputEnabled) {
+        toast.error(t("fileExplorer.directoryTerminalUnavailable"));
+        return;
+      }
+      const pane = tabs
+        .map((tab) => findSessionPaneBySessionId(tab.root, activeSessionId))
+        .find((candidate) => candidate?.paneKind === "terminal");
+      try {
+        const sessions = await invoke<SessionInfo[]>("list_sessions");
+        const session = sessions.find(
+          (candidate) => candidate.id === activeSessionId,
+        );
+        if (
+          !pane ||
+          !session?.connected ||
+          session.ssh_runtime_mode === "sftp"
+        ) {
+          toast.error(t("fileExplorer.directoryTerminalUnavailable"));
+          return;
+        }
+      } catch (error) {
+        toast.error(getErrorMessage(error));
+        return;
+      }
+      const connectionId = pane?.connectionId ?? activeConnectionId;
+      const shellPath = savedConnections.find(
+        (connection) => connection.id === connectionId,
+      )?.shell_path;
+      const shell =
+        activeSessionType === "SSH"
+          ? "posix"
+          : getDirectoryShell(shellPath, isWindows);
+      if (!shell) {
+        toast.error(t("fileExplorer.directoryTerminalUnavailable"));
+        return;
+      }
+      const command = buildDirectoryChangeCommand(
+        path,
+        shell,
+        activeSessionType === "Local" && isWindows && shell === "posix",
+      );
+      if (!command) {
+        toast.error(t("fileExplorer.directoryTerminalInvalidPath"));
+        return;
+      }
+      try {
+        await sendSessionInput(
+          activeSessionId,
+          buildTerminalCommandInput(command, true),
+        );
+        void emit(`focus-terminal-${activeSessionId}`);
+      } catch (error) {
+        toast.error(getErrorMessage(error));
+      }
+    },
+    [
+      activeConnectionId,
+      activeSessionId,
+      activeSessionType,
+      savedConnections,
+      t,
+      tabs,
+      terminalInputEnabled,
+    ],
+  );
+
+  const openDirectoryInNewTerminal = useCallback(
+    (path: string) => {
+      if (!activeSessionId || !onOpenDirectoryInNewTerminal) {
+        toast.error(t("fileExplorer.directoryTerminalUnavailable"));
+        return;
+      }
+      onOpenDirectoryInNewTerminal(activeSessionId, path);
+    },
+    [activeSessionId, onOpenDirectoryInNewTerminal, t],
+  );
+
   const handleSendCurrentPathToTerminal = () => {
     sendTextToTerminal(currentPath);
   };
@@ -2322,6 +2429,44 @@ function FileExplorerPane({
         target.tagName === "SELECT")
     ) {
       return;
+    }
+
+    if (
+      canUseRemoteTransfer &&
+      !event.nativeEvent.isComposing &&
+      !inlineRenameState
+    ) {
+      for (const action of ["copy", "cut", "paste"] as const) {
+        if (
+          !matchesKeyEvent(
+            resolveShortcutKeys(
+              `fileExplorer.${action}`,
+              appSettings.keybindings,
+            ),
+            event.nativeEvent,
+          )
+        )
+          continue;
+        event.preventDefault();
+        event.stopPropagation();
+        if (action === "paste") void fileClipboard.paste();
+        else if (isTreeView)
+          void fileClipboard.copyEntries(
+            selectionToClipboardEntries(selectedTreeRows),
+            action,
+          );
+        else
+          void fileClipboard.copyEntries(
+            selectionToClipboardEntries(
+              selectedRealFiles.map((entry) => ({
+                entry,
+                path: getEntryFullPath(entry),
+              })),
+            ),
+            action,
+          );
+        return;
+      }
     }
 
     if (isTreeView) {
@@ -3158,6 +3303,38 @@ function FileExplorerPane({
     }
   };
 
+  const handleUploadFolderContents = async (directoryPath = currentPath) => {
+    if (!canUseRemoteTransfer) return;
+    const target = resolveUploadTarget(directoryPath);
+    if (!target) return;
+
+    try {
+      const localDirs = await openDialog({ directory: true, multiple: true });
+      if (!localDirs) return;
+      const pathList = (
+        Array.isArray(localDirs) ? localDirs : [localDirs]
+      ).filter((localDir): localDir is string => typeof localDir === "string");
+      const entries = await invoke<ResolvedLocalDropPathEntry[]>(
+        "resolve_local_directory_children",
+        { paths: pathList },
+      );
+      if (entries.length === 0) {
+        toast.info(t("fileExplorer.uploadFolderContentsEmpty"));
+        return;
+      }
+      uploadLocalEntriesToTarget(target, entries);
+    } catch (error) {
+      logger.error({
+        domain: "transfer.lifecycle",
+        event: "upload.folder_contents_failed",
+        message: "Upload folder contents failed",
+        ids: { session_id: target.sessionId },
+        error,
+      });
+      toast.error(String(error));
+    }
+  };
+
   const handleOpenExternal = async (
     entry: FileEntry,
     fullPath = getEntryFullPath(entry),
@@ -3320,6 +3497,30 @@ function FileExplorerPane({
     },
     [treeState.selectedRows],
   );
+
+  const fileClipboard = useFileExplorerClipboard(
+    activeSessionId,
+    canUseRemoteTransfer,
+    currentPath,
+  );
+  const copyListEntry = (entry: FileEntry, mode: FileClipboardMode) => {
+    const entries = selectedFiles.has(entry.name) ? selectedRealFiles : [entry];
+    void fileClipboard.copyEntries(
+      selectionToClipboardEntries(
+        entries.map((entry) => ({ entry, path: getEntryFullPath(entry) })),
+      ),
+      mode,
+    );
+  };
+  useEffect(() => {
+    const refresh = () => {
+      if (isTreeView) treeState.refreshAll();
+      void refreshCurrentDirectory();
+    };
+    window.addEventListener("file-explorer-paste-finished", refresh);
+    return () =>
+      window.removeEventListener("file-explorer-paste-finished", refresh);
+  }, [isTreeView, treeState.refreshAll, refreshCurrentDirectory]);
 
   const activateTreeFileParent = useCallback(
     async (row: FileExplorerTreeRow) => {
@@ -3791,6 +3992,11 @@ function FileExplorerPane({
           onUploadFolder={() =>
             handleUploadFolder(isTreeView ? getTreeOperationDirectoryPath() : undefined)
           }
+          onUploadFolderContents={() =>
+            handleUploadFolderContents(
+              isTreeView ? getTreeOperationDirectoryPath() : undefined,
+            )
+          }
           onDownloadSelected={() =>
             isTreeView
               ? handleTreeDownload(selectedTreeRows)
@@ -4095,6 +4301,7 @@ function FileExplorerPane({
                           showTransferActions={canUseRemoteTransfer}
                           onUpload={handleUploadFiles}
                           onUploadFolder={handleUploadFolder}
+                          onUploadFolderContents={handleUploadFolderContents}
                           onDownload={handleDownloadFromContextMenu}
                           showPeerSendAction={!!peerEndpoint && !!onSendEntries}
                           onSendToPeer={handleSendToPeer}
@@ -4105,8 +4312,30 @@ function FileExplorerPane({
                           onDelete={handleDeleteFromContextMenu}
                           onAddToFavorites={handleAddEntryToFavorites}
                           onCopyPath={handleCopyPath}
+                          onCopyEntry={
+                            canUseRemoteTransfer
+                              ? (entry) => copyListEntry(entry, "copy")
+                              : undefined
+                          }
+                          onCutEntry={
+                            canUseRemoteTransfer
+                              ? (entry) => copyListEntry(entry, "cut")
+                              : undefined
+                          }
+                          onPaste={
+                            canUseRemoteTransfer
+                              ? () => void fileClipboard.paste()
+                              : undefined
+                          }
+                          canPaste={fileClipboard.canPaste}
                           onSendToTerminal={
-                            terminalInputEnabled ? handleSendToTerminal : undefined
+                            terminalInputEnabled
+                              ? handleSendToTerminal
+                              : undefined
+                          }
+                          onEnterDirectoryInTerminal={enterDirectoryInTerminal}
+                          onOpenDirectoryInNewTerminal={
+                            openDirectoryInNewTerminal
                           }
                           onProperties={(entry) => {
                             if (activeSessionId) {
@@ -4156,6 +4385,30 @@ function FileExplorerPane({
           <FileExplorerEntryContextMenu
             target={treeContextRow}
             selectedTargets={treeActionRows(treeContextRow)}
+            onCopyEntries={
+              canUseRemoteTransfer
+                ? (rows) =>
+                    void fileClipboard.copyEntries(
+                      selectionToClipboardEntries(rows),
+                      "copy",
+                    )
+                : undefined
+            }
+            onCutEntries={
+              canUseRemoteTransfer
+                ? (rows) =>
+                    void fileClipboard.copyEntries(
+                      selectionToClipboardEntries(rows),
+                      "cut",
+                    )
+                : undefined
+            }
+            onPaste={
+              canUseRemoteTransfer
+                ? () => void fileClipboard.paste()
+                : undefined
+            }
+            canPaste={fileClipboard.canPaste}
             activeSessionId={activeSessionId}
             editorType={appSettings.transfer.editor_type || "external"}
             showTransferActions={canUseRemoteTransfer}
@@ -4175,20 +4428,42 @@ function FileExplorerPane({
             }
             onUpload={(path) => void handleUploadFiles(path)}
             onUploadFolder={(path) => void handleUploadFolder(path)}
+            onUploadFolderContents={(path) =>
+              void handleUploadFolderContents(path)
+            }
             onDownload={handleTreeDownload}
             onSendToPeer={handleTreeSendToPeer}
             onSendToTarget={handleTreeSendToTarget}
-            onRename={(row) => beginInlineRename(row.entry, row.path, row.parentPath)}
+            onRename={(row) =>
+              beginInlineRename(row.entry, row.path, row.parentPath)
+            }
             onMove={handleTreeMove}
             onDelete={handleTreeDelete}
             onAddToFavorites={handleTreeAddToFavorites}
             onCopyPath={handleTreeCopyPath}
             onSendToTerminal={handleTreeSendToTerminal}
+            onEnterDirectoryInTerminal={(row) =>
+              void enterDirectoryInTerminal(row.path)
+            }
+            onOpenDirectoryInNewTerminal={(row) =>
+              openDirectoryInNewTerminal(row.path)
+            }
             onProperties={handleTreeProperties}
             onAIAction={handleTreeAIAction}
           />
         ) : canBrowseFiles ? (
-          <ContextMenuContent className="w-52">
+          <ContextMenuContent
+            className={cn(
+              "max-w-[calc(100vw-1rem)]",
+              canUseRemoteTransfer ? "w-64 min-w-0" : "w-52",
+            )}
+          >
+            {canUseRemoteTransfer && (
+              <FileExplorerContextMenuActionBar
+                onPaste={() => void fileClipboard.paste()}
+                canPaste={fileClipboard.canPaste}
+              />
+            )}
             <ContextMenuItem
               onClick={() =>
                 isTreeView
@@ -4215,6 +4490,12 @@ function FileExplorerPane({
                       <MdDriveFolderUpload className="mr-2 h-4 w-4" />
                       {t("fileExplorer.uploadFolder")}
                     </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => void handleUploadFolderContents()}
+                    >
+                      <MdDriveFolderUpload className="mr-2 h-4 w-4" />
+                      {t("fileExplorer.uploadFolderContents")}
+                    </ContextMenuItem>
                   </ContextMenuSubContent>
                 </ContextMenuSub>
                 <ContextMenuSeparator />
@@ -4240,10 +4521,31 @@ function FileExplorerPane({
               {t("fileExplorer.copyDirPath")}
             </ContextMenuItem>
             {terminalInputEnabled ? (
-              <ContextMenuItem onClick={handleSendCurrentPathToTerminal}>
-                <LuClipboardPaste className="mr-2 h-4 w-4" />
-                {t("fileExplorer.sendDirPathToTerminal")}
-              </ContextMenuItem>
+              <ContextMenuSub>
+                <ContextMenuSubTrigger>
+                  <MdTerminal className="mr-2 h-4 w-4" />
+                  {t("fileExplorer.cmTerminal")}
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent>
+                  <ContextMenuItem
+                    onClick={() => void enterDirectoryInTerminal(currentPath)}
+                  >
+                    <MdFolderOpen className="mr-2 h-4 w-4" />
+                    {t("fileExplorer.cmEnterDirectory")}
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => openDirectoryInNewTerminal(currentPath)}
+                  >
+                    <MdOpenInNew className="mr-2 h-4 w-4" />
+                    {t("fileExplorer.cmOpenDirectoryNewTerminal")}
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onClick={handleSendCurrentPathToTerminal}>
+                    <LuClipboardPaste className="mr-2 h-4 w-4" />
+                    {t("fileExplorer.sendDirPathToTerminal")}
+                  </ContextMenuItem>
+                </ContextMenuSubContent>
+              </ContextMenuSub>
             ) : null}
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => handleCurrentDirProperties()}>

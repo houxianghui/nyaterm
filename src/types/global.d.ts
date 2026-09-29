@@ -42,6 +42,14 @@ export interface AppSupportInfo {
   os: string;
   architecture: string;
   runtime: "portable" | "installed";
+  conpty?: {
+    available: boolean;
+    activeBundled: number;
+    activeSystem: number;
+    lastUsed: "bundled" | "system" | null;
+    fallback: boolean;
+    version: string;
+  };
 }
 
 /** AI Agent command execution wrapper profile. */
@@ -336,6 +344,16 @@ export interface SshKey {
   passphrase?: string;
 }
 
+/** Stored SSH host key metadata exposed by the known-hosts management UI. */
+export interface KnownHostEntry {
+  id: string;
+  marker?: string | null;
+  hostIdentifier: string;
+  hostPatterns: string[];
+  keyType: string;
+  fingerprint?: string | null;
+}
+
 /** Managed account entry stored in local app storage. */
 export interface SavedAccount {
   id: string;
@@ -469,6 +487,7 @@ export type SftpCwdFollowMode = "off" | "shell_integration" | "rc_file";
 
 export interface SftpSettings {
   enabled: boolean;
+  compatibility_mode: boolean;
   cwd_follow_mode: SftpCwdFollowMode;
   shell_detection_timeout_ms: number;
   filename_encoding?: string;
@@ -597,7 +616,7 @@ export interface SavedConnection {
 
 export type RdpCertificatePolicy = "strict" | "prompt" | "accept-temporarily";
 export type RdpDisplayMode = "fit-window" | "fixed" | "native";
-export type RdpClipboardMode = "disabled" | "text-only";
+export type RdpClipboardMode = "disabled" | "text-only" | "text-and-files";
 
 export interface RdpSecuritySettings {
   use_nla: boolean;
@@ -834,7 +853,7 @@ export interface UiConfig {
   /** Relative height weight per panel id for stacked multi-open panels. */
   panel_stack_sizes: Record<string, number>;
   network_panel_active_tab?: "tunnel" | "proxy";
-  security_auth_panel_active_tab?: "keys" | "passwords" | "otp" | "credentials";
+  security_auth_panel_active_tab?: "keys" | "passwords" | "otp" | "credentials" | "known-hosts";
   show_quick_cmd_bar: boolean;
   show_serial_send_panel: boolean;
   serial_send_height: number;
@@ -1428,11 +1447,24 @@ export interface ExternalMcpSettings {
 export type AIReasoningEffort =
   | "auto"
   | "none"
+  | "minimal"
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max"
+  | "ultra";
+export type AIModelReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "ultra";
 export type AIApiFormat = "chat_completions" | "responses";
+export type AIProviderApiProtocol = "openai_compatible" | "anthropic" | "gemini" | "ollama";
 export type AIModelSource = "rust-genai" | "manual";
 export type AIBackendKind = "genai" | "codex";
 export type CodexThreadMode = "persistent" | "ephemeral";
@@ -1459,6 +1491,7 @@ export interface AIModelConfigItem {
   enabled: boolean;
   source: AIModelSource;
   last_seen_at?: string | null;
+  supported_reasoning_efforts?: AIModelReasoningEffort[];
 }
 
 export interface CodexIntegrationSettings {
@@ -1497,6 +1530,8 @@ export interface AIProviderCredential {
   id: string;
   name: string;
   provider_kind: AIProviderKind;
+  icon_data_url?: string | null;
+  api_protocol?: AIProviderApiProtocol | null;
   api_format: AIApiFormat;
   base_url?: string | null;
   api_key?: string | null;
@@ -1848,6 +1883,7 @@ export interface FileExplorerProps {
   activeConnectionId?: string | null;
   activeSessionName?: string | null;
   terminalInputEnabled?: boolean;
+  onOpenDirectoryInNewTerminal?: (sessionId: string, path: string) => void;
 }
 
 export interface WebdavSyncSettings {

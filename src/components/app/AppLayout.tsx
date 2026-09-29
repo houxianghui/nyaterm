@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import FloatingPanel from "@/components/app/FloatingPanel";
+import { Minimize2 } from "lucide-react";
 import { MdClose, MdTerminal } from "react-icons/md";
 import PanelStack from "@/components/app/PanelStack";
 import AboutDialog from "@/components/dialog/app/AboutDialog";
@@ -35,7 +36,10 @@ import ResizeHandle from "@/components/layout/ResizeHandle";
 import QuickCommands from "@/components/panel/QuickCommands";
 import SerialSendPanel from "@/components/panel/SendCommandPanel";
 import TabWindowsWorkspace from "@/components/terminal/TabWindowsWorkspace";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useTheme } from "@/context/ThemeContext";
+import { hasVisibleActivityBarItems } from "@/lib/appWorkspace";
 import {
   buildBackgroundImageLayerStyle,
   buildSurfaceCssVariables,
@@ -64,6 +68,9 @@ interface AppLayoutProps {
   t: TFunction;
   uiConfig: UiConfig;
   appearance: AppearanceSettings;
+  paneFocusMode: boolean;
+  nativeFullscreen: boolean;
+  onExitPaneFocus: () => void;
   header: Omit<HeaderProps, "onToggleLeft" | "onToggleRight">;
   mobile: {
     leftOpen: boolean;
@@ -171,6 +178,9 @@ export default function AppLayout({
   t,
   uiConfig,
   appearance,
+  paneFocusMode,
+  nativeFullscreen,
+  onExitPaneFocus,
   header,
   mobile,
   leftActivityBar,
@@ -246,18 +256,14 @@ export default function AppLayout({
     }),
     [effectiveAppearance, theme.colors, windowTransparencyEnabled],
   );
-  const hasLeftActivityItems =
-    leftActivityBar.items.length > 0 ||
-    (leftActivityBar.bottomItems?.length ?? 0) > 0 ||
-    (leftActivityBar.hiddenItems?.length ?? 0) > 0;
-  const hasRightActivityItems =
-    rightActivityBar.items.length > 0 ||
-    (rightActivityBar.bottomItems?.length ?? 0) > 0 ||
-    (rightActivityBar.hiddenItems?.length ?? 0) > 0;
+  const hasLeftActivityItems = hasVisibleActivityBarItems(leftActivityBar);
+  const hasRightActivityItems = hasVisibleActivityBarItems(rightActivityBar);
   const leftPanelOpen =
+    !paneFocusMode &&
     hasLeftActivityItems &&
     (leftPanelIds.length > 0 || Boolean(leftOverlayPanelId));
   const rightPanelOpen =
+    !paneFocusMode &&
     hasRightActivityItems &&
     (rightPanelIds.length > 0 || Boolean(rightOverlayPanelId));
   const leftMobileOpen = hasLeftActivityItems && mobile.leftOpen;
@@ -307,6 +313,8 @@ export default function AppLayout({
       className="nyaterm-wallpaper-shell font-display relative h-full min-h-0 overflow-hidden rounded-2xl"
       data-wallpaper-enabled={backgroundEnabled ? "true" : "false"}
       data-window-transparency={windowTransparencyEnabled ? "true" : "false"}
+      data-pane-focus={paneFocusMode ? "true" : "false"}
+      data-native-fullscreen={nativeFullscreen ? "true" : "false"}
       data-window-transparency-blur={
         windowTransparencyEnabled &&
         isWindows &&
@@ -324,15 +332,17 @@ export default function AppLayout({
         />
       )}
       <div className="relative z-10 flex h-full min-h-0 flex-col gap-[3px] p-1.5">
-        <Header
-          {...header}
-          onToggleLeft={() => {
-            if (hasLeftActivityItems) mobile.setLeftOpen(!mobile.leftOpen);
-          }}
-          onToggleRight={() => {
-            if (hasRightActivityItems) mobile.setRightOpen(!mobile.rightOpen);
-          }}
-        />
+        {!paneFocusMode && (
+          <Header
+            {...header}
+            onToggleLeft={() => {
+              if (hasLeftActivityItems) mobile.setLeftOpen(!mobile.leftOpen);
+            }}
+            onToggleRight={() => {
+              if (hasRightActivityItems) mobile.setRightOpen(!mobile.rightOpen);
+            }}
+          />
+        )}
 
         <main className="flex-1 flex overflow-hidden relative gap-[3px]">
           {!isMacOS && (leftMobileOpen || rightMobileOpen) && (
@@ -345,7 +355,7 @@ export default function AppLayout({
             />
           )}
 
-          {hasLeftActivityItems && (
+          {!paneFocusMode && hasLeftActivityItems && (
             <ActivityBar
               {...leftActivityBar}
               side="left"
@@ -448,7 +458,28 @@ export default function AppLayout({
                   </div>
                 </div>
               )}
-              {floatingPanelIds.left && (
+              {paneFocusMode && (
+                <div className="pointer-events-none absolute right-2 top-2 z-30">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="secondary"
+                        className="pointer-events-auto shadow-sm"
+                        aria-label={t("settings.shortcutLabels.togglePaneFocus")}
+                        onClick={onExitPaneFocus}
+                      >
+                        <Minimize2 className="size-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      {t("settings.shortcutLabels.togglePaneFocus")}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
+              {!paneFocusMode && floatingPanelIds.left && (
                 <FloatingPanel
                   side="left"
                   panelId={floatingPanelIds.left}
@@ -460,7 +491,7 @@ export default function AppLayout({
                   {panelContent(floatingPanelIds.left)}
                 </FloatingPanel>
               )}
-              {floatingPanelIds.right && (
+              {!paneFocusMode && floatingPanelIds.right && (
                 <FloatingPanel
                   side="right"
                   panelId={floatingPanelIds.right}
@@ -474,7 +505,7 @@ export default function AppLayout({
               )}
             </div>
 
-            {bottomPanel.activePanel === "quickCmdBar" && (
+            {!paneFocusMode && bottomPanel.activePanel === "quickCmdBar" && (
               <>
                 <ResizeHandle
                   direction="vertical"
@@ -496,45 +527,43 @@ export default function AppLayout({
               </>
             )}
 
-            {serialSendVisible && (
+            {!paneFocusMode && serialSendVisible && (
               <ResizeHandle
                 direction="vertical"
                 onResize={bottomPanel.onSerialSendResize}
               />
             )}
 
-            {serialSendMounted && (
-              <>
-                <div
-                  style={{
-                    ...(serialSendVisible
-                      ? {
-                          height: bottomPanel.serialSendHeight,
-                          backgroundColor: "var(--df-bg-panel)",
-                        }
-                      : {}),
-                  }}
-                  className={serialSendVisible ? "shrink-0 overflow-hidden rounded-md" : "hidden"}
-                >
-                  <SerialSendPanel
-                    serialSessionId={bottomPanel.activeSerialSessionId}
-                    currentShellSessionId={bottomPanel.activeNonSerialSessionId}
-                    shellSessionIds={bottomPanel.activeNonSerialSessionIds}
-                    syncGroups={bottomPanel.syncGroups}
-                    currentWindowLabel={bottomPanel.currentWindowLabel}
-                    sessionTargets={bottomPanel.sessionTargets}
-                    clearAfterSend={bottomPanel.clearAfterSend}
-                    draft={bottomPanel.sendCommandDraft}
-                    onDraftConsumed={bottomPanel.onSendCommandDraftConsumed}
-                    onSendingChange={setSerialSendRunning}
-                    onClearAfterSendChange={bottomPanel.onClearAfterSendChange}
-                  />
-                </div>
-              </>
+            {!paneFocusMode && serialSendMounted && (
+              <div
+                style={{
+                  ...(serialSendVisible
+                    ? {
+                        height: bottomPanel.serialSendHeight,
+                        backgroundColor: "var(--df-bg-panel)",
+                      }
+                    : {}),
+                }}
+                className={serialSendVisible ? "shrink-0 overflow-hidden rounded-md" : "hidden"}
+              >
+                <SerialSendPanel
+                  serialSessionId={bottomPanel.activeSerialSessionId}
+                  currentShellSessionId={bottomPanel.activeNonSerialSessionId}
+                  shellSessionIds={bottomPanel.activeNonSerialSessionIds}
+                  syncGroups={bottomPanel.syncGroups}
+                  currentWindowLabel={bottomPanel.currentWindowLabel}
+                  sessionTargets={bottomPanel.sessionTargets}
+                  clearAfterSend={bottomPanel.clearAfterSend}
+                  draft={bottomPanel.sendCommandDraft}
+                  onDraftConsumed={bottomPanel.onSendCommandDraftConsumed}
+                  onSendingChange={setSerialSendRunning}
+                  onClearAfterSendChange={bottomPanel.onClearAfterSendChange}
+                />
+              </div>
             )}
           </section>
 
-          {hasRightActivityItems && (
+          {!paneFocusMode && hasRightActivityItems && (
             <>
               {rightPanelOpen && (
                 <ResizeHandle
@@ -598,7 +627,7 @@ export default function AppLayout({
             </>
           )}
 
-          {hasRightActivityItems && (
+          {!paneFocusMode && hasRightActivityItems && (
             <ActivityBar
               {...rightActivityBar}
               side="right"

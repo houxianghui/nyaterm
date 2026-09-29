@@ -1762,10 +1762,11 @@ export function SshForm({
                       {t("dialog.sftpAdvancedDesc")}
                     </p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="shrink-0">
                     <Switch
                       checked={sftpSettings.enabled}
                       disabled={networkDeviceProfile}
+                      aria-label={t("dialog.sftpAdvanced")}
                       onCheckedChange={(enabled) =>
                         setSftpSettings({
                           ...sftpSettings,
@@ -1773,10 +1774,29 @@ export function SshForm({
                         })
                       }
                     />
-                    <span className="text-xs text-muted-foreground">
-                      {t("dialog.enabled", "Enabled")}
-                    </span>
                   </div>
+                </div>
+
+                <div className="mt-3 flex max-w-md items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Label className="text-xs font-medium text-foreground/80">
+                      {t("dialog.sftpCompatibilityMode")}
+                    </Label>
+                    <p className="mt-1 text-[0.6875rem] leading-relaxed text-muted-foreground">
+                      {t("dialog.sftpCompatibilityModeDesc")}
+                    </p>
+                  </div>
+                  <Switch
+                    className="mt-0.5 shrink-0"
+                    checked={sftpSettings.compatibility_mode}
+                    disabled={sftpDisabled}
+                    onCheckedChange={(compatibility_mode) =>
+                      setSftpSettings({
+                        ...sftpSettings,
+                        compatibility_mode,
+                      })
+                    }
+                  />
                 </div>
 
                 <div className="mt-3 max-w-md">
