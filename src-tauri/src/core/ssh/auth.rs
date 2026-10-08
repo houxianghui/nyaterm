@@ -686,22 +686,7 @@ fn resolve_proxy(
         return Ok(None);
     };
 
-    let proxy_cfg = crate::config::load_proxy_by_id(app, proxy_id)?
-        .ok_or_else(|| AppError::Config(format!("Proxy '{}' not found", proxy_id)))?;
-    let password = proxy_cfg
-        .password
-        .as_ref()
-        .and_then(|ciphertext| crate::utils::crypto::decrypt(ciphertext).ok());
-
-    Ok(Some(crate::config::ProxySettings {
-        enabled: true,
-        protocol: proxy_cfg.protocol,
-        host: proxy_cfg.host,
-        port: proxy_cfg.port,
-        command: proxy_cfg.command,
-        username: proxy_cfg.username,
-        password,
-    }))
+    Ok(Some(nyaterm_core::network::resolve_proxy(app, proxy_id)?))
 }
 
 pub(super) async fn authenticate_handle(
@@ -1213,10 +1198,10 @@ async fn authenticate_password_with_runtime_prompt(
         let Some(current_password) = password.as_deref() else {
             continue;
         };
-        let authenticated = handle
-            .authenticate_password(&config.username, current_password)
-            .await
-            .map_err(|error| AppError::Auth(format!("Authentication failed: {}", error)))?;
+        let authenticated =
+            nyaterm_core::ssh::protocol::password(handle, &config.username, current_password)
+                .await
+                .map_err(|error| AppError::Auth(format!("Authentication failed: {}", error)))?;
 
         match try_keyboard_interactive_after_partial(
             handle,
@@ -2183,6 +2168,7 @@ fn upsert_runtime_saved_password(
         .map(|password| password.username.clone())
         .unwrap_or_else(|| username.to_string());
     let entry = crate::config::SavedPassword {
+        sort_order: crate::config::password_sort_order(&cfg, &target_id),
         id: target_id.clone(),
         name: entry_name,
         username: entry_username,
@@ -3177,6 +3163,7 @@ mod tests {
 
     fn test_account(username: &str, password: Option<&str>) -> SavedPassword {
         SavedPassword {
+            sort_order: 0,
             id: "account-1".to_string(),
             name: "Account".to_string(),
             username: username.to_string(),

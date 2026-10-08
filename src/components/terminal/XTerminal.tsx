@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@/lib/backend/api";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -1790,6 +1790,7 @@ export default function XTerminal({
       }
       const terminalSettings = terminalAppSettingsRef.current?.terminal;
       if (
+        terminal.buffer.active.type === "normal" &&
         performanceModeRef.current === "normal" &&
         (terminalSettings?.show_line_numbers ||
           terminalSettings?.show_timestamps)

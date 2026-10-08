@@ -48,6 +48,7 @@ pub async fn create_ssh_session(
     recording_state: tauri::State<'_, Arc<RecordingManager>>,
     connection_id: String,
     create_request_id: Option<String>,
+    recording_scope_id: Option<String>,
     startup_command: Option<StartupCommandPayload>,
     runtime_mode: Option<crate::config::SshRuntimeMode>,
 ) -> AppResult<String> {
@@ -72,6 +73,7 @@ pub async fn create_ssh_session(
         Some(build_auto_recording_hook(
             app.clone(),
             recording_state.inner().clone(),
+            recording_scope_id,
         )),
     )
     .await?;
@@ -88,6 +90,7 @@ pub async fn create_temporary_ssh_session(
     recording_state: tauri::State<'_, Arc<RecordingManager>>,
     config: ssh::SshConfig,
     create_request_id: Option<String>,
+    recording_scope_id: Option<String>,
     startup_command: Option<StartupCommandPayload>,
 ) -> AppResult<String> {
     let encoding = crate::config::load_app_settings(&app)
@@ -111,6 +114,7 @@ pub async fn create_temporary_ssh_session(
         Some(build_auto_recording_hook(
             app.clone(),
             recording_state.inner().clone(),
+            recording_scope_id,
         )),
     )
     .await?;
@@ -174,6 +178,7 @@ pub async fn create_multiplexed_ssh_session(
         Some(build_auto_recording_hook(
             app.clone(),
             recording_state.inner().clone(),
+            None,
         )),
     )
     .await?;
@@ -188,6 +193,7 @@ pub async fn create_local_session(
     recording_state: tauri::State<'_, Arc<RecordingManager>>,
     connection_id: Option<String>,
     create_request_id: Option<String>,
+    recording_scope_id: Option<String>,
     working_dir: Option<String>,
 ) -> AppResult<String> {
     let pending_creation = state.begin_session_creation(create_request_id).await;
@@ -246,6 +252,7 @@ pub async fn create_local_session(
         Some(build_auto_recording_hook(
             app.clone(),
             recording_state.inner().clone(),
+            recording_scope_id,
         )),
     )
     .await?;
@@ -277,7 +284,10 @@ pub async fn create_telnet_session(
     port: Option<u16>,
     name: Option<String>,
     create_request_id: Option<String>,
+    recording_scope_id: Option<String>,
     startup_command: Option<StartupCommandPayload>,
+    network: Option<config::ConnectionNetwork>,
+    encoding: Option<String>,
 ) -> AppResult<String> {
     let pending_creation = state.begin_session_creation(create_request_id).await;
     let (guard, cancel_rx) = match pending_creation {
@@ -322,6 +332,7 @@ pub async fn create_telnet_session(
                 name: conn.name.clone(),
                 username: config::resolve_account_username(account.as_ref(), &username),
                 password: telnet_password,
+                network: conn.network.clone(),
                 backspace_mode,
                 raw_tcp_cli,
                 enter_mode: core::TelnetEnterMode::from_config_value(&enter_mode),
@@ -344,6 +355,8 @@ pub async fn create_telnet_session(
             host: host.ok_or_else(|| AppError::Config("host is required".to_string()))?,
             port: port.unwrap_or(23),
             name: name.unwrap_or_else(|| "Telnet".to_string()),
+            network,
+            encoding: encoding.unwrap_or_else(|| "UTF-8".into()),
             ..Default::default()
         }
     };
@@ -362,6 +375,7 @@ pub async fn create_telnet_session(
         Some(build_auto_recording_hook(
             app.clone(),
             recording_state.inner().clone(),
+            recording_scope_id,
         )),
     )
     .await?;
@@ -404,8 +418,10 @@ pub async fn create_serial_session(
     data_bits: Option<u8>,
     parity: Option<String>,
     stop_bits: Option<String>,
+    flow_control: Option<config::SerialFlowControl>,
     name: Option<String>,
     create_request_id: Option<String>,
+    recording_scope_id: Option<String>,
 ) -> AppResult<String> {
     let pending_creation = state.begin_session_creation(create_request_id).await;
     let (guard, _cancel_rx) = match pending_creation {
@@ -424,6 +440,7 @@ pub async fn create_serial_session(
                 stop_bits,
                 backspace_mode,
                 modem_upload_protocol,
+                flow_control,
                 ..
             } => core::SerialConfig {
                 port_name,
@@ -434,6 +451,7 @@ pub async fn create_serial_session(
                 name: conn.name,
                 backspace_mode,
                 modem_upload_protocol,
+                flow_control,
                 encoding,
             },
             _ => {
@@ -453,6 +471,7 @@ pub async fn create_serial_session(
             data_bits: data_bits.unwrap_or(8),
             parity: parity.unwrap_or_else(|| "none".to_string()),
             stop_bits: stop_bits.unwrap_or_else(|| "1".to_string()),
+            flow_control: flow_control.unwrap_or_default(),
             name: name.unwrap_or_else(|| "Serial".to_string()),
             backspace_mode: "ctrl_h".to_string(),
             modem_upload_protocol: config::SerialModemUploadProtocol::Zmodem,
@@ -469,6 +488,7 @@ pub async fn create_serial_session(
         Some(build_auto_recording_hook(
             app.clone(),
             recording_state.inner().clone(),
+            recording_scope_id,
         )),
     )
     .await?;
@@ -490,8 +510,15 @@ fn mark_connection_used(app: &tauri::AppHandle, connection_id: &str) {
 fn build_auto_recording_hook(
     app: tauri::AppHandle,
     recording_manager: Arc<RecordingManager>,
+    recording_scope_id: Option<String>,
 ) -> SessionReadyHook {
     Arc::new(move |session_info: &SessionInfo| {
+        if !recording_manager.bind_session_scope(
+            &session_info.id,
+            recording_scope_id.as_deref().unwrap_or(&session_info.id),
+        ) {
+            return;
+        }
         let settings = match config::load_app_settings(&app) {
             Ok(settings) => settings,
             Err(error) => {
@@ -831,6 +858,7 @@ mod tests {
             ..ConnectionAuth::default()
         };
         let account = config::SavedPassword {
+            sort_order: 0,
             id: "saved-1".to_string(),
             name: "Saved".to_string(),
             username: String::new(),
@@ -853,6 +881,7 @@ mod tests {
             ..ConnectionAuth::default()
         };
         let account = config::SavedPassword {
+            sort_order: 0,
             id: "account-1".to_string(),
             name: "Account".to_string(),
             username: "admin".to_string(),
@@ -876,6 +905,7 @@ mod tests {
             ..ConnectionAuth::default()
         };
         let account = config::SavedPassword {
+            sort_order: 0,
             id: "account-1".to_string(),
             name: "Account".to_string(),
             username: "admin".to_string(),
@@ -1421,6 +1451,18 @@ pub async fn stop_recording(
     tokio::task::spawn_blocking(move || mgr.stop(&session_id))
         .await
         .map_err(|e| AppError::Config(format!("Task join error: {e}")))?
+}
+
+#[tauri::command]
+pub async fn finish_recording_scope(
+    state: tauri::State<'_, Arc<RecordingManager>>,
+    scope_id: String,
+) -> AppResult<()> {
+    let mgr = state.inner().clone();
+    tokio::task::spawn_blocking(move || mgr.finish_scope(&scope_id))
+        .await
+        .map_err(|e| AppError::Config(format!("Task join error: {e}")))?;
+    Ok(())
 }
 
 #[tauri::command]
