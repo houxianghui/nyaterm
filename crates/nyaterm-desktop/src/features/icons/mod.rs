@@ -106,9 +106,10 @@ fn blend(from: u32, to: u32, amount: f32) -> u32 {
 }
 
 /// Contrast ratio floor below which a brand color is blended toward the theme's
-/// text color. 1.6 is deliberately low: it rescues `#000000` on a dark surface
-/// without washing out colors that merely look dim, such as `debian`'s `#a81d33`.
-const MIN_CONTRAST_RATIO: f32 = 1.6;
+/// text color. 1.7 is deliberately low: it rescues `#000000` (1.63 on the macOS
+/// dark surface `#313138`) without washing out colors that merely look dim, such
+/// as `debian`'s `#a81d33` (1.77 on the same surface).
+const MIN_CONTRAST_RATIO: f32 = 1.7;
 
 fn legible_on(color: u32, palette: ThemePalette) -> u32 {
     let surface = relative_luminance(palette.surface);

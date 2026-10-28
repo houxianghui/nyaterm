@@ -798,43 +798,8 @@ fn builtin_palette(theme: &str) -> ThemePalette {
                 0x696c77, 0xb74137, 0x367d35, 0x8d5c00, 0x2f65de, 0x8f1f8d, 0x006f9e, 0x383a42,
             ],
         },
-        _ => ThemePalette {
-            ui_terminal_bg: 0,
-            danger_hover: 0,
-            shadow: 0,
-            scroll_thumb: 0,
-            terminal_fg_intense: None,
-            terminal_line_highlight: 0,
-            terminal_find_bg: 0,
-            terminal_find_border: 0,
-            bg: 0x0d1117,
-            surface: 0x161b22,
-            surface_elevated: 0x21262d,
-            section_header: 0x12171f,
-            hover: 0x1c2128,
-            input: 0x0d1117,
-            border: 0x30363d,
-            text: 0xc9d1d9,
-            text_muted: 0x8b949e,
-            text_dimmed: 0x6e7681,
-            primary: 0x3b82f6,
-            primary_hover: 0x2563eb,
-            on_primary: 0x0d1117,
-            focus_ring: 0x58a6ff,
-            link: 0x58a6ff,
-            accent: 0x58a6ff,
-            success: 0x3fb950,
-            warning: 0xd29922,
-            danger: 0xff7b72,
-            terminal_bg: 0x0d1117,
-            terminal_fg: 0xc9d1d9,
-            terminal_cursor: 0xc9d1d9,
-            terminal_selection: 0x264f78,
-            terminal_ansi: [
-                0x484f58, 0xff7b72, 0x3fb950, 0xd29922, 0x58a6ff, 0xbc8cff, 0x39c5cf, 0xb1bac4,
-                0x8b949e, 0xffa198, 0x3fb950, 0xe3b341, 0x79c0ff, 0xd2a8ff, 0x56d4dd, 0xf0f6fc,
-            ],
-        },
+        // 未知/别名主题回退到默认主题(github-dark = macOS Dark)。
+        _ => builtin_palette("github-dark"),
     }
 }
 
@@ -1182,7 +1147,11 @@ mod tests {
             assert!(theme.validate().is_empty(), "{id} validate");
             let palette = theme_palette(id);
             // 硬编码 palette 与 JSON 推导结果必须全等(双数据源一致性)
-            assert_eq!(palette, super::palette_from_theme(&theme), "{id} json parity");
+            assert_eq!(
+                palette,
+                super::palette_from_theme(&theme),
+                "{id} json parity"
+            );
             assert_eq!(palette.bg, bg, "{id} bg");
             assert_eq!(palette.primary, primary, "{id} primary");
             assert_eq!(palette.terminal_ansi[0], ansi_black, "{id} ansi black");

@@ -140,7 +140,7 @@ fn bold_default_foreground_only_brightens_implicit_foreground() {
     assert_eq!(resolve_cell_fg(palette, bold, false), palette.terminal_fg);
     assert_eq!(
         resolve_cell_fg(palette, bold, true),
-        palette.terminal_ansi_color(15)
+        palette.terminal_fg_intense.unwrap_or(palette.terminal_fg)
     );
 
     let indexed = nyaterm_terminal::CellStyle {
