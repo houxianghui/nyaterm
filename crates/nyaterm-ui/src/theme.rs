@@ -798,7 +798,7 @@ fn builtin_palette(theme: &str) -> ThemePalette {
                 0x696c77, 0xb74137, 0x367d35, 0x8d5c00, 0x2f65de, 0x8f1f8d, 0x006f9e, 0x383a42,
             ],
         },
-        // 未知/别名主题回退到默认主题(github-dark = macOS Dark)。
+        // 未知/别名主题回退到默认主题（github-dark = macOS Dark）。
         _ => builtin_palette("github-dark"),
     }
 }
@@ -1136,6 +1136,7 @@ mod tests {
             assert_eq!(palette.accent, accent, "{id} accent");
         }
     }
+
     #[test]
     fn github_builtins_are_macos_palettes_and_match_json() {
         let catalog = nyaterm_core::themes::ThemeCatalog::default();
@@ -1146,7 +1147,7 @@ mod tests {
             let theme = nyaterm_core::themes::resolve_theme(id, &catalog);
             assert!(theme.validate().is_empty(), "{id} validate");
             let palette = theme_palette(id);
-            // 硬编码 palette 与 JSON 推导结果必须全等(双数据源一致性)
+            // 硬编码 palette 与 JSON 推导结果必须全等（双数据源一致性）
             assert_eq!(
                 palette,
                 super::palette_from_theme(&theme),

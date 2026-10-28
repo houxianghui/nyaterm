@@ -28,7 +28,7 @@ The editor separates UI and terminal colors, with visual pickers and color input
 
 **Save changes** persists the theme immediately. Saving an active theme refreshes every place using it. **Apply to UI / terminal** changes that scope only; **Apply to both** makes the terminal follow the UI. Unsaved edits can be saved and applied in one operation. Canceling settings does not undo confirmed manager operations. Appearance selectors and other settings still use the settings **Apply / Cancel** workflow.
 
-Creation, duplication, and import produce drafts until saved. Leaving an edited draft offers Save, Discard, or Keep editing. Deletion requires confirmation: an affected UI falls back to GitHub Dark, and terminals explicitly using the deleted theme follow the UI. Deletion cannot be undone.
+Creation, duplication, and import produce drafts until saved. Leaving an edited draft offers Save, Discard, or Keep editing. Deletion requires confirmation: an affected UI falls back to macOS Dark, and terminals explicitly using the deleted theme follow the UI. Deletion cannot be undone.
 
 JSON import and export remain compatible with Tauri single-theme files. Conflicting imported IDs receive a new ID. Exporting a valid draft does not save or apply it. Unknown fields and unsupported records are preserved. Concurrent edits produce a conflict while preserving the draft; export it, or discard and reload before retrying.
 
