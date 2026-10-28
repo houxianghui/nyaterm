@@ -31,8 +31,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          main_sha="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | awk '{print $1}')"
-          [[ -n "${main_sha}" ]] || { echo 'failed to resolve main' >&2; exit 1; }
+          main_sha="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/gpui | awk '{print $1}')"
+          [[ -n "${main_sha}" ]] || { echo 'failed to resolve gpui' >&2; exit 1; }
           echo "main_sha=${main_sha}" >> "${GITHUB_OUTPUT}"
 
       - name: Checkout main commit
