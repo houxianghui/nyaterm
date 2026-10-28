@@ -13,6 +13,8 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
 };
 
+use crate::sizing::radius_sm;
+
 type MenuClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 type ContextMenuItemsBuilder = Rc<dyn Fn(&mut Window, &mut App) -> Vec<NyaMenuItem>>;
 
@@ -58,7 +60,7 @@ pub(crate) fn nya_popup_menu_appearance() -> PopupMenuAppearance {
         .separator_vertical_margin(px(4.))
         .separator_horizontal_margin(px(0.))
         .disabled_opacity(0.5)
-        .item_radius(px(4.))
+        .item_radius(radius_sm())
 }
 
 fn resolved_menu_widths(
