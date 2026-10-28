@@ -47,7 +47,7 @@ identity，目标观感与 React 线 fork 现状一致。
 
 | 阶段 | 内容 | 改动面 | 验证 |
 |------|------|--------|------|
-| 1 | macOS 深浅色板原位替换（含终端 ANSI） | `builtins.json` 两个条目 | CI 快照目测配色 |
+| 1 | macOS 深浅色板原位替换（含终端 ANSI） | `builtins.json` + `theme.rs` 硬编码 palette/label/测试 + 6 个 locale | CI 测试 + 快照目测配色 |
 | 2 | 共享原语 mac 化（菜单蓝底白字高亮、Finder 内缩选中、圆角约定） | `nyaterm-ui` 的 `menu.rs`/`tabs.rs` 等 | CI 快照目测浮层/菜单 |
 | 3 | 主标签条 Safari 胶囊化（去分隔线、去 2px 指示条、浮胶囊） | `workspace/surface/tabs.rs` | CI 快照目测标签栏 |
 | 4 | 逐屏核对微调 | 视前序结果 | CI 快照 |
@@ -58,7 +58,31 @@ identity，目标观感与 React 线 fork 现状一致。
 
 ### 改动
 
-仅 `crates/nyaterm-core/src/themes/builtins.json` 两个条目，字段名完全不变：
+**开工前勘查发现：GPUI 的主题颜色是双数据源**——`theme_palette(id)` 对非
+windterm 内置主题返回 `nyaterm-ui/src/theme.rs` 中 `builtin_palette()` 的
+**硬编码 Rust 值**，`builtins.json` 只提供扩展 token（shadow、scroll_thumb、
+find 色等）与 Theme Designer 数据。因此 Stage 1 改动四个位置：
+
+1. `crates/nyaterm-core/src/themes/builtins.json` — `github-dark`/`github-light`
+   两个条目：`name` 改 "macOS Dark"/"macOS Light"，`label` 改 "macOS"/"macOS Light"，
+   swatch 与 colors 全套替换（色值表见下，数据源 fork main `src/lib/themes.ts`，
+   字段名完全同构逐字段拷贝；`shadow`/`findMatchBackground` 的 rgba 字符串格式
+   上游已支持）。
+2. `crates/nyaterm-ui/src/theme.rs` — `builtin_palette()` 中 github-dark/light
+   两个硬编码 `ThemePalette` 块替换为同一套 macOS 值（u32 hex）。其中
+   `surface_elevated` 取 hover 同色（与 `palette_from_theme` 的
+   `surface_elevated = bg_hover` 行为对齐，使硬编码与 JSON 推导结果全等）。
+   `appearance_theme_label()`："github-dark" → "macOS"、"github-light" →
+   "macOS Light"。
+3. `crates/nyaterm-ui/src/theme.rs` 测试 — `semantic_colors_match_tauri_theme_tokens`
+   的 github-dark/light 断言元组更新为 macOS 值；新增钉版测试断言
+   `theme_palette(id) == palette_from_theme(resolve_theme(id))` 对两个 github id
+   全等（把双数据源的一致性钉死，防上游合并回退）。
+4. `crates/nyaterm-desktop/locales/*.json`（6 个语言）— 主题删除确认文案中的
+   "GitHub Dark" 改 "macOS Dark"。
+
+另：上游 `rust.yml` 只在 push 到 `main`/`migration/gpui` 时跑测试，需把 fork 的
+`gpui` 分支加入触发列表，否则上述测试在 fork CI 永不执行。
 
 **`github-dark` → macOS Dark**：`name: "macOS Dark"`，`label: "macOS"`，
 `swatch: "#1d1d1f"`，colors 替换为：
@@ -128,8 +152,12 @@ identity，目标观感与 React 线 fork 现状一致。
 
 ### 风险
 
-- 低。纯数据改动；唯一不确定项是 gpui 线快照产物的下载流程细节（资产命名/
-  release 形态与 Tauri 线不同），首次构建时确认。
+- 低。改动集中在主题数据与其硬编码镜像，无逻辑变化；双数据源一致性由新增
+  钉版测试锁定。
+- 本机无 Rust 工具链：`theme.rs` 的编译与测试只能在 CI（`rust.yml`，已加入
+  gpui 触发）首次运行，存在一次返工的可能。
+- gpui 线快照产物的下载流程细节（资产命名/release 形态与 Tauri 线不同）需
+  首次构建时现场确认。
 - 已知视觉缺口（接受）：GPUI 阴影/动效与 CSS 体系不同，Stage 1 只保证颜色观感。
 
 ## Stage 2-4 原则（细节在各阶段开工前补充）
