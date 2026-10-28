@@ -143,7 +143,7 @@ pub const APPEARANCE_THEME_IDS: &[&str] = &[
 /// Human label for Settings theme chips.
 pub fn appearance_theme_label(theme: &str) -> &'static str {
     match theme {
-        "github-dark" => "GitHub Dark",
+        "github-dark" => "macOS",
         "windterm-dark" => "WindTerm Dark",
         "windterm-light" => "WindTerm Light",
         "nya-high-contrast" => "Nya HC",
@@ -157,7 +157,7 @@ pub fn appearance_theme_label(theme: &str) -> &'static str {
         "one-dark-pro" => "One Dark",
         "rose-pine" => "Rosé Pine",
         "gruvbox-dark" => "Gruvbox",
-        "github-light" => "GitHub Light",
+        "github-light" => "macOS Light",
         "catppuccin-latte" => "Latte",
         "rose-pine-dawn" => "Pine Dawn",
         "nord-light" => "Nord Light",
@@ -178,32 +178,32 @@ fn builtin_palette(theme: &str) -> ThemePalette {
             terminal_line_highlight: 0,
             terminal_find_bg: 0,
             terminal_find_border: 0,
-            bg: 0x0d1117,
-            surface: 0x161b22,
-            surface_elevated: 0x21262d,
-            section_header: 0x12171f,
-            hover: 0x1c2128,
-            input: 0x0d1117,
-            border: 0x30363d,
-            text: 0xc9d1d9,
-            text_muted: 0x8b949e,
-            text_dimmed: 0x6e7681,
-            primary: 0x3b82f6,
-            primary_hover: 0x2563eb,
-            on_primary: 0x0d1117,
-            focus_ring: 0x58a6ff,
-            link: 0x58a6ff,
-            accent: 0x58a6ff,
-            success: 0x3fb950,
-            warning: 0xd29922,
-            danger: 0xff7b72,
-            terminal_bg: 0x0d1117,
-            terminal_fg: 0xc9d1d9,
-            terminal_cursor: 0xc9d1d9,
-            terminal_selection: 0x264f78,
+            bg: 0x131316,
+            surface: 0x313138,
+            surface_elevated: 0x34343a,
+            section_header: 0x262629,
+            hover: 0x34343a,
+            input: 0x232326,
+            border: 0x3a3a40,
+            text: 0xf5f5f7,
+            text_muted: 0x98989d,
+            text_dimmed: 0x6e6e73,
+            primary: 0x0a84ff,
+            primary_hover: 0x0071e3,
+            on_primary: 0xffffff,
+            focus_ring: 0x0a84ff,
+            link: 0x0a84ff,
+            accent: 0xbf5af2,
+            success: 0x30d158,
+            warning: 0xffd60a,
+            danger: 0xff453a,
+            terminal_bg: 0x1d1d1f,
+            terminal_fg: 0xf5f5f7,
+            terminal_cursor: 0xf5f5f7,
+            terminal_selection: 0x323236,
             terminal_ansi: [
-                0x484f58, 0xff7b72, 0x3fb950, 0xd29922, 0x58a6ff, 0xbc8cff, 0x39c5cf, 0xb1bac4,
-                0x8b949e, 0xffa198, 0x3fb950, 0xe3b341, 0x79c0ff, 0xd2a8ff, 0x56d4dd, 0xf0f6fc,
+                0x48484c, 0xff453a, 0x30d158, 0xffd60a, 0x0a84ff, 0xbf5af2, 0x64d2ff, 0xa5a5aa,
+                0x6e6e73, 0xff6961, 0x33d375, 0xffd60a, 0x40a9ff, 0xda8fff, 0x64d2ff, 0xf5f5f7,
             ],
         },
         "nya-high-contrast" => ThemePalette {
@@ -622,32 +622,32 @@ fn builtin_palette(theme: &str) -> ThemePalette {
             terminal_line_highlight: 0,
             terminal_find_bg: 0,
             terminal_find_border: 0,
-            bg: 0xffffff,
-            surface: 0xf2f5f8,
-            surface_elevated: 0xe6edf5,
-            section_header: 0xeef3f8,
-            hover: 0xe6edf5,
-            input: 0xf7f9fb,
-            border: 0xc3ccd6,
-            text: 0x1f2328,
-            text_muted: 0x656d76,
-            text_dimmed: 0x8b949e,
-            primary: 0x0969da,
-            primary_hover: 0x0550ae,
+            bg: 0xebebf0,
+            surface: 0xffffff,
+            surface_elevated: 0xe8e8ed,
+            section_header: 0xf2f2f7,
+            hover: 0xe8e8ed,
+            input: 0xffffff,
+            border: 0xd2d2d7,
+            text: 0x1d1d1f,
+            text_muted: 0x6e6e73,
+            text_dimmed: 0x98989d,
+            primary: 0x0a84ff,
+            primary_hover: 0x0071e3,
             on_primary: 0xffffff,
-            focus_ring: 0x0969da,
-            link: 0x0969da,
-            accent: 0x1a7f37,
-            success: 0x1a7f37,
-            warning: 0x9a6700,
-            danger: 0xcf222e,
-            terminal_bg: 0xffffff,
-            terminal_fg: 0x1f2328,
-            terminal_cursor: 0x0969da,
-            terminal_selection: 0xc7e5ff,
+            focus_ring: 0x0a84ff,
+            link: 0x0a84ff,
+            accent: 0xaf52de,
+            success: 0x34c759,
+            warning: 0xff9f0a,
+            danger: 0xff3b30,
+            terminal_bg: 0xf5f5f7,
+            terminal_fg: 0x1d1d1f,
+            terminal_cursor: 0x1d1d1f,
+            terminal_selection: 0xb8d7ff,
             terminal_ansi: [
-                0x1f2328, 0xcf222e, 0x116329, 0x9a6700, 0x0969da, 0x8250df, 0x1b7c83, 0x6e7781,
-                0x57606a, 0xa40e26, 0x1a7f37, 0x7d4e00, 0x218bff, 0xa475f9, 0x3192aa, 0x8c959f,
+                0x6e6e73, 0xd70015, 0x2ea44f, 0x9a6700, 0x0a7ffb, 0xa40ec4, 0x0a7e8c, 0x1d1d1f,
+                0x8e8e93, 0xe03131, 0x34c759, 0xb8860b, 0x1a90ff, 0xc539d1, 0x12b5c3, 0x000000,
             ],
         },
         "catppuccin-latte" => ThemePalette {
@@ -1020,12 +1020,12 @@ mod tests {
         let expected = [
             (
                 "github-dark",
-                0x3b82f6,
-                0x2563eb,
-                0x0d1117,
-                0x58a6ff,
-                0x58a6ff,
-                0x58a6ff,
+                0x0a84ff,
+                0x0071e3,
+                0xffffff,
+                0x0a84ff,
+                0x0a84ff,
+                0xbf5af2,
             ),
             (
                 "nya-high-contrast",
@@ -1116,12 +1116,12 @@ mod tests {
             ),
             (
                 "github-light",
-                0x0969da,
-                0x0550ae,
+                0x0a84ff,
+                0x0071e3,
                 0xffffff,
-                0x0969da,
-                0x0969da,
-                0x1a7f37,
+                0x0a84ff,
+                0x0a84ff,
+                0xaf52de,
             ),
             (
                 "catppuccin-latte",
@@ -1171,6 +1171,28 @@ mod tests {
             assert_eq!(palette.accent, accent, "{id} accent");
         }
     }
+    #[test]
+    fn github_builtins_are_macos_palettes_and_match_json() {
+        let catalog = nyaterm_core::themes::ThemeCatalog::default();
+        for (id, bg, primary, ansi_black, ansi_bright_white) in [
+            ("github-dark", 0x131316, 0x0a84ff, 0x48484c, 0xf5f5f7),
+            ("github-light", 0xebebf0, 0x0a84ff, 0x6e6e73, 0x000000),
+        ] {
+            let theme = nyaterm_core::themes::resolve_theme(id, &catalog);
+            assert!(theme.validate().is_empty(), "{id} validate");
+            let palette = theme_palette(id);
+            // 硬编码 palette 与 JSON 推导结果必须全等(双数据源一致性)
+            assert_eq!(palette, super::palette_from_theme(&theme), "{id} json parity");
+            assert_eq!(palette.bg, bg, "{id} bg");
+            assert_eq!(palette.primary, primary, "{id} primary");
+            assert_eq!(palette.terminal_ansi[0], ansi_black, "{id} ansi black");
+            assert_eq!(
+                palette.terminal_ansi[15], ansi_bright_white,
+                "{id} ansi bright white"
+            );
+        }
+    }
+
     #[test]
     fn custom_colors_cover_extended_tokens_and_unknown_ids_fall_back() {
         let mut theme = nyaterm_core::themes::builtins()[0].copy_as_custom();

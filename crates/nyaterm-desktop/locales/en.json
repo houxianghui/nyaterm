@@ -3840,7 +3840,7 @@
     "applyUi": "Interface",
     "applyTerminal": "Terminal only",
     "applyBoth": "Interface and terminal (terminal follows interface)",
-    "deleteConfirmation": "Delete “%{name}”? If used by the UI, it will switch to GitHub Dark. Terminals explicitly using this theme will follow the UI. This cannot be undone.",
+    "deleteConfirmation": "Delete “%{name}”? If used by the UI, it will switch to macOS Dark. Terminals explicitly using this theme will follow the UI. This cannot be undone.",
     "conflict": "Saved themes changed elsewhere. Your edits are preserved. Export them or discard them and reload before retrying."
   },
   "authForm": {

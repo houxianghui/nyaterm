@@ -3840,7 +3840,7 @@
     "applyUi": "界面",
     "applyTerminal": "仅终端",
     "applyBoth": "界面和终端（终端跟随界面）",
-    "deleteConfirmation": "删除“%{name}”？若界面正在使用它，将切换到 GitHub Dark；显式使用它的终端将恢复跟随界面。此操作无法撤销。",
+    "deleteConfirmation": "删除“%{name}”？若界面正在使用它，将切换到 macOS Dark；显式使用它的终端将恢复跟随界面。此操作无法撤销。",
     "conflict": "已保存主题在其他位置发生变化，编辑内容已保留。请先导出编辑，或放弃编辑并重新载入后重试。"
   },
   "authForm": {

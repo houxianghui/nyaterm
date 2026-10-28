@@ -3846,7 +3846,7 @@
     "applyUi": "Interface",
     "applyTerminal": "Terminal uniquement",
     "applyBoth": "Interface et terminal (le terminal suit l’interface)",
-    "deleteConfirmation": "Supprimer « %{name} » ? Si l’interface l’utilise, elle passera à GitHub Dark. Les terminaux utilisant explicitement ce thème suivront l’interface. Cette opération est irréversible.",
+    "deleteConfirmation": "Supprimer « %{name} » ? Si l’interface l’utilise, elle passera à macOS Dark. Les terminaux utilisant explicitement ce thème suivront l’interface. Cette opération est irréversible.",
     "conflict": "Les thèmes enregistrés ont changé ailleurs. Vos modifications sont conservées. Exportez-les ou abandonnez-les et rechargez avant de réessayer."
   },
   "authForm": {

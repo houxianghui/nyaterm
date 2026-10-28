@@ -3847,7 +3847,7 @@
     "applyUi": "인터페이스",
     "applyTerminal": "터미널만",
     "applyBoth": "인터페이스와 터미널 (터미널이 인터페이스를 따름)",
-    "deleteConfirmation": "“%{name}” 테마를 삭제할까요? 사용 중인 UI는 GitHub Dark로 바뀌고 이 테마를 지정한 터미널은 UI를 따릅니다. 되돌릴 수 없습니다.",
+    "deleteConfirmation": "“%{name}” 테마를 삭제할까요? 사용 중인 UI는 macOS Dark로 바뀌고 이 테마를 지정한 터미널은 UI를 따릅니다. 되돌릴 수 없습니다.",
     "conflict": "저장된 테마가 다른 곳에서 변경되었습니다. 편집 내용은 유지됩니다. 내보내거나 편집을 버리고 다시 불러오세요."
   },
   "authForm": {
