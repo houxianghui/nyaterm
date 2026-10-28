@@ -2,6 +2,8 @@ name: Main Snapshot
 
 on:
   workflow_dispatch:
+  push:
+    branches: [gpui]
 
 permissions:
   contents: read
