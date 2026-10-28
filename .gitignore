@@ -54,3 +54,6 @@ playwright-report/
 
 # Python release helper caches
 __pycache__/
+
+# Local snapshot verification downloads (merge-upstream skill)
+dist-verify/

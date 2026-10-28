@@ -15,7 +15,6 @@ import {
   MdAutoAwesome,
   MdBackup,
   MdDashboard,
-  MdDns,
   MdKeyboard,
   MdKeyboardArrowRight,
   MdMouse,
@@ -82,6 +81,8 @@ const SETTINGS_GROUP_DEFAULT_TABS: Record<string, string> = {
   terminal_session: "terminal-general",
   transfer_group: "transfer",
   workspace: "general",
+  connections: "general",
+  "remote-desktop": "general",
 };
 
 function normalizeSettingsTab(tab: string) {
@@ -302,7 +303,6 @@ export default function SettingsPage() {
   const iconMap: Record<string, React.ElementType> = {
     cloud_sync: MdBackup,
     dashboard: MdDashboard,
-    dns: MdDns,
     settings: MdSettings,
     palette: MdPalette,
     swap_horiz: MdSwapHoriz,

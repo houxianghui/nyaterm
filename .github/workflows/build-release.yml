@@ -3,7 +3,7 @@ name: Build and Release
 on:
   push:
     tags:
-      - "v*"
+      - "v1.*"
   workflow_dispatch:
 
 permissions:
@@ -27,8 +27,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
-            echo "::error::Release requires refs/tags/v*; got $GITHUB_REF. Dispatch against a version tag."
+          if [[ "$GITHUB_REF" != refs/tags/v1.* ]]; then
+            echo "::error::Tauri 1.x release requires refs/tags/v1.*; got $GITHUB_REF."
             exit 1
           fi
 
@@ -37,7 +37,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify release versions and main ancestry
+      - name: Verify release versions and Tauri maintenance branch ancestry
         shell: bash
         run: |
           set -euo pipefail
@@ -65,10 +65,10 @@ jobs:
           print(f'Release versions match {version}')
           PY
 
-          git fetch origin main:refs/remotes/origin/main
+          git fetch origin archive/tauri-v1:refs/remotes/origin/archive/tauri-v1
           tag_commit=$(git rev-parse "${GITHUB_REF}^{commit}")
-          if [ "$tag_commit" != "$(git rev-parse HEAD)" ] || ! git merge-base --is-ancestor "$tag_commit" origin/main; then
-            echo "::error::The checked-out tag commit must belong to origin/main."
+          if [ "$tag_commit" != "$(git rev-parse HEAD)" ] || ! git merge-base --is-ancestor "$tag_commit" origin/archive/tauri-v1; then
+            echo "::error::The checked-out tag commit must belong to origin/archive/tauri-v1."
             exit 1
           fi
 

@@ -52,6 +52,7 @@ fn build_initial_agent_conversation(
 ) -> Vec<ChatMessage> {
     let mut conversation = vec![ChatMessage::system(agent_system_prompt(
         &request.options.language,
+        &settings.agent_custom_instructions,
     ))];
 
     if let Some(session_id) = request.session_id.as_deref() {
@@ -194,6 +195,7 @@ async fn execute_command_on_session(
             timeout_ms,
         },
         Some(TerminalExecutionPresentation {
+            source: None,
             app: app.clone(),
             step_index,
             max_lines: terminal_output_lines,
@@ -1317,6 +1319,54 @@ mod tests {
     }
 
     #[test]
+    fn agent_conversation_applies_current_custom_instructions_once() {
+        let request = agent_request(Some("s1"), 20);
+        let history = vec![
+            history_message("s1", AiMessageRole::System, "old-custom-instructions"),
+            history_message("s1", AiMessageRole::User, "previous task"),
+            history_message("s1", AiMessageRole::Assistant, "previous answer"),
+        ];
+        let mut settings = AiSettings {
+            agent_custom_instructions: "current-custom-instructions".to_string(),
+            ..AiSettings::default()
+        };
+        let conversation = build_initial_agent_conversation(&request, &settings, &history);
+        assert_eq!(conversation.len(), 4);
+        assert_eq!(conversation[0].role, ChatRole::System);
+        assert!(
+            conversation[0]
+                .content
+                .first_text()
+                .unwrap()
+                .contains("current-custom-instructions")
+        );
+        assert_eq!(
+            conversation
+                .iter()
+                .filter(|message| message
+                    .content
+                    .first_text()
+                    .is_some_and(|text| text.contains("current-custom-instructions")))
+                .count(),
+            1
+        );
+        assert!(conversation.iter().all(|message| {
+            !message
+                .content
+                .first_text()
+                .unwrap_or_default()
+                .contains("old-custom-instructions")
+        }));
+
+        settings.agent_custom_instructions.clear();
+        let cleared = build_initial_agent_conversation(&request, &settings, &history);
+        assert_eq!(
+            cleared[0].content.first_text(),
+            Some(agent_system_prompt(&request.options.language, "").as_str())
+        );
+    }
+
+    #[test]
     fn agent_conversation_limits_history_to_same_session() {
         let request = agent_request(Some("s1"), 2);
         let history = vec![
@@ -1619,6 +1669,7 @@ mod tests {
                     owner_window_label: None,
                     ai_execution_profile: AiExecutionProfile::SendOnly,
                     injection_active: false,
+                    cwd_tracking_active: false,
                     dynamic_title_capabilities: DynamicTitleCapabilities::default(),
                     remote_file_browser_enabled: false,
                     remote_stats_enabled: false,

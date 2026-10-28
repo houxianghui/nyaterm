@@ -673,6 +673,11 @@ pub enum ConnectionType {
         #[serde(default, skip_serializing_if = "is_false")]
         raw_tcp_cli: bool,
         #[serde(
+            default = "crate::telnet::default_telnet_keep_alive_interval",
+            skip_serializing_if = "is_default_telnet_keep_alive_interval"
+        )]
+        keep_alive_interval: u32,
+        #[serde(
             default = "default_telnet_enter_mode",
             skip_serializing_if = "is_default_telnet_enter_mode"
         )]
@@ -717,6 +722,8 @@ pub enum ConnectionType {
         encoding: String,
     },
     Rdp {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rdp_client_mode: Option<String>,
         host: String,
         #[serde(default = "default_rdp_port")]
         port: u16,
@@ -766,6 +773,11 @@ fn default_backspace_mode_ssh() -> String {
 fn default_telnet_port() -> u16 {
     23
 }
+
+fn is_default_telnet_keep_alive_interval(value: &u32) -> bool {
+    *value == crate::telnet::default_telnet_keep_alive_interval()
+}
+
 fn default_rdp_port() -> u16 {
     3389
 }
@@ -2679,6 +2691,7 @@ mod tests {
         let ConnectionType::Telnet {
             username,
             raw_tcp_cli,
+            keep_alive_interval,
             enter_mode,
             local_echo,
             local_line_edit,
@@ -2693,12 +2706,33 @@ mod tests {
 
         assert!(username.is_empty());
         assert!(!raw_tcp_cli);
+        assert_eq!(keep_alive_interval, 60);
         assert_eq!(enter_mode, "cr");
         assert!(!local_echo);
         assert!(!local_line_edit);
         assert!(!force_character_at_a_time);
         assert!(send_naws);
         assert!(send_sga);
+    }
+
+    #[test]
+    fn telnet_keep_alive_roundtrip_preserves_zero_and_custom_intervals() {
+        for interval in [0, 1, 60, 120, u32::MAX] {
+            let connection: SavedConnection = serde_json::from_value(serde_json::json!({
+                "id": "telnet", "name": "Telnet", "type": "telnet",
+                "host": "example.com", "keep_alive_interval": interval
+            }))
+            .expect("connection");
+            let encoded = serde_json::to_value(&connection).expect("serialize");
+            if interval == 60 {
+                // Keep legacy default serialization stable for backup/sync hashes.
+                assert!(encoded.get("keep_alive_interval").is_none());
+            } else {
+                assert_eq!(encoded["keep_alive_interval"], interval);
+            }
+            let restored: SavedConnection = serde_json::from_value(encoded).expect("restore");
+            assert_eq!(restored.config, connection.config);
+        }
     }
 
     #[test]
@@ -2755,6 +2789,7 @@ mod tests {
 
         let ConnectionType::Rdp {
             port,
+            rdp_client_mode,
             security,
             display,
             clipboard,
@@ -2766,6 +2801,7 @@ mod tests {
         };
 
         assert_eq!(port, 3389);
+        assert_eq!(rdp_client_mode, None);
         assert!(security.use_nla);
         assert_eq!(security.certificate_policy, "prompt");
         assert_eq!(display.width, 1920);
@@ -2774,6 +2810,37 @@ mod tests {
         assert_eq!(clipboard.mode, "text-only");
         assert!(reconnect.enabled);
         assert_eq!(reconnect.max_attempts, 5);
+    }
+
+    #[test]
+    fn rdp_client_mode_roundtrip_and_validation() {
+        for mode in [None, Some("builtin"), Some("windows"), Some("invalid")] {
+            let mut value = serde_json::json!({
+                "id": "rdp-client", "name": "RDP", "type": "rdp",
+                "host": "rdp.example.com", "username": "Administrator"
+            });
+            if let Some(mode) = mode {
+                value["rdp_client_mode"] = serde_json::json!(mode);
+            }
+            let connection: SavedConnection = serde_json::from_value(value).expect("connection");
+            assert_eq!(
+                crate::services::validate_rdp_config(&connection).is_ok(),
+                mode != Some("invalid")
+            );
+            let serialized = serde_json::to_value(&connection).expect("serialize");
+            assert_eq!(
+                serialized.get("rdp_client_mode").and_then(|v| v.as_str()),
+                mode
+            );
+            let restored: SavedConnection = serde_json::from_value(serialized).expect("restore");
+            let ConnectionType::Rdp {
+                rdp_client_mode, ..
+            } = restored.config
+            else {
+                panic!("expected RDP");
+            };
+            assert_eq!(rdp_client_mode.as_deref(), mode);
+        }
     }
 
     #[test]

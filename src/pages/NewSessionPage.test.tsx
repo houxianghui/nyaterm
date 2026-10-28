@@ -15,6 +15,7 @@ const {
   telnetFormMock,
   translateMock,
   supportsMock,
+  legacySettings,
 } = vi.hoisted(() => ({
   closeMock: vi.fn(),
   emitMock: vi.fn(),
@@ -26,6 +27,7 @@ const {
   sshFormMock: vi.fn(),
   telnetFormMock: vi.fn(),
   supportsMock: vi.fn(() => true),
+  legacySettings: { rdp_client_mode: "builtin" },
   translateMock: (key: string, fallback?: unknown) =>
     typeof fallback === "string" ? fallback : key,
 }));
@@ -33,6 +35,7 @@ const {
 vi.mock("@/context/AppContext", () => ({
   useApp: () => ({
     appSettings: {
+      general: legacySettings,
       recording: {
         auto_start: false,
         default_mode: "transcript",
@@ -220,6 +223,7 @@ const telnetConnection: SavedConnection = {
 const rdpConnection: SavedConnection = {
   id: "rdp-1",
   name: "RDP desktop",
+  rdp_client_mode: "windows",
   type: "rdp",
   host: "rdp.example.com",
   port: 3389,
@@ -275,6 +279,7 @@ const vncConnection: SavedConnection = {
 
 describe("NewSessionPage", () => {
   beforeEach(() => {
+    legacySettings.rdp_client_mode = "builtin";
     supportsMock.mockReset();
     supportsMock.mockReturnValue(true);
     window.history.replaceState({}, "", `/?edit=${rdpConnection.id}`);
@@ -407,6 +412,80 @@ describe("NewSessionPage", () => {
       );
     });
   });
+
+  it("defaults a new RDP connection to built-in even with a legacy Windows default", async () => {
+    legacySettings.rdp_client_mode = "windows";
+    window.history.replaceState({}, "", "/");
+    render(<NewSessionPage />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "RDP" }), {
+      button: 0,
+    });
+    await waitFor(() =>
+      expect(rdpFormMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          clientMode: "builtin",
+        }),
+      ),
+    );
+  });
+
+  it.each(["builtin", "windows"] as const)(
+    "saves RDP client choice %s while preserving connection parameters",
+    async (mode) => {
+      render(<NewSessionPage />);
+      await waitFor(() =>
+        expect(rdpFormMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({ clientMode: "windows" }),
+        ),
+      );
+      const props = rdpFormMock.mock.lastCall?.[0];
+      act(() => props.setClientMode(mode));
+      fireEvent.click(screen.getByRole("button", { name: "dialog.save" }));
+      await waitFor(() =>
+        expect(invokeMock).toHaveBeenCalledWith(
+          "save_connection",
+          expect.anything(),
+        ),
+      );
+      const saved = invokeMock.mock.calls.find(
+        ([command]) => command === "save_connection",
+      )?.[1].connection;
+      expect(saved.rdp_client_mode).toBe(mode);
+      expect(saved.network).toEqual(rdpConnection.network);
+      expect(saved.security).toEqual(rdpConnection.security);
+      expect(saved.display).toEqual(rdpConnection.display);
+    },
+  );
+
+  it.each(["builtin", "windows"] as const)(
+    "materializes the legacy %s client when editing and saving an inherited connection",
+    async (mode) => {
+      legacySettings.rdp_client_mode = mode;
+      const baseInvoke = invokeMock.getMockImplementation();
+      invokeMock.mockImplementation((command: string, ...args: unknown[]) => {
+        if (command === "get_saved_connections") {
+          const { rdp_client_mode: _mode, ...legacyConnection } = rdpConnection;
+          return Promise.resolve([legacyConnection, jumpHost]);
+        }
+        return baseInvoke?.(command, ...args);
+      });
+      render(<NewSessionPage />);
+      await waitFor(() =>
+        expect(rdpFormMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({ clientMode: mode }),
+        ),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "dialog.save" }));
+      await waitFor(() =>
+        expect(invokeMock).toHaveBeenCalledWith(
+          "save_connection",
+          expect.objectContaining({
+            connection: expect.objectContaining({ rdp_client_mode: mode }),
+          }),
+        ),
+      );
+    },
+  );
 
   it("loads, edits, and saves connection tags", async () => {
     render(<NewSessionPage />);
@@ -604,6 +683,72 @@ describe("NewSessionPage", () => {
         }),
       );
     });
+  });
+
+  it("defaults a new Telnet connection to a 60 second keep-alive", async () => {
+    window.history.replaceState({}, "", "/");
+    render(<NewSessionPage />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Telnet" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    await waitFor(() =>
+      expect(telnetFormMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keepAliveInterval: 60 }),
+      ),
+    );
+  });
+
+  it.each([undefined, 0, 120])(
+    "loads and saves Telnet keep-alive %s without losing zero",
+    async (interval) => {
+      const implementation = invokeMock.getMockImplementation()!;
+      invokeMock.mockImplementation((command: string, ...args: unknown[]) =>
+        command === "get_saved_connections"
+          ? Promise.resolve([
+              { ...telnetConnection, keep_alive_interval: interval },
+            ])
+          : implementation(command, ...args),
+      );
+      window.history.replaceState({}, "", `/?edit=${telnetConnection.id}`);
+      render(<NewSessionPage />);
+      await waitFor(() =>
+        expect(telnetFormMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({ keepAliveInterval: interval ?? 60 }),
+        ),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "dialog.save" }));
+      await waitFor(() =>
+        expect(invokeMock).toHaveBeenCalledWith(
+          "save_connection",
+          expect.objectContaining({
+            connection: expect.objectContaining({
+              keep_alive_interval: interval ?? 60,
+            }),
+          }),
+        ),
+      );
+    },
+  );
+
+  it("saves a changed Telnet keep-alive interval", async () => {
+    window.history.replaceState({}, "", `/?edit=${telnetConnection.id}`);
+    render(<NewSessionPage />);
+    await waitFor(() =>
+      expect(telnetFormMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keepAliveInterval: 60 }),
+      ),
+    );
+    act(() => telnetFormMock.mock.lastCall![0].setKeepAliveInterval(17));
+    fireEvent.click(screen.getByRole("button", { name: "dialog.save" }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_connection",
+        expect.objectContaining({
+          connection: expect.objectContaining({ keep_alive_interval: 17 }),
+        }),
+      ),
+    );
   });
 
   it("clears only the account reference when switching to Manual", async () => {

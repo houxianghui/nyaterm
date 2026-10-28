@@ -55,10 +55,22 @@ export interface AppSupportInfo {
 }
 
 /** AI Agent command execution wrapper profile. */
-export type AIExecutionProfile = "auto" | "posix" | "powershell" | "cmd" | "send_only" | "disabled";
+export type AIExecutionProfile =
+  | "auto"
+  | "posix"
+  | "powershell"
+  | "cmd"
+  | "send_only"
+  | "disabled";
 export type SshProfile = "standard" | "network_device";
 export type SshRuntimeMode = "standard" | "terminal" | "sftp";
-export type SshTerminalType = "xterm-256color" | "xterm" | "vt100" | "vt220" | "ansi" | "linux";
+export type SshTerminalType =
+  | "xterm-256color"
+  | "xterm"
+  | "vt100"
+  | "vt220"
+  | "ansi"
+  | "linux";
 
 /** A group of sessions whose terminal input is broadcast to all members. */
 export interface SyncGroup {
@@ -75,7 +87,13 @@ export interface SyncGroup {
 export type PaneSplitDirection = "horizontal" | "vertical";
 
 /** Connection type discriminator matching Rust ConnectionType. */
-export type ConnectionTypeTag = "ssh" | "local_terminal" | "telnet" | "serial" | "rdp" | "vnc";
+export type ConnectionTypeTag =
+  | "ssh"
+  | "local_terminal"
+  | "telnet"
+  | "serial"
+  | "rdp"
+  | "vnc";
 
 /** Metadata for a connected or disconnected session. */
 export interface SessionInfo {
@@ -93,6 +111,8 @@ export interface SessionInfo {
   ai_execution_profile: AIExecutionProfile;
   /** True when backend shell command-confirmation integration is active. */
   injection_active: boolean;
+  /** True when the backend reports cwd without shell hooks (tmux panes). */
+  cwd_tracking_active?: boolean;
   /** Whether application/remote dynamic titles may be promoted. */
   dynamic_title_enabled: boolean;
   /** Whether the selected shell received NyaTerm dynamic-title/cwd hooks. */
@@ -128,6 +148,15 @@ export interface WorkspacePaneBase {
   createRequestId?: string;
   /** Populated when session creation failed and the pane should stay visible as an error state. */
   connectError?: string;
+  /**
+   * Set when this pane is a tmux control-mode pane: `sessionId` is then a
+   * virtual session owned by `controlSessionId`'s SSH channel, and `paneId`
+   * is the tmux pane id (e.g. `%5`). Not persisted across restarts.
+   */
+  tmux?: {
+    controlSessionId: string;
+    paneId: string;
+  };
 }
 
 /** Leaf node representing one terminal session inside a workspace tab. */
@@ -183,7 +212,11 @@ export interface FileDocumentPane extends WorkspacePaneBase {
   };
 }
 
-export type SessionPane = TerminalSessionPane | RdpSessionPane | VncSessionPane | FileDocumentPane;
+export type SessionPane =
+  | TerminalSessionPane
+  | RdpSessionPane
+  | VncSessionPane
+  | FileDocumentPane;
 
 /** Split node containing two child panes. */
 export interface SplitPane {
@@ -212,6 +245,22 @@ export interface Tab {
   tabColor?: string;
   /** True when the tab is protected from accidental close actions. */
   locked?: boolean;
+  /**
+   * Set while the tab renders one tmux window of a `-CC` control session:
+   * the root pane tree mirrors that window's layout and its leaves are
+   * virtual pane sessions owned by `controlSessionId`. Not persisted —
+   * the tab is dropped on serialize and dies with the session.
+   */
+  tmux?: {
+    controlSessionId: string;
+    windowId: string;
+    /** Latest `#{window_name}`; follows `%window-renamed`. */
+    windowName: string;
+    /** `#{window_index}` — the `N:` prefix on the sub-tab label. */
+    windowIndex: number;
+    /** Selected remote window within its host SSH leaf. */
+    active: boolean;
+  };
 }
 
 /** SSH connection config for creating a session. */
@@ -271,7 +320,9 @@ export interface SshAgentForwardingIdentity {
   custom_endpoint_index?: number;
 }
 
-export type SshAgentForwardingEndpointErrorCode = "connect_failed" | "identity_enumeration_failed";
+export type SshAgentForwardingEndpointErrorCode =
+  | "connect_failed"
+  | "identity_enumeration_failed";
 
 export interface SshAgentForwardingEndpointError {
   custom_endpoint_index: number;
@@ -563,6 +614,8 @@ export interface SavedConnection {
   backspace_mode?: string;
   /** Telnet-only: bypass Telnet option negotiation for embedded/raw TCP CLIs. */
   raw_tcp_cli?: boolean;
+  /** Telnet-only: fixed NOP interval in seconds; defaults to 60, 0 disables it. */
+  keep_alive_interval?: number;
   /** Telnet-only: Enter send mode ("crlf", "cr", or "lf"). */
   enter_mode?: "crlf" | "cr" | "lf";
   /** Telnet-only: locally echo typed input when the remote does not echo. */
@@ -587,6 +640,8 @@ export interface SavedConnection {
   encoding?: string;
   /** RDP-only: optional Windows/domain part for authentication. */
   domain?: string;
+  /** RDP-only: absent means use the global default client. */
+  rdp_client_mode?: RdpClientMode;
   /** RDP/VNC security options. */
   security?: Partial<RdpSecuritySettings & VncSecuritySettings>;
   /** RDP/VNC display options. */
@@ -602,6 +657,7 @@ export interface SavedConnection {
 }
 
 export type RdpCertificatePolicy = "strict" | "prompt" | "accept-temporarily";
+export type RdpClientMode = "builtin" | "windows";
 export type RdpDisplayMode = "fit-window" | "fixed" | "native";
 export type RdpClipboardMode = "disabled" | "text-only" | "text-and-files";
 
@@ -644,7 +700,12 @@ export interface VncReconnectSettings {
 }
 
 export type RecordingMode = "transcript" | "raw";
-export type RecordingState = "starting" | "recording" | "degraded" | "failed" | "stopping";
+export type RecordingState =
+  | "starting"
+  | "recording"
+  | "degraded"
+  | "failed"
+  | "stopping";
 export type ExistingFileBehavior = "unique" | "append" | "overwrite";
 export type RotationPolicy =
   | { type: "session" }
@@ -768,7 +829,11 @@ export type RightPanelId =
   | "recording"
   | "syncBackupHistory";
 
-export type ActivityBarZone = "left_top" | "left_bottom" | "right_top" | "right_bottom";
+export type ActivityBarZone =
+  | "left_top"
+  | "left_bottom"
+  | "right_top"
+  | "right_bottom";
 
 export interface ActivityBarLayout {
   left_top: string[];
@@ -784,7 +849,13 @@ export interface ActivityBarLayout {
 /** Layout preferences: panel widths, active panels, theme. */
 export type QuickCommandViewMode = "list" | "compact" | "tile";
 export type QuickCommandSortMode = "created" | "name" | "useCount" | "custom";
-export type HeaderStatusMode = "session" | "resources" | "host" | "datetime" | "gpu" | "npu";
+export type HeaderStatusMode =
+  | "session"
+  | "resources"
+  | "host"
+  | "datetime"
+  | "gpu"
+  | "npu";
 
 export type RestorableTerminalWindowNode =
   | {
@@ -825,7 +896,12 @@ export interface UiConfig {
   /** Relative height weight per panel id for stacked multi-open panels. */
   panel_stack_sizes: Record<string, number>;
   network_panel_active_tab?: "tunnel" | "proxy";
-  security_auth_panel_active_tab?: "keys" | "passwords" | "otp" | "credentials" | "known-hosts";
+  security_auth_panel_active_tab?:
+    | "keys"
+    | "passwords"
+    | "otp"
+    | "credentials"
+    | "known-hosts";
   show_quick_cmd_bar: boolean;
   show_serial_send_panel: boolean;
   serial_send_height: number;
@@ -1134,7 +1210,10 @@ export interface QuickCommandsConfig {
   categories: QuickCommandCategory[];
 }
 
-export type QuickCommandImportSource = "windterm_quickbar" | "xshell_xts" | "nyaterm_json";
+export type QuickCommandImportSource =
+  | "windterm_quickbar"
+  | "xshell_xts"
+  | "nyaterm_json";
 
 export interface QuickCommandImportResult {
   imported_commands: number;
@@ -1161,7 +1240,8 @@ export interface GeneralSettings {
   minimize_to_tray: boolean;
   boss_key: string | null;
   confirm_on_close: boolean;
-  rdp_client_mode: "builtin" | "windows";
+  /** Legacy fallback for saved connections without an explicit client preference. */
+  rdp_client_mode: RdpClientMode;
 }
 
 export type BackgroundImageFit = "cover" | "contain" | "stretch" | "tile";
@@ -1413,6 +1493,7 @@ export interface ExternalMcpSettings {
   enabled: boolean;
   permission_mode: AIPermissionMode;
   session_scope: ExternalMcpSessionScope;
+  terminal_display_mode: "inline" | "silent";
 }
 export type AIReasoningEffort =
   | "auto"
@@ -1434,7 +1515,11 @@ export type AIModelReasoningEffort =
   | "max"
   | "ultra";
 export type AIApiFormat = "chat_completions" | "responses";
-export type AIProviderApiProtocol = "openai_compatible" | "anthropic" | "gemini" | "ollama";
+export type AIProviderApiProtocol =
+  | "openai_compatible"
+  | "anthropic"
+  | "gemini"
+  | "ollama";
 export type AIModelSource = "rust-genai" | "manual";
 export type AIBackendKind = "genai" | "codex";
 export type CodexThreadMode = "persistent" | "ephemeral";
@@ -1547,6 +1632,7 @@ export interface AISettings {
   terminal_ai_actions: AICustomActionConfig[];
   file_ai_actions: AICustomActionConfig[];
   max_ai_file_size_bytes: number;
+  agent_custom_instructions: string;
   max_agent_steps?: number | null;
   agent_step_timeout_ms?: number | null;
   terminal_output_lines: number;
@@ -1728,7 +1814,12 @@ export type RiskReasonCode =
   | "unknownCommand"
   | "ordinaryWrite"
   | "readOnlyDiagnostic";
-export type AgentStepStatus = "running" | "completed" | "needs_approval" | "rejected" | "failed";
+export type AgentStepStatus =
+  | "running"
+  | "completed"
+  | "needs_approval"
+  | "rejected"
+  | "failed";
 
 export interface AgentStepAction {
   kind: AgentActionKind;
@@ -1761,7 +1852,12 @@ export interface AgentStepPayload {
 }
 
 export type AiCaptureEvent =
-  | { type: "commandStart"; command: string; stepIndex: number }
+  | {
+      type: "commandStart";
+      command: string;
+      stepIndex: number;
+      source?: "AI" | "MCP";
+    }
   | {
       type: "commandEnd";
       output: string;
@@ -1769,6 +1865,8 @@ export type AiCaptureEvent =
       durationMs: number;
       truncated: boolean;
     };
+
+export type TerminalExecutionState = "idle" | "running" | "awaitingEnd";
 
 export interface TunnelConfig {
   id: string;
@@ -1780,6 +1878,7 @@ export interface TunnelConfig {
   target_port: number;
   is_open: boolean;
   auto_open: boolean;
+  auto_reconnect: boolean;
   bind_localhost: boolean;
   group_id?: string;
 }
@@ -1793,6 +1892,9 @@ export type TunnelRuntimeStatus =
   | "error";
 
 export interface TunnelRuntimeState {
+  revision?: number;
+  retryAttempt: number;
+  nextRetryAt?: number | null;
   tunnelId: string;
   status: TunnelRuntimeStatus;
   error?: string | null;

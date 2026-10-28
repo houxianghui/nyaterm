@@ -812,6 +812,31 @@ mod tests {
     }
 
     #[test]
+    fn telnet_keep_alive_survives_backup_and_sync_snapshot_roundtrip() {
+        for kind in [PortableSnapshotKind::Backup, PortableSnapshotKind::Sync] {
+            for interval in [0, 60, 120] {
+                let mut snapshot = sample_snapshot();
+                snapshot.snapshot_kind = kind.clone();
+                snapshot.sessions.connections = vec![
+                    serde_json::from_value(serde_json::json!({
+                        "id": "telnet", "name": "Telnet", "type": "telnet",
+                        "host": "example.com", "keep_alive_interval": interval
+                    }))
+                    .expect("connection"),
+                ];
+                snapshot.payload_hash = calculate_payload_hash(&snapshot).expect("hash");
+                let encoded = encode_portable_snapshot(&snapshot).expect("export");
+                let restored = super::decode_portable_snapshot(&encoded).expect("import");
+                assert_eq!(
+                    restored.sessions.connections[0].config,
+                    snapshot.sessions.connections[0].config
+                );
+                assert_eq!(restored.payload_hash, snapshot.payload_hash);
+            }
+        }
+    }
+
+    #[test]
     fn serial_flow_control_survives_portable_snapshot_roundtrip() {
         for flow_control in [
             config::SerialFlowControl::None,
@@ -836,6 +861,37 @@ mod tests {
                 snapshot.sessions.connections[1].config
             );
             assert_eq!(decoded.payload_hash, snapshot.payload_hash);
+        }
+    }
+
+    #[test]
+    fn rdp_client_mode_survives_portable_snapshot_roundtrip() {
+        for mode in [None, Some("builtin"), Some("windows")] {
+            let mut connection = serde_json::json!({
+                "id": "rdp-client", "name": "RDP", "type": "rdp",
+                "host": "rdp.example.com", "username": "Administrator"
+            });
+            if let Some(mode) = mode {
+                connection["rdp_client_mode"] = serde_json::json!(mode);
+            }
+            let mut snapshot = sample_snapshot();
+            snapshot.sessions.connections =
+                vec![serde_json::from_value(connection).expect("connection")];
+            strip_device_local_sessions(&mut snapshot.sessions);
+            snapshot.payload_hash = calculate_payload_hash(&snapshot).expect("hash");
+            let encoded = encode_portable_snapshot(&snapshot).expect("export");
+            let mut restored = super::decode_portable_snapshot(&encoded).expect("import");
+            preserve_device_local_sessions(
+                &mut restored.sessions,
+                &config::SessionsConfig::default(),
+            );
+            let config::ConnectionType::Rdp {
+                rdp_client_mode, ..
+            } = &restored.sessions.connections[0].config
+            else {
+                panic!("expected RDP");
+            };
+            assert_eq!(rdp_client_mode.as_deref(), mode);
         }
     }
 
@@ -897,6 +953,30 @@ mod tests {
             decoded.ai.active_profile_id,
             config::AiSettings::default().active_profile_id
         );
+    }
+
+    #[test]
+    fn portable_snapshot_preserves_agent_custom_instructions() {
+        let mut snapshot = sample_snapshot();
+        snapshot.settings.ai.agent_custom_instructions =
+            "Prefer read-only diagnostics.\n先备份配置。".to_string();
+        for kind in [PortableSnapshotKind::Backup, PortableSnapshotKind::Sync] {
+            snapshot.snapshot_kind = kind;
+            snapshot.payload_hash = calculate_payload_hash(&snapshot).unwrap();
+            let encoded = encode_portable_snapshot(&snapshot).unwrap();
+            let decoded = super::decode_portable_snapshot(&encoded).unwrap();
+            assert_eq!(
+                decoded.settings.ai.agent_custom_instructions,
+                snapshot.settings.ai.agent_custom_instructions
+            );
+            let applied = decoded
+                .settings
+                .apply_to(config::AppSettings::default(), &decoded.snapshot_kind);
+            assert_eq!(
+                applied.ai.agent_custom_instructions,
+                snapshot.settings.ai.agent_custom_instructions
+            );
+        }
     }
 
     #[test]
