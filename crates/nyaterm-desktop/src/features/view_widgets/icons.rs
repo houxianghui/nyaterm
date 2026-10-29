@@ -86,11 +86,7 @@ pub(in crate::features) fn nyaterm_app_icon(size_px: f32) -> impl IntoElement {
         .flex_none()
         .overflow_hidden()
         .rounded(px(size_px * 0.22))
-        .child(
-            img("color/app/app-icon.png")
-                .size(px(size_px))
-                .flex_none(),
-        )
+        .child(img("color/app/app-icon.png").size(px(size_px)).flex_none())
 }
 
 /// Activity-bar icon.
