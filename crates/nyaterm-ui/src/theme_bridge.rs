@@ -7,6 +7,7 @@ use gpui_kit::component::scroll::ScrollbarMode;
 use gpui_kit::component::{Theme, ThemeMode, ThemeTokens};
 
 use crate::root::refresh_nya_root_fonts;
+use crate::sizing::{radius_lg, radius_md};
 use crate::theme::ThemePalette;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +85,13 @@ pub fn apply_component_theme(
     component_theme.mode = mode;
     component_theme.font_family = ui_font_family;
     component_theme.font_size = ui_font_size;
+    // The component library defaults to a 6/8px radius scale; the fork's React
+    // line runs the larger 10px shadcn scale (`--radius: 0.625rem`, sm 6 / md 8 /
+    // lg 10 / xl 14). `Theme::radius` is that library's single base: sm=half,
+    // md=self, lg=radius_lg, xl=double. md 10 + lg 10 lands the common surfaces
+    // on the React values; menu items already pin 6px explicitly via sizing.rs.
+    component_theme.radius = radius_md();
+    component_theme.radius_lg = radius_lg();
     component_theme.colors.background = color(palette.bg);
     component_theme.colors.foreground = color(palette.text);
     component_theme.colors.muted = color(palette.surface_elevated);
