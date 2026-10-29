@@ -441,11 +441,11 @@ impl NyaMenuItem {
                     .items_center()
                     .justify_between()
                     .gap_4()
-                    .text_color(if danger {
-                        cx.theme().danger
-                    } else {
-                        cx.theme().foreground
-                    })
+                    // No explicit label colour: the wrapper paints hover/selected
+                    // text as `accent_foreground` and plain items inherit it, so
+                    // hardcoding `foreground` here kept shortcut rows dark grey on
+                    // the blue selection. Danger keeps its red in every state.
+                    .when(danger, |this| this.text_color(cx.theme().danger))
                     .child(
                         div()
                             .min_w_0()
@@ -458,7 +458,11 @@ impl NyaMenuItem {
                             div()
                                 .flex_none()
                                 .text_xs()
-                                .text_color(cx.theme().muted_foreground)
+                                // Inherit the row colour like the label: a
+                                // hardcoded `muted_foreground` kept the shortcut
+                                // grey while the label turned white on the blue
+                                // selection. Danger stays red in every state.
+                                .when(danger, |this| this.text_color(cx.theme().danger))
                                 .child(shortcut),
                         )
                     })

@@ -464,6 +464,31 @@ mod tests {
     }
 
     #[test]
+    fn menu_accent_token_follows_primary_after_apply() {
+        let cx = TestAppContext::single();
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            let palette = theme_palette("github-dark");
+
+            apply_component_theme(palette, cx);
+
+            let tokens = &Theme::global(cx).tokens;
+            assert_eq!(
+                tokens.accent.color,
+                color(palette.primary),
+                "menu hover/selected reads tokens.accent; it must name the primary \
+                 blue block rather than the muted hover grey"
+            );
+            assert_eq!(
+                tokens.accent_foreground.color,
+                color(palette.on_primary),
+                "selected menu text must be the on-primary colour (white)"
+            );
+        });
+    }
+
+    #[test]
     fn dialog_overlay_is_translucent_so_window_context_remains_visible() {
         let cx = TestAppContext::single();
 
