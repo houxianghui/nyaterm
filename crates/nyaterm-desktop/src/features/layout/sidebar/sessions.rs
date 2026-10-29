@@ -507,7 +507,7 @@ impl NyaTermApp {
         } else if is_active {
             // Finder-style inset selection: solid panel colour inside the
             // rounded row rather than a full-bleed highlight.
-            rgb(palette.surface_elevated).into()
+            rgb(palette.surface_elevated)
         } else {
             rgba(0x00000000)
         };

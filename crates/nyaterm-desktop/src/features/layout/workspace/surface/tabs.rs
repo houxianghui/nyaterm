@@ -118,7 +118,7 @@ impl NyaTermApp {
                     )
             })
             .bg(if active {
-                rgb(palette.surface).into()
+                rgb(palette.surface)
             } else {
                 rgba(0x00000000)
             })
@@ -517,7 +517,7 @@ impl NyaTermApp {
         let bg = if let Some(custom_color) = custom_color {
             rgba((custom_color << 8) | if is_active { 0x24 } else { 0x14 })
         } else if is_active {
-            rgb(palette.surface).into()
+            rgb(palette.surface)
         } else {
             rgba(0x00000000)
         };
