@@ -96,37 +96,29 @@ impl NyaTermApp {
             .id(SharedString::from(format!(
                 "pending-session-tab-{request_id}"
             )))
-            .h_full()
+            .h(px(28.))
             .min_w(px(SESSION_TAB_MIN_WIDTH))
             .max_w(px(SESSION_TAB_MAX_WIDTH))
             .flex_none()
+            .mx_1()
+            .rounded_full()
             .px_3()
             .flex()
             .items_center()
             .gap_2()
             .relative()
-            .border_r_1()
-            .border_color(rgb(palette.border))
-            .when(!active, |this| this.border_b_1())
+            .when(active, |this| {
+                this.border_1()
+                    .border_color(rgb(palette.border))
+                    .shadow_sm()
+            })
             .bg(if active {
-                self.shell_surface_color(palette.hover)
+                rgb(palette.surface).into()
             } else {
-                self.shell_surface_color(palette.bg)
+                rgba(0x00000000)
             })
             .cursor_pointer()
             .hover(move |this| this.bg(hover_bg))
-            .when(active, |this| {
-                this.child(
-                    div()
-                        .debug_selector(|| format!("pending-session-tab-active-{request_id}"))
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(2.))
-                        .bg(rgb(palette.primary)),
-                )
-            })
             .child(
                 div()
                     .size(px(14.))
@@ -256,18 +248,22 @@ impl NyaTermApp {
                 "failed-session-tab-{request_id}"
             )))
             .debug_selector(|| format!("failed-session-tab-{request_id}"))
-            .h_full()
+            .h(px(28.))
             .min_w(px(SESSION_TAB_MIN_WIDTH))
             .max_w(px(SESSION_TAB_MAX_WIDTH))
             .flex_none()
+            .mx_1()
+            .rounded_full()
             .px_3()
             .flex()
             .items_center()
             .gap_2()
             .relative()
-            .border_r_1()
-            .border_color(rgb(palette.border))
-            .when(!active, |this| this.border_b_1())
+            .when(active, |this| {
+                this.border_1()
+                    .border_color(rgb(palette.danger))
+                    .shadow_sm()
+            })
             .bg(if active {
                 rgba((palette.danger << 8) | 0x24)
             } else {
@@ -289,18 +285,6 @@ impl NyaTermApp {
                 }),
             )
             .hover(|this| this.bg(rgba((palette.danger << 8) | 0x24)))
-            .when(active, |this| {
-                this.child(
-                    div()
-                        .debug_selector(|| format!("failed-session-tab-active-{request_id}"))
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(2.))
-                        .bg(rgb(palette.danger)),
-                )
-            })
             .child(
                 div()
                     .size(px(14.))
@@ -520,7 +504,7 @@ impl NyaTermApp {
         let bg = if let Some(custom_color) = custom_color {
             rgba((custom_color << 8) | if is_active { 0x24 } else { 0x14 })
         } else if is_active {
-            self.shell_surface_color(palette.bg)
+            rgb(palette.surface).into()
         } else {
             rgba(0x00000000)
         };
@@ -567,15 +551,19 @@ impl NyaTermApp {
             .min_w(px(SESSION_TAB_MIN_WIDTH))
             .max_w(px(SESSION_TAB_MAX_WIDTH))
             .flex_none()
+            .mx_1()
+            .rounded_full()
             .pl_3()
             .pr_2()
             .flex()
             .items_center()
             .gap_2()
             .relative()
-            .border_r_1()
-            .border_color(rgb(palette.border))
-            .when(!is_active, |this| this.border_b_1())
+            .when(is_active, |this| {
+                this.border_1()
+                    .border_color(rgb(palette.border))
+                    .shadow_sm()
+            })
             .bg(bg)
             .when(is_disconnected, |this| this.opacity(0.78))
             .when(is_drag_source, |this| {
@@ -671,30 +659,6 @@ impl NyaTermApp {
                     );
                 }),
             )
-            .when(custom_color.is_some(), move |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .left_0()
-                        .w(px(3.))
-                        .bg(accent),
-                )
-            })
-            // Tauri tab: top accent when active, icon + name + close.
-            .when(is_active, |this| {
-                this.child(
-                    div()
-                        .debug_selector(|| format!("session-tab-active-{session_id}"))
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(2.))
-                        .bg(accent),
-                )
-            })
             .child(
                 div()
                     .size(px(14.))
@@ -703,6 +667,14 @@ impl NyaTermApp {
                     .justify_center()
                     .child(tab_icon()),
             )
+            .when_some(custom_color, |this, color| {
+                this.child(
+                    div()
+                        .size(px(6.))
+                        .rounded_full()
+                        .bg(rgb(color)),
+                )
+            })
             .child(
                 div()
                     .min_w(px(12.))
