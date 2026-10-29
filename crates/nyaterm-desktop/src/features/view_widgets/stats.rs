@@ -1,5 +1,7 @@
 use gpui::{IntoElement, div, prelude::*, px, rgb};
 
+use nyaterm_ui::radius_sm;
+
 use crate::theme::ThemePalette;
 
 pub(in crate::features) fn stats_progress_bar(
@@ -11,13 +13,13 @@ pub(in crate::features) fn stats_progress_bar(
         .h(px(5.))
         .w_full()
         .overflow_hidden()
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(rgb(palette.border))
         .child(
             div()
                 .h(px(5.))
                 .w(gpui::relative(ratio))
-                .rounded_sm()
+                .rounded(radius_sm())
                 .bg(if ratio >= 0.9_f32 {
                     rgb(0xfb7185)
                 } else if ratio >= 0.7_f32 {

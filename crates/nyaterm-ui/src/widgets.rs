@@ -1,4 +1,5 @@
 use crate::button::{NyaButton, NyaButtonVariant, NyaIconButton};
+use crate::sizing::radius_sm;
 use crate::theme::ThemePalette;
 use gpui::{
     AnyElement, App, ClickEvent, FontWeight, Hsla, IntoElement, Pixels, RenderOnce, ScrollHandle,
@@ -137,7 +138,7 @@ pub fn status_pill(
 ) -> impl IntoElement {
     let label: SharedString = label.into();
     div()
-        .rounded_sm()
+        .rounded(radius_sm())
         .px_2()
         .py_1()
         .text_xs()

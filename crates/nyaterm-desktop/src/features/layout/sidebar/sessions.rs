@@ -9,7 +9,7 @@ use gpui::{
 };
 use nyaterm_core::{RuntimeMode, truncate_preview};
 use nyaterm_transport::SessionInfo;
-use nyaterm_ui::{NyaDropdownMenu, NyaMenuItem, NyaScrollable};
+use nyaterm_ui::{NyaDropdownMenu, NyaMenuItem, NyaScrollable, radius_md, radius_sm};
 
 use crate::features::formatting::{session_kind_label, status_label};
 use crate::features::perf::record_gpui_perf_sample;
@@ -243,7 +243,7 @@ impl NyaTermApp {
             .gap_3()
             .child(
                 div()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))
@@ -278,7 +278,7 @@ impl NyaTermApp {
             )
             .child(
                 div()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))
@@ -316,7 +316,7 @@ impl NyaTermApp {
             )
             .child(
                 div()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))
@@ -364,7 +364,7 @@ impl NyaTermApp {
             )
             .child(
                 div()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))
@@ -389,7 +389,7 @@ impl NyaTermApp {
             )
             .child(
                 div()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.hover))
                     .bg(rgb(palette.input))
@@ -525,7 +525,7 @@ impl NyaTermApp {
             .group(row_group.clone())
             .relative()
             .h(px(48.))
-            .rounded_md()
+            .rounded(radius_md())
             .px_2()
             .bg(row_bg)
             .when(is_disconnected, |this| this.opacity(0.5))
@@ -564,7 +564,7 @@ impl NyaTermApp {
                                         div()
                                             .px_1()
                                             .py(px(1.))
-                                            .rounded_sm()
+                                            .rounded(radius_sm())
                                             .bg(rgb(palette.hover))
                                             .text_size(px(10.))
                                             .font_weight(FontWeight(700.))

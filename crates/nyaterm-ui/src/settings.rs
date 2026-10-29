@@ -7,6 +7,7 @@ use gpui::{
 
 use gpui_kit::component::scroll::ScrollableElement;
 
+use crate::sizing::radius_lg;
 use crate::theme::{ThemePalette, theme_palette};
 use crate::tooltip::NyaTooltip;
 
@@ -413,7 +414,7 @@ fn group_header(
             .items_center()
             .when(compact, |this| this.justify_center())
             .when(!compact, |this| this.justify_between())
-            .rounded_lg()
+            .rounded(radius_lg())
             .cursor_pointer()
             .hover(move |this| this.bg(rgb(palette.hover)))
             .child(
@@ -481,7 +482,7 @@ fn settings_nav_item(
         .items_center()
         .when(compact, |this| this.justify_center())
         .gap_2()
-        .rounded_lg()
+        .rounded(radius_lg())
         .border_1()
         .border_color(if selected {
             rgba((palette.primary << 8) | 0x33)

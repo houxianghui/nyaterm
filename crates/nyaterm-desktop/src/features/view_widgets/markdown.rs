@@ -8,6 +8,8 @@ use gpui::{
 use crate::features::formatting::{
     InlineMdStyle, MarkdownBlock, parse_inline_markdown, parse_markdown_blocks,
 };
+use nyaterm_ui::radius_md;
+
 use crate::theme::ThemePalette;
 
 /// Theme-independent parse output, prepared before constructing GPUI elements.
@@ -242,7 +244,7 @@ fn markdown_block_view(
             .into_any_element(),
         MarkdownBlock::Code { language, code } => div()
             .id(SharedString::from(format!("md-code-{index}")))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.bg))
@@ -321,7 +323,7 @@ fn markdown_block_view(
                 .flex_col()
                 .border_1()
                 .border_color(rgb(palette.border))
-                .rounded_md()
+                .rounded(radius_md())
                 .overflow_hidden();
 
             let mut header_row = div()

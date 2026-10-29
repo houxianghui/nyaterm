@@ -3,6 +3,7 @@ use gpui::{
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 
+use crate::sizing::radius_sm;
 use crate::theme::ThemePalette;
 
 type CloseHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -73,7 +74,7 @@ impl RenderOnce for NyaTabCloseButton {
             .size(px(20.))
             .p_0()
             .border_0()
-            .rounded_sm()
+            .rounded(radius_sm())
             .flex_none()
             .group(close_group.clone())
             .accessibility_label(self.tooltip.clone())

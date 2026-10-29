@@ -1,6 +1,7 @@
 use gpui::prelude::*;
 use gpui::{Context, FontWeight, IntoElement, Render, Window, div, px, rgb, rgba};
 use nyaterm_core::truncate_preview;
+use nyaterm_ui::radius_md;
 
 #[derive(Clone, Debug)]
 pub(in crate::features) struct ConnectionDragPayload {
@@ -60,7 +61,7 @@ impl Render for ConnectionDragPreview {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(0x388bfd))
                     .bg(rgba(0x0d1117ee))

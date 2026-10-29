@@ -2,6 +2,8 @@ use gpui::{
     App, ClickEvent, FontWeight, IntoElement, SharedString, Window, div, prelude::*, px, rgb, svg,
 };
 
+use nyaterm_ui::radius_sm;
+
 use crate::theme::ThemePalette;
 
 /// Tauri EmptyWorkspaceState row: action label (primary) + shortcut key chips.
@@ -38,7 +40,7 @@ pub(in crate::features) fn empty_workspace_action(
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgb(palette.surface_elevated))
@@ -149,7 +151,7 @@ fn tab_menu_item_enabled_with_icon(
         .flex()
         .items_center()
         .gap_2()
-        .rounded_sm()
+        .rounded(radius_sm())
         .text_size(px(12.))
         .text_color(text_color)
         .opacity(if enabled { 1. } else { 0.5 })
@@ -201,7 +203,7 @@ pub(in crate::features) fn tab_action_button_enabled(
     div()
         .id(SharedString::from(id.into()))
         .min_h(px(46.))
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.surface))

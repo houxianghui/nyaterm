@@ -9,7 +9,7 @@ use gpui::{
     ScrollWheelEvent, SharedString, div, point, prelude::*, px, rgb, rgba, svg,
 };
 use nyaterm_core::truncate_preview;
-use nyaterm_ui::{NyaHoverCard, NyaPopover, NyaPopoverAlign, NyaPopoverPlacement};
+use nyaterm_ui::{NyaHoverCard, NyaPopover, NyaPopoverAlign, NyaPopoverPlacement, radius_sm};
 
 use crate::features::NyaTermApp;
 use crate::features::icons::resolve_connection_icon;
@@ -183,7 +183,7 @@ impl NyaTermApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .text_xs()
                     .text_color(rgb(palette.text_muted))
                     .hover(|this| this.bg(rgb(palette.border)).text_color(rgb(palette.danger)))
@@ -354,7 +354,7 @@ impl NyaTermApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .text_xs()
                     .text_color(rgb(palette.text_muted))
                     .hover(|this| this.bg(rgb(palette.border)).text_color(rgb(palette.danger)))
@@ -779,7 +779,7 @@ impl NyaTermApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .text_size(px(10.))
                     .text_color(rgb(palette.text_muted))
                     .when(!is_active && !is_locked, |this| {

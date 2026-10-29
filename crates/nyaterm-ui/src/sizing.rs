@@ -19,30 +19,18 @@ pub const NYA_RADIUS_MD_PX: f32 = 8.;
 pub const NYA_RADIUS_LG_PX: f32 = 10.;
 pub const NYA_RADIUS_XL_PX: f32 = 14.;
 
-pub(crate) fn radius_sm() -> Pixels {
+pub fn radius_sm() -> Pixels {
     px(NYA_RADIUS_SM_PX)
 }
 
-#[expect(
-    dead_code,
-    reason = "shared radius scale reserved for the Stage 2/3 macOS visual overhaul"
-)]
-pub(crate) fn radius_md() -> Pixels {
+pub fn radius_md() -> Pixels {
     px(NYA_RADIUS_MD_PX)
 }
 
-#[expect(
-    dead_code,
-    reason = "shared radius scale reserved for the Stage 2/3 macOS visual overhaul"
-)]
-pub(crate) fn radius_lg() -> Pixels {
+pub fn radius_lg() -> Pixels {
     px(NYA_RADIUS_LG_PX)
 }
 
-#[expect(
-    dead_code,
-    reason = "shared radius scale reserved for the Stage 2/3 macOS visual overhaul"
-)]
-pub(crate) fn radius_xl() -> Pixels {
+pub fn radius_xl() -> Pixels {
     px(NYA_RADIUS_XL_PX)
 }

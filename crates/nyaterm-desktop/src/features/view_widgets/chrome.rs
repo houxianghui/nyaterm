@@ -7,7 +7,7 @@ use super::child_window::ChildWindowChrome;
 use crate::theme::ThemePalette;
 use crate::window_chrome::WindowChrome;
 use nyaterm_ui::window_chrome::{TitleDragEvent, title_drag_region};
-use nyaterm_ui::{NyaButton, NyaButtonVariant};
+use nyaterm_ui::{NyaButton, NyaButtonVariant, radius_md};
 
 pub(in crate::features) fn logo_mark(_palette: ThemePalette) -> impl IntoElement {
     div()
@@ -430,7 +430,7 @@ pub(in crate::features) fn modal_dialog_shell(
                 .w(px(width))
                 .max_w_full()
                 .max_h_full()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(background)
