@@ -251,7 +251,7 @@ impl NyaTermApp {
                                     cx,
                                 );
                             }))
-                            .child(nyaterm_app_icon(palette, 32.))
+                            .child(nyaterm_app_icon(32.))
                             .child(
                                 div()
                                     .min_w_0()
