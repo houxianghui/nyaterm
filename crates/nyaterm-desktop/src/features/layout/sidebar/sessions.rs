@@ -504,6 +504,10 @@ impl NyaTermApp {
         };
         let row_bg = if let Some(custom_color) = custom_color {
             rgba((custom_color << 8) | if is_active { 0x22 } else { 0x12 })
+        } else if is_active {
+            // Finder-style inset selection: solid panel colour inside the
+            // rounded row rather than a full-bleed highlight.
+            rgb(palette.surface_elevated).into()
         } else {
             rgba(0x00000000)
         };

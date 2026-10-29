@@ -147,8 +147,13 @@ pub fn apply_component_theme(
     component_theme.colors.danger_active = color(palette.danger);
     component_theme.colors.danger_foreground = color(palette.on_primary);
     component_theme.colors.ring = color(palette.focus_ring);
-    component_theme.colors.accent = color(palette.hover);
-    component_theme.colors.accent_foreground = color(palette.text);
+    // Menu selection uses the accent token. Point it at the primary colour so
+    // a selected menu row is the macOS blue block with white text
+    // (`--df-primary` / `--df-on-primary`), not the muted hover grey.
+    // Ghost-button hover does not read this token (gpui-kit Button has its own
+    // `hover` field), so toolbars keep their grey hover.
+    component_theme.colors.accent = color(palette.primary);
+    component_theme.colors.accent_foreground = color(palette.on_primary);
     component_theme.colors.accordion = color(palette.surface);
     component_theme.colors.description_list_label = color(palette.surface_elevated);
     component_theme.colors.description_list_label_foreground = color(palette.text_muted);

@@ -111,6 +111,11 @@ impl NyaTermApp {
                 this.border_1()
                     .border_color(rgb(palette.border))
                     .shadow_sm()
+                    .child(
+                        div()
+                            .debug_selector(|| format!("pending-session-tab-active-{request_id}"))
+                            .size(px(0.)),
+                    )
             })
             .bg(if active {
                 rgb(palette.surface).into()
@@ -248,7 +253,7 @@ impl NyaTermApp {
                 "failed-session-tab-{request_id}"
             )))
             .debug_selector(|| format!("failed-session-tab-{request_id}"))
-            .h(px(28.))
+            .h_full()
             .min_w(px(SESSION_TAB_MIN_WIDTH))
             .max_w(px(SESSION_TAB_MAX_WIDTH))
             .flex_none()
@@ -263,6 +268,14 @@ impl NyaTermApp {
                 this.border_1()
                     .border_color(rgb(palette.danger))
                     .shadow_sm()
+                    // Debug/test hook: must be a child element. Calling
+                    // `debug_selector` on the tab itself would overwrite the
+                    // tab's own `failed-session-tab-*` selector.
+                    .child(
+                        div()
+                            .debug_selector(|| format!("failed-session-tab-active-{request_id}"))
+                            .size(px(0.)),
+                    )
             })
             .bg(if active {
                 rgba((palette.danger << 8) | 0x24)
@@ -563,6 +576,11 @@ impl NyaTermApp {
                 this.border_1()
                     .border_color(rgb(palette.border))
                     .shadow_sm()
+                    .child(
+                        div()
+                            .debug_selector(|| format!("session-tab-active-{session_id}"))
+                            .size(px(0.)),
+                    )
             })
             .bg(bg)
             .when(is_disconnected, |this| this.opacity(0.78))
@@ -668,12 +686,7 @@ impl NyaTermApp {
                     .child(tab_icon()),
             )
             .when_some(custom_color, |this, color| {
-                this.child(
-                    div()
-                        .size(px(6.))
-                        .rounded_full()
-                        .bg(rgb(color)),
-                )
+                this.child(div().size(px(6.)).rounded_full().bg(rgb(color)))
             })
             .child(
                 div()
