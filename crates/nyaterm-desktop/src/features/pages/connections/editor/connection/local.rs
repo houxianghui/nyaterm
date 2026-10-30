@@ -1,5 +1,6 @@
 use crate::models::ConnectionEditorSection;
 use nyaterm_ui::NyaSwitch;
+use nyaterm_ui::radius_md;
 use rust_i18n::t;
 
 use gpui::{
@@ -145,7 +146,7 @@ fn local_terminal(
         div()
             .id("connection-editor-local-terminal")
             .debug_selector(|| "connection-editor-local-advanced".to_string())
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgba((palette.accent << 8) | 0x12))

@@ -3,6 +3,7 @@ use gpui::{
     MouseDownEvent, ParentElement as _, Pixels, Rgba, SharedString,
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px, rgb, rgba,
 };
+use nyaterm_ui::radius_sm;
 
 use crate::features::pages::transfers::panel::TransferPanel;
 use crate::models::{TransferBrowserSortColumn, TransferBrowserSortDirection};
@@ -105,7 +106,7 @@ pub(in crate::features::pages::transfers) fn sort_header_cell(
                 .top(px(4.))
                 .bottom(px(4.))
                 .w(px(7.))
-                .rounded_sm()
+                .rounded(radius_sm())
                 .cursor_col_resize()
                 .bg(if is_resizing {
                     rgb(palette.success)

@@ -8,7 +8,9 @@ use gpui::{
     Window, div, prelude::*, px, rgb, rgba, svg, uniform_list,
 };
 use nyaterm_transport::{RecordingMode, RecordingStatusState, SessionInfo};
-use nyaterm_ui::{NyaDropdownMenu, NyaMenuItem, NyaScrollable, NyaSearchInput};
+use nyaterm_ui::{
+    NyaDropdownMenu, NyaMenuItem, NyaScrollable, NyaSearchInput, radius_md, radius_sm,
+};
 
 use crate::features::formatting::{session_kind_label, short_id};
 use crate::features::perf::record_gpui_perf_sample;
@@ -263,7 +265,7 @@ impl NyaTermApp {
             .min_w_0()
             .h(px(96.))
             .overflow_hidden()
-            .rounded_md()
+            .rounded(radius_md())
             .p_2()
             .border_1()
             .border_color(if is_current {
@@ -332,7 +334,7 @@ impl NyaTermApp {
                                 div()
                                     .flex_none()
                                     .px_1()
-                                    .rounded_sm()
+                                    .rounded(radius_sm())
                                     .bg(rgb(palette.hover))
                                     .text_size(px(10.))
                                     .text_color(rgb(palette.text_muted))
@@ -559,7 +561,7 @@ fn recording_action_svg_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(color)
         .when(enabled, |this| {
             this.cursor_pointer().hover(|this| {

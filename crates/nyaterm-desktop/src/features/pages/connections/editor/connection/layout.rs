@@ -9,6 +9,7 @@ use gpui::{
 };
 use nyaterm_ui::{
     NyaButton, NyaButtonVariant, NyaScrollable, NyaSelect, NyaSelectState, NyaTabItem, NyaTabs,
+    radius_sm,
 };
 use rust_i18n::t;
 
@@ -216,7 +217,7 @@ pub(super) fn connection_editor_frame(
             this.child(
                 div()
                     .id("connection-editor-error")
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.danger))
                     .bg(rgba((palette.danger << 8) | 0x18))

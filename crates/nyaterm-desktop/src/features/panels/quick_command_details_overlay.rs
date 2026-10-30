@@ -2,6 +2,7 @@ use rust_i18n::t;
 
 use gpui::{Context, IntoElement, KeyDownEvent, SharedString, div, prelude::*, px, rgb, rgba, svg};
 use nyaterm_ui::NyaTooltip;
+use nyaterm_ui::{radius_lg, radius_sm};
 
 use super::quick_commands_panel::{QuickCommandCardContent, quick_command_detail_card};
 use crate::features::NyaTermApp;
@@ -46,7 +47,7 @@ impl NyaTermApp {
             .flex()
             .items_center()
             .justify_center()
-            .rounded_sm()
+            .rounded(radius_sm())
             .cursor_pointer()
             .hover(|this| this.bg(rgb(palette.hover)))
             .child(
@@ -87,7 +88,7 @@ impl NyaTermApp {
                     .top(px(popover_y))
                     .w(px(320.))
                     .overflow_hidden()
-                    .rounded_lg()
+                    .rounded(radius_lg())
                     .border_1()
                     .border_color(rgba((palette.border << 8) | 0x99))
                     .bg(self.shell_surface_color(palette.surface))

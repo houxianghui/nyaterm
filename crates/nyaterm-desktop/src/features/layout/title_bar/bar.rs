@@ -6,6 +6,7 @@ use gpui::{
 };
 use nyaterm_transport::SessionKind;
 use nyaterm_ui::NyaDropdownMenu;
+use nyaterm_ui::radius_sm;
 use nyaterm_ui::window_chrome::{TitleDragEvent, title_drag_region};
 use time::{OffsetDateTime, UtcOffset, Weekday, macros::format_description};
 
@@ -170,7 +171,7 @@ impl NyaTermApp {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded_sm()
+                                .rounded(radius_sm())
                                 .text_color(rgb(palette.text_muted))
                                 .cursor_pointer()
                                 .hover(|this| {
@@ -233,7 +234,7 @@ impl NyaTermApp {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded_sm()
+                                .rounded(radius_sm())
                                 .text_color(rgb(palette.text_muted))
                                 .cursor_pointer()
                                 .hover(|this| {
@@ -337,7 +338,7 @@ impl NyaTermApp {
             .flex()
             .items_center()
             .gap_0()
-            .rounded_sm()
+            .rounded(radius_sm())
             .text_xs()
             .text_color(rgb(palette.text_muted))
             .child(
@@ -445,7 +446,7 @@ impl NyaTermApp {
                         .flex_none()
                         .flex()
                         .flex_col()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .child(

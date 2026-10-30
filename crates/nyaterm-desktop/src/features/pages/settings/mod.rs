@@ -6,6 +6,7 @@ use gpui::{
 
 use crate::theme::ThemePalette;
 use nyaterm_ui::NyaSwitch;
+use nyaterm_ui::radius_lg;
 
 use super::super::NyaTermApp;
 
@@ -43,7 +44,7 @@ pub(super) fn settings_form_section(
     content: impl IntoElement,
 ) -> impl IntoElement {
     div()
-        .rounded_lg()
+        .rounded(radius_lg())
         .border_1()
         .border_color(rgba((palette.border << 8) | 0xb3))
         .bg(rgba((palette.surface << 8) | 0x99))

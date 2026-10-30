@@ -7,7 +7,8 @@ use gpui::{
     px, rgb, svg, uniform_list,
 };
 use nyaterm_ui::{
-    NyaContextMenu, NyaDropdownMenu, NyaScrollable, NyaScrollbarAxis, NyaSearchInput,
+    NyaContextMenu, NyaDropdownMenu, NyaScrollable, NyaScrollbarAxis, NyaSearchInput, radius_md,
+    radius_sm,
 };
 
 use crate::features::connections::{ConnectionDragKind, ConnectionDragPayload};
@@ -327,7 +328,7 @@ fn connections_search_bar(
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .text_size(px(10.))
                 .text_color(rgb(palette.text_muted))
                 .cursor_pointer()
@@ -354,7 +355,7 @@ fn connections_search_bar(
                 .bottom(px(4.))
                 .left(px(8.))
                 .right(px(8.))
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.primary))
                 .bg(rgb(palette.surface))
@@ -371,7 +372,7 @@ fn connections_search_bar(
                 .flex_1()
                 .min_w_0()
                 .h(px(28.))
-                .rounded_md()
+                .rounded(radius_md())
                 .bg(rgb(palette.surface_elevated))
                 .flex()
                 .items_center()

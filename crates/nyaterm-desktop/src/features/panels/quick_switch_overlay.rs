@@ -7,7 +7,7 @@ use gpui::{
     prelude::*, px, rgb, rgba,
 };
 use nyaterm_core::truncate_preview;
-use nyaterm_ui::{NyaCommand, NyaCommandItem};
+use nyaterm_ui::{NyaCommand, NyaCommandItem, radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 use crate::models::QuickSwitchItem;
@@ -189,7 +189,7 @@ impl NyaTermApp {
                             .px_3()
                             .flex()
                             .items_center()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .bg(rgb(palette.primary))
                             .text_color(rgb(palette.on_primary))
                             .text_xs()
@@ -226,7 +226,7 @@ impl NyaTermApp {
                     .w(px((viewport_w - 32.).clamp(1., 640.)))
                     .max_w_full()
                     .mx_4()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.bg))

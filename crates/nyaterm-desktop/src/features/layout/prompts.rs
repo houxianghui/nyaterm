@@ -9,6 +9,7 @@ use nyaterm_transport::{
     SshAgentPromptAction, SshAgentPromptPhase, SshCredentialPromptKind, SshCredentialPromptReason,
 };
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 use crate::features::session::{
@@ -53,7 +54,7 @@ impl NyaTermApp {
         div()
             .id(SharedString::from(format!("agent-dialog-{}", request.id)))
             .w_full()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.bg))
@@ -160,7 +161,7 @@ impl NyaTermApp {
             .w_full()
             .max_w(px(384.))
             .mx_auto()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.bg))
@@ -209,7 +210,7 @@ impl NyaTermApp {
             .when(changed, |this| {
                 this.child(
                     div()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .border_1()
                         .border_color(rgba((palette.danger << 8) | 0x80))
                         .bg(rgba((palette.danger << 8) | 0x1a))
@@ -329,7 +330,7 @@ impl NyaTermApp {
                 prompt.id
             )))
             .w_full()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.bg))
@@ -390,7 +391,7 @@ impl NyaTermApp {
         if !challenge_title.is_empty() || !challenge_instructions.is_empty() {
             let mut challenge = div()
                 .min_w_0()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgba((palette.surface_elevated << 8) | 0x4d))
@@ -475,7 +476,7 @@ impl NyaTermApp {
                 .unwrap_or_else(|| "--- ---".to_string());
             let mut otp_panel = div()
                 .min_w_0()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgba((palette.surface_elevated << 8) | 0x4d))
@@ -586,7 +587,7 @@ impl NyaTermApp {
             )))
             .w_full()
             .max_h(px((self.shell.viewport_size().1 - 32.).max(240.)))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.bg))

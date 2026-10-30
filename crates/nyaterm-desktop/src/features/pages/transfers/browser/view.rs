@@ -5,7 +5,10 @@ use gpui::{
     MouseDownEvent, SharedString, div, prelude::*, px, rgb, rgba, svg, uniform_list,
 };
 use nyaterm_core::truncate_preview;
-use nyaterm_ui::{NyaContextMenu, NyaHorizontalScrollbar, NyaSearchInput, NyaUniformListScrollbar};
+use nyaterm_ui::{
+    NyaContextMenu, NyaHorizontalScrollbar, NyaSearchInput, NyaUniformListScrollbar, radius_lg,
+    radius_md, radius_sm,
+};
 
 use crate::models::TransferBrowserSortColumn;
 
@@ -180,7 +183,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_view(
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .text_size(px(12.))
                     .text_color(rgb(palette.text_muted))
                     .cursor_pointer()
@@ -563,7 +566,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_view(
                                     .bottom(px(4.))
                                     .left(px(6.))
                                     .right(px(6.))
-                                    .rounded_md()
+                                    .rounded(radius_md())
                                     .border_1()
                                     .border_color(rgb(palette.primary))
                                     .bg(rgb(palette.surface))
@@ -811,7 +814,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_view(
                     div()
                         .absolute()
                         .inset_2()
-                        .rounded_lg()
+                        .rounded(radius_lg())
                         .border_2()
                         .border_color(rgb(palette.link))
                         .bg(rgba(0x3b82f624))
@@ -821,7 +824,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_view(
                         .child(
                             div()
                                 .max_w(px(340.))
-                                .rounded_lg()
+                                .rounded(radius_lg())
                                 .border_1()
                                 .border_color(rgb(palette.link))
                                 .bg(rgb(palette.surface))

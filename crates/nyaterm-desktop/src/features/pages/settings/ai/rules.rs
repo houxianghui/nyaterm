@@ -3,7 +3,7 @@ use super::{ai_card, ai_field};
 use crate::features::pages::settings::panel::SettingsPanel;
 use crate::models::{AiActionEditorField, AiActionListKind};
 use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px, rgb};
-use nyaterm_ui::{NyaButton, NyaIconButton};
+use nyaterm_ui::{NyaButton, NyaIconButton, radius_lg};
 use rust_i18n::t;
 
 impl SettingsPanel {
@@ -64,7 +64,7 @@ impl SettingsPanel {
                 );
                 div()
                     .id(format!("ai-action-{}", action.id))
-                    .rounded_lg()
+                    .rounded(radius_lg())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.bg))

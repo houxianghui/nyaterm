@@ -8,7 +8,7 @@ use nyaterm_core::themes::{COLOR_FIELDS, ThemeColorField, ThemeConfig, builtins,
 use nyaterm_ui::{
     NyaButton, NyaButtonVariant, NyaColorPicker, NyaColorPickerEvent, NyaColorPickerState,
     NyaDropdownMenu, NyaMenuAnchor, NyaMenuItem, NyaScrollable as _, NyaTabItem, NyaTabs,
-    NyaTabsVariant, ThemePalette,
+    NyaTabsVariant, ThemePalette, radius_lg, radius_md, radius_sm,
 };
 use rust_i18n::t;
 
@@ -712,7 +712,7 @@ impl SettingsPanel {
             .items_start()
             .gap_3()
             .p_4()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))
@@ -1129,7 +1129,7 @@ impl SettingsPanel {
                         .w(px(420.))
                         .max_w_full()
                         .p_5()
-                        .rounded_lg()
+                        .rounded(radius_lg())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .bg(rgb(palette.surface_elevated))
@@ -1225,7 +1225,7 @@ fn swatch(palette: ThemePalette, value: &str, size: f32) -> impl IntoElement {
     div()
         .size(px(size))
         .flex_none()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgba((palette.border << 8) | 0xcc))
         .bg(color)
@@ -1235,7 +1235,7 @@ fn tag(palette: ThemePalette, label: impl Into<SharedString>, color: u32) -> imp
     div()
         .flex_none()
         .px_1p5()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgba((palette.border << 8) | 0xcc))
         .text_size(px(10.))
@@ -1287,7 +1287,7 @@ fn theme_preview(p: ThemePalette, name: &str) -> AnyElement {
         .flex_col()
         .flex_1()
         .min_w(px(220.))
-        .rounded_md()
+        .rounded(radius_md())
         .overflow_hidden()
         .border_1()
         .border_color(rgb(p.border))
@@ -1313,7 +1313,7 @@ fn theme_preview(p: ThemePalette, name: &str) -> AnyElement {
                     div()
                         .flex_none()
                         .px_2()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .bg(rgb(p.primary))
                         .text_color(rgb(p.on_primary))
                         .child(t!("themeDesigner.previewButton")),
@@ -1335,11 +1335,17 @@ fn theme_preview(p: ThemePalette, name: &str) -> AnyElement {
                         .bg(rgb(p.surface))
                         .border_r_1()
                         .border_color(rgb(p.border))
-                        .child(div().px_1().rounded_sm().truncate().child(label("text")))
                         .child(
                             div()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(radius_sm())
+                                .truncate()
+                                .child(label("text")),
+                        )
+                        .child(
+                            div()
+                                .px_1()
+                                .rounded(radius_sm())
                                 .truncate()
                                 .bg(rgb(p.hover))
                                 .child(label("bgHover")),
@@ -1347,7 +1353,7 @@ fn theme_preview(p: ThemePalette, name: &str) -> AnyElement {
                         .child(
                             div()
                                 .px_1()
-                                .rounded_sm()
+                                .rounded(radius_sm())
                                 .truncate()
                                 .text_color(rgb(p.accent))
                                 .child(label("accent")),
@@ -1389,7 +1395,7 @@ fn theme_preview(p: ThemePalette, name: &str) -> AnyElement {
                             div()
                                 .px_2()
                                 .py_0p5()
-                                .rounded_sm()
+                                .rounded(radius_sm())
                                 .bg(rgb(p.input))
                                 .border_1()
                                 .border_color(rgb(p.focus_ring))
@@ -1416,7 +1422,7 @@ fn theme_preview(p: ThemePalette, name: &str) -> AnyElement {
         .flex_1()
         .gap_0p5()
         .p_2()
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(rgb(p.terminal_bg))
         .text_color(rgb(p.terminal_fg))
         .font_family(crate::features::shell::gpui_code_font_family())
@@ -1487,10 +1493,16 @@ fn theme_preview(p: ThemePalette, name: &str) -> AnyElement {
                 .gap_0p5()
                 .pt_1()
                 .children([0usize, 8].map(|start| {
-                    div().flex().gap_0p5().children(
-                        (start..start + 8)
-                            .map(|index| div().h(px(8.)).flex_1().rounded_sm().bg(ansi(index))),
-                    )
+                    div()
+                        .flex()
+                        .gap_0p5()
+                        .children((start..start + 8).map(|index| {
+                            div()
+                                .h(px(8.))
+                                .flex_1()
+                                .rounded(radius_sm())
+                                .bg(ansi(index))
+                        }))
                 })),
         );
 
@@ -1507,7 +1519,7 @@ fn theme_preview(p: ThemePalette, name: &str) -> AnyElement {
                 .flex_1()
                 .min_w(px(220.))
                 .p_1()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(p.border))
                 .bg(rgb(p.ui_terminal_bg))

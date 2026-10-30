@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use gpui::{IntoElement, SharedString, div, prelude::*, px, rgb, rgba, svg};
-use nyaterm_ui::{NyaDropdownMenu, NyaMenuItem};
+use nyaterm_ui::{NyaDropdownMenu, NyaMenuItem, radius_md};
 
 pub(super) struct QuickCommandRowPresentation<'a> {
     pub command_id: &'a str,
@@ -92,7 +92,7 @@ fn quick_command_execution_badge(
         .flex()
         .items_center()
         .gap_1()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgba((palette.border << 8) | 0x66))
         .bg(rgba((palette.bg << 8) | 0x59))
@@ -121,7 +121,7 @@ fn quick_command_action_icon_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(rgb(palette.text_muted))
         .cursor_pointer()
         .hover(|this| {

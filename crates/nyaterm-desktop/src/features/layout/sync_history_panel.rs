@@ -11,7 +11,9 @@ use crate::features::formatting::{
 use crate::features::sync::SyncHistoryFilter;
 use crate::features::view_widgets::{cloud_sync_history_row, dialog_action_button};
 use crate::widgets::small_button;
-use nyaterm_ui::{NyaButton, NyaButtonVariant, NyaScrollable, NyaTabItem, NyaTabs, NyaTabsVariant};
+use nyaterm_ui::{
+    NyaButton, NyaButtonVariant, NyaScrollable, NyaTabItem, NyaTabs, NyaTabsVariant, radius_md,
+};
 
 impl NyaTermApp {
     pub(in crate::features) fn sync_backup_history_panel(
@@ -299,7 +301,7 @@ impl NyaTermApp {
                     div()
                         .flex_none()
                         .m_2()
-                        .rounded_md()
+                        .rounded(radius_md())
                         .border_1()
                         .border_color(rgb(palette.warning))
                         .bg(rgb(palette.input))
@@ -346,7 +348,7 @@ impl NyaTermApp {
                                 .gap_2()
                                 .child(
                                     div()
-                                        .rounded_md()
+                                        .rounded(radius_md())
                                         .border_1()
                                         .border_color(rgb(palette.border))
                                         .bg(rgb(palette.input))
@@ -372,7 +374,7 @@ impl NyaTermApp {
                                 .when_some(recovery_revision, |this, revision| {
                                     this.child(
                                         div()
-                                            .rounded_md()
+                                            .rounded(radius_md())
                                             .border_1()
                                             .border_color(rgb(palette.border))
                                             .bg(rgb(palette.input))

@@ -2,6 +2,7 @@ use gpui::{Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, 
 use nyaterm_core::truncate_preview;
 use nyaterm_transport::{DockerContainer, DockerContainerDetails};
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::radius_sm;
 
 use crate::features::{
     NyaTermApp, formatting::compact_id, formatting::docker_state_color,
@@ -88,7 +89,7 @@ fn docker_details_panel(
             )
             .child(
                 div()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.section_header))
@@ -105,7 +106,7 @@ fn docker_details_panel(
                     )
                     .child(
                         div()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .px_2()
                             .py_1()
                             .text_xs()
@@ -126,7 +127,7 @@ fn docker_details_panel(
         for mount in &details.mounts {
             mounts = mounts.child(
                 div()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.section_header))
@@ -302,7 +303,7 @@ fn docker_details_panel(
         .when_some(container.clone(), |this, container| {
             this.child(
                 div()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.section_header))
@@ -396,7 +397,7 @@ fn docker_details_panel(
                 .gap_3()
                 .child(
                     div()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .bg(rgb(palette.section_header))
@@ -449,7 +450,7 @@ fn docker_details_panel(
                 )
                 .child(
                     div()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .bg(rgb(palette.section_header))
@@ -494,7 +495,7 @@ fn docker_details_panel(
         )
         .child(
             div()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgb(palette.section_header))
@@ -543,7 +544,7 @@ fn docker_details_panel(
         )
         .child(
             div()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgb(palette.section_header))
@@ -577,7 +578,7 @@ fn docker_metric(
 ) -> impl IntoElement {
     let label: SharedString = label.into();
     div()
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(rgb(palette.surface))
         .px_3()
         .py_2()

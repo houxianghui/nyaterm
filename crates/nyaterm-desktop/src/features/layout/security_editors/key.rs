@@ -1,7 +1,7 @@
 use rust_i18n::t;
 
 use gpui::{Context, IntoElement, KeyDownEvent, div, prelude::*, px, rgb};
-use nyaterm_ui::{NyaScrollable, NyaTabItem, NyaTabs};
+use nyaterm_ui::{NyaScrollable, NyaTabItem, NyaTabs, radius_md};
 
 use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
 use crate::models::SecurityKeyEditorState;
@@ -67,7 +67,7 @@ impl NyaTermApp {
                     .max_h(px(480.))
                     .overflow_y_scrollbar()
                     .p_3()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))

@@ -7,6 +7,7 @@ use gpui::{
     px, rgb, rgba,
 };
 use nyaterm_ui::NyaSwitch;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use crate::features::{NyaTermApp, connections::ConnectionEditorToggle};
 use crate::models::{ConnectionEditorField, ConnectionEditorSelect};
@@ -28,7 +29,7 @@ fn vnc_switch_row(
     let label: SharedString = label.into();
     let description: SharedString = description.into();
     div()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .px_3()
@@ -235,7 +236,7 @@ fn vnc_security(
         .when(editor.vnc_security.mode == "none", |this| {
             this.child(
                 div()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.warning))
                     .bg(rgba((palette.warning << 8) | 0x18))

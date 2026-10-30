@@ -1,4 +1,5 @@
 use gpui::{AppContext as _, Context, IntoElement, Point, Render, Window, div, prelude::*, rgb};
+use nyaterm_ui::radius_md;
 
 use crate::features::NyaTermApp;
 use crate::models::{SecurityAuthTab, SecurityDropTarget};
@@ -24,7 +25,7 @@ impl Render for SecurityDragPreview {
             .top(self.position.y)
             .px_2()
             .py_1()
-            .rounded_md()
+            .rounded(radius_md())
             .bg(rgb(0x202938))
             .text_xs()
             .text_color(rgb(0xf1f5f9))

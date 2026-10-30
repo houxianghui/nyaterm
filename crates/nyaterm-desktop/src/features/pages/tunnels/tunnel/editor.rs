@@ -6,7 +6,7 @@ use gpui::{App, ClickEvent, Context, FontWeight, IntoElement, SharedString, Wind
 use crate::features::{NyaTermApp, selects::NO_SELECTION_VALUE, text_inputs::TextInputSetup};
 use crate::models::{NetworkTunnelEditorField, NetworkTunnelEditorState};
 use nyaterm_core::ConnectionType;
-use nyaterm_ui::{NyaNumberInputOptions, NyaSelectOption};
+use nyaterm_ui::{NyaNumberInputOptions, NyaSelectOption, radius_md, radius_sm};
 
 pub(in crate::features::pages::tunnels) fn network_tunnel_editor_content(
     palette: crate::theme::ThemePalette,
@@ -196,7 +196,7 @@ pub(in crate::features::pages::tunnels) fn network_tunnel_editor_content(
         ))
         .child(
             div()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgb(palette.input))
@@ -319,7 +319,7 @@ pub(in crate::features::pages::tunnels) fn tunnel_editor_option(
     // Tauri-like selectable option cards for bind host / auto open.
     div()
         .id(gpui::SharedString::from(id.into()))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(if active {
             rgb(palette.link)

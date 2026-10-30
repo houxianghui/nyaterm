@@ -4,7 +4,7 @@ use crate::features::mcp::McpHostStatus;
 use crate::features::pages::settings::panel::SettingsPanel;
 use gpui::{Context, IntoElement, div, prelude::*, px, rgb};
 use nyaterm_core::{AiPermissionMode, CodexThreadMode, McpTerminalDisplayMode};
-use nyaterm_ui::{NyaButton, NyaSelectOption};
+use nyaterm_ui::{NyaButton, NyaSelectOption, radius_md};
 use rust_i18n::t;
 
 fn permissions() -> Vec<NyaSelectOption> {
@@ -125,7 +125,7 @@ impl SettingsPanel {
                     )),
             );
         let mut codex = div()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.bg))
@@ -190,7 +190,7 @@ impl SettingsPanel {
         if let Some(url) = &status.verification_url {
             codex = codex.child(
                 div()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .bg(rgb(palette.surface))
                     .p_3()
                     .child(url.clone())
@@ -261,7 +261,7 @@ impl SettingsPanel {
             cx,
         );
         let claude = div()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.bg))
@@ -477,7 +477,7 @@ impl SettingsPanel {
                         div()
                             .flex_1()
                             .min_w(px(120.))
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .p_3()
@@ -619,7 +619,7 @@ fn agent_badge(
     no: impl Into<gpui::SharedString>,
 ) -> impl IntoElement {
     div()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .px_2()

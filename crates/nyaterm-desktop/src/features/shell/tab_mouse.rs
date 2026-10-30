@@ -9,6 +9,7 @@ use gpui::{
 };
 use nyaterm_core::{assets::build_group_path, models::Group, truncate_preview};
 use nyaterm_ui::NyaIconButton;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use crate::features::{NyaTermApp, formatting::short_id, view_widgets::mono_icon};
 use crate::theme::ThemePalette;
@@ -284,7 +285,7 @@ impl Render for SessionTabTooltip {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .text_size(px(10.))
                             .text_color(rgb(0x8f98aa))
                             .hover(|style| style.bg(rgb(0x334155)).text_color(rgb(0xe5edf7)))
@@ -310,7 +311,7 @@ impl Render for SessionTabTooltip {
             .px_3()
             .py_2()
             .max_w(px(280.))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(0x334155))
             .bg(rgba(0x151b24f2))

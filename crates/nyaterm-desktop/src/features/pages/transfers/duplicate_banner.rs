@@ -1,5 +1,6 @@
 //! 文件传输重名确认使用窗口级对话框，由后台请求的激活事件直接打开。
 
+use nyaterm_ui::radius_sm;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -134,7 +135,7 @@ impl Render for DuplicatePromptDialogContent {
             )
             .child(
                 div()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(self.palette.border))
                     .px_2()

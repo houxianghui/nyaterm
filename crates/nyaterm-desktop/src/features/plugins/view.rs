@@ -11,7 +11,7 @@ use nyaterm_core::plugins::{ErrorCode, MAX_TEXT_BYTES, PluginError, PluginStatus
 use nyaterm_plugin_host::manager::{Contribution, InvocationLease, PluginSource};
 use nyaterm_plugin_host::service::{OperationReply, PluginOperation};
 use nyaterm_ui::notification::{NyaNotificationKind, NyaNotificationWindowExt as _};
-use nyaterm_ui::{NyaButton, NyaButtonVariant, NyaInput, NyaInputState, NyaScrollable};
+use nyaterm_ui::{NyaButton, NyaButtonVariant, NyaInput, NyaInputState, NyaScrollable, radius_lg};
 use rust_i18n::t;
 
 struct ParameterInput {
@@ -483,7 +483,7 @@ impl Render for PluginPanel {
                 .min_w_0()
                 .flex_none()
                 .p_3()
-                .rounded_lg()
+                .rounded(radius_lg())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .flex()
@@ -626,7 +626,7 @@ impl Render for PluginPanel {
                 .min_w_0()
                 .flex_none()
                 .p_3()
-                .rounded_lg()
+                .rounded(radius_lg())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .flex()
@@ -681,7 +681,7 @@ impl Render for PluginPanel {
                     .min_w_0()
                     .flex_none()
                     .p_3()
-                    .rounded_lg()
+                    .rounded(radius_lg())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .flex()

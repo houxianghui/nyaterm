@@ -14,7 +14,7 @@ use gpui::{
 use nyaterm_core::{NoteFolder, NoteNodeKind};
 use nyaterm_ui::{
     NyaButton, NyaButtonVariant, NyaContextMenu, NyaDropdownMenu, NyaInputEvent, NyaInputShell,
-    NyaInputState, NyaMenuItem, NyaScrollable as _, NyaSearchInput,
+    NyaInputState, NyaMenuItem, NyaScrollable as _, NyaSearchInput, radius_sm,
 };
 use rust_i18n::t;
 
@@ -46,7 +46,7 @@ impl Render for NotesDragPreview {
                     .px_2()
                     .flex()
                     .items_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(self.palette.border))
                     .bg(rgb(self.palette.surface_elevated))
@@ -487,7 +487,7 @@ fn toolbar_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .cursor_pointer()
         .hover(move |this| this.bg(rgb(palette.hover)))
         .tooltip(move |window, cx| nyaterm_ui::NyaTooltip::new(tooltip.clone()).build(window, cx))
@@ -563,7 +563,7 @@ fn note_row(
             .flex()
             .items_center()
             .justify_center()
-            .rounded_sm()
+            .rounded(radius_sm())
             .hover(move |this| this.bg(rgb(palette.hover)))
             .on_click(move |_, _, cx| {
                 cx.stop_propagation();
@@ -602,7 +602,7 @@ fn note_row(
         .gap_1()
         .pr_1()
         .pl(px(4. + row.depth as f32 * 14.))
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(if selected {
             rgba((palette.primary << 8) | 0x2e)
         } else {

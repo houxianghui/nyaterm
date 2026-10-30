@@ -6,6 +6,7 @@ use gpui::{
     px, rgb, svg,
 };
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 use crate::models::{TransferBrowserUploadMenuState, TransferPathPromptKind};
@@ -75,7 +76,7 @@ impl NyaTermApp {
                     .top(px(menu_y))
                     .left(px(menu_x))
                     .w(px(176.))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.surface))
@@ -147,7 +148,7 @@ fn upload_menu_item(
         .h(px(30.))
         .px_2()
         .mx_1()
-        .rounded_sm()
+        .rounded(radius_sm())
         .flex()
         .items_center()
         .gap_2()

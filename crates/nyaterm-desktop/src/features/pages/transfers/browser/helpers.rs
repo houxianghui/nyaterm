@@ -7,6 +7,7 @@ use gpui::{
 use crate::features::pages::transfers::panel::TransferPanel;
 use crate::theme::ThemePalette;
 use nyaterm_ui::NyaTooltip;
+use nyaterm_ui::{radius_md, radius_sm};
 
 pub(super) fn compact_transfer_footer_button(
     palette: ThemePalette,
@@ -24,7 +25,7 @@ pub(super) fn compact_transfer_footer_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(rgb(palette.text_muted))
         .hover(|this| {
             this.bg(rgb(palette.surface_elevated))
@@ -67,7 +68,7 @@ pub(super) fn compact_transfer_footer_button_active(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .bg(if active {
             rgb(palette.hover)
         } else {
@@ -112,7 +113,7 @@ pub(super) fn compact_transfer_upload_menu_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(rgb(palette.text_muted))
         .cursor_pointer()
         .hover(|this| {
@@ -153,7 +154,7 @@ pub(super) fn compact_transfer_toolbar_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(rgb(palette.text_muted))
         .cursor_pointer()
         .hover(|this| {
@@ -187,7 +188,7 @@ pub(super) fn compact_transfer_toolbar_button_enabled(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(if enabled {
             rgb(palette.text_muted)
         } else {
@@ -237,7 +238,7 @@ pub(super) fn compact_transfer_toolbar_button_active(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .bg(if active {
             rgb(palette.hover)
         } else {
@@ -270,6 +271,6 @@ pub(super) fn transfer_toolbar_divider(palette: ThemePalette) -> impl IntoElemen
         .w(px(1.))
         .flex_none()
         .mx_1()
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(rgb(palette.border))
 }

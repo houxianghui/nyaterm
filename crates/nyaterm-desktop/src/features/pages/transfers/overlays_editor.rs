@@ -6,7 +6,7 @@ use gpui::{
 };
 use nyaterm_core::truncate_preview;
 use nyaterm_ui::tab_close::NyaTabCloseButton;
-use nyaterm_ui::{NyaScrollable, NyaTooltip};
+use nyaterm_ui::{NyaScrollable, NyaTooltip, radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 use crate::models::TransferExternalSyncPromptState;
@@ -57,7 +57,7 @@ fn external_sync_button(
         .px_3()
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(border)
         .bg(background)
@@ -143,7 +143,7 @@ impl NyaTermApp {
                     .when(standalone, |this| this.size_full())
                     .when(!standalone, |this| {
                         this.max_w(px(440.))
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .shadow_lg()
@@ -175,7 +175,7 @@ impl NyaTermApp {
                             )
                             .child(
                                 div()
-                                    .rounded_md()
+                                    .rounded(radius_md())
                                     .border_1()
                                     .border_color(rgb(palette.border))
                                     .bg(rgb(palette.input))

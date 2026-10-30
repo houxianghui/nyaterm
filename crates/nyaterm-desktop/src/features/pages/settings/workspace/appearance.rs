@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, App, ClickEvent, Context, FontWeight, IntoElement, SharedString, Window, div,
     prelude::*, px, rgb, rgba,
 };
-use nyaterm_ui::{NYA_FORM_CONTROL_HEIGHT_PX, NyaSelectOption};
+use nyaterm_ui::{NYA_FORM_CONTROL_HEIGHT_PX, NyaSelectOption, radius_lg, radius_md, radius_sm};
 
 use crate::features::{
     FontAvailability, FontCatalogLoadState, FontResolutionSource, FontResolutionStatus,
@@ -164,7 +164,7 @@ impl SettingsPanel {
                                         .min_w_0()
                                         .flex_1()
                                         .px_3()
-                                        .rounded_sm()
+                                        .rounded(radius_sm())
                                         .border_1()
                                         .border_color(rgb(palette.border))
                                         .bg(rgb(palette.input))
@@ -426,7 +426,7 @@ impl SettingsPanel {
         );
 
         div()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.input))
@@ -708,7 +708,7 @@ fn appearance_form_section_with_action(
     let title: SharedString = title.into();
     let desc: SharedString = desc.into();
     div()
-        .rounded_lg()
+        .rounded(radius_lg())
         .border_1()
         .border_color(rgba((palette.border << 8) | 0xb3))
         .bg(rgba((palette.surface << 8) | 0x99))

@@ -7,6 +7,7 @@ use gpui::{
 use nyaterm_core::truncate_preview;
 use nyaterm_transport::{DockerImage, DockerNetwork, DockerVolume};
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::radius_md;
 
 use super::super::panels::RemoteMonitorPanel;
 use crate::features::{formatting::compact_id, shell::gpui_code_font_family};
@@ -298,7 +299,7 @@ pub(in crate::features::pages::remote) fn docker_resource_row(
     // ~64px Tauri SIMPLE_ROW_HEIGHT-ish dense resource row (slightly tighter chrome).
     div()
         .h(px(58.))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .px_3()

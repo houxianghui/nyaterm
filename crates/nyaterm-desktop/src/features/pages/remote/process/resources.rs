@@ -2,6 +2,7 @@ use gpui::{App, ClickEvent, IntoElement, SharedString, Window, div, prelude::*, 
 
 use crate::theme::ThemePalette;
 use nyaterm_ui::NyaTooltip;
+use nyaterm_ui::radius_md;
 
 pub(in crate::features::pages::remote) fn usage_color(
     palette: ThemePalette,
@@ -30,7 +31,7 @@ pub(in crate::features::pages::remote) fn compact_remote_svg_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(rgb(palette.text_muted))
         .cursor_pointer()
         .hover(|this| {

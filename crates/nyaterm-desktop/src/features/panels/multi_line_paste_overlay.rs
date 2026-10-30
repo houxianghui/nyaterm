@@ -3,7 +3,7 @@ use rust_i18n::t;
 use gpui::{
     Context, FontWeight, IntoElement, KeyDownEvent, SharedString, div, prelude::*, px, rgb, rgba,
 };
-use nyaterm_ui::{NyaButton, NyaButtonVariant, NyaDocumentEditor};
+use nyaterm_ui::{NyaButton, NyaButtonVariant, NyaDocumentEditor, radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 use crate::models::normalize_paste_newlines;
@@ -52,7 +52,7 @@ impl NyaTermApp {
                     .max_h(px((viewport_h - 24.).max(240.)))
                     .max_w_full()
                     .mx_4()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.bg))
@@ -81,7 +81,7 @@ impl NyaTermApp {
                             .min_h_0()
                             .min_w_0()
                             .overflow_hidden()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .border_1()
                             .border_color(if can_send {
                                 rgb(palette.border)

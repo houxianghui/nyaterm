@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_md;
 use rust_i18n::t;
 
 use std::collections::{HashMap, HashSet};
@@ -122,7 +123,7 @@ pub(in crate::features::pages::tunnels) fn proxy_section(
             "proxy-section-{}",
             section.id
         )))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .child(

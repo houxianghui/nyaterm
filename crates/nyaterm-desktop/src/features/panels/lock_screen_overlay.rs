@@ -6,7 +6,7 @@ use gpui::{
     WindowControlArea, div, prelude::*, px, rgb, svg,
 };
 use nyaterm_ui::window_chrome::title_drag_region;
-use nyaterm_ui::{NyaButton, NyaButtonVariant, NyaInput};
+use nyaterm_ui::{NyaButton, NyaButtonVariant, NyaInput, radius_lg, radius_md};
 
 use crate::features::view_widgets::{nyaterm_app_icon, window_control_button};
 use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
@@ -75,7 +75,7 @@ impl NyaTermApp {
                     .px_3()
                     .flex()
                     .items_center()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(if status_is_error {
                         palette.danger
@@ -282,7 +282,7 @@ impl NyaTermApp {
                                     .child(
                                         div()
                                             .size(px(72.))
-                                            .rounded_lg()
+                                            .rounded(radius_lg())
                                             .shadow_lg()
                                             .flex()
                                             .items_center()

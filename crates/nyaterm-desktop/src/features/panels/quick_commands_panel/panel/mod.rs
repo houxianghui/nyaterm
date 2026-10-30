@@ -16,6 +16,7 @@ use crate::models::{QuickCommandSortMode, QuickCommandViewMode};
 use crate::widgets::small_button;
 use nyaterm_ui::{
     NyaContextMenu, NyaDropdownMenu, NyaMenuItem, NyaScrollable, NyaSearchInput, NyaTooltip,
+    radius_md, radius_sm,
 };
 
 mod rows;
@@ -58,7 +59,7 @@ impl Render for QuickCommandDragPreview {
             .flex()
             .items_center()
             .gap_2()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(0x388bfd))
             .bg(rgba(0x0d1117ee))
@@ -167,7 +168,7 @@ impl NyaTermApp {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .cursor_pointer()
                 .hover(|this| this.bg(rgb(palette.hover)))
                 .child(
@@ -213,7 +214,7 @@ impl NyaTermApp {
                         .mx_auto()
                         .w_full()
                         .max_w(px(384.))
-                        .rounded_md()
+                        .rounded(radius_md())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .p_4()
@@ -347,7 +348,7 @@ impl NyaTermApp {
                         div()
                             .w(px(144.))
                             .h(px(28.))
-                            .rounded_md()
+                            .rounded(radius_md())
                             .bg(rgb(palette.surface_elevated))
                             .flex()
                             .items_center()
@@ -657,7 +658,7 @@ fn quick_command_ai_popover_button(
                                 .id(SharedString::from("quick-command-ai-popover"))
                                 .occlude()
                                 .w(px(320.))
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgb(palette.border))
                                 .bg(popover_bg)
@@ -696,7 +697,7 @@ fn quick_command_ai_popover_button(
                                             .id(SharedString::from("quick-command-ai-submit"))
                                             .h(px(24.))
                                             .px_2()
-                                            .rounded_md()
+                                            .rounded(radius_md())
                                             .flex()
                                             .items_center()
                                             .gap_1()
@@ -761,7 +762,7 @@ fn quick_command_toolbar_icon_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(if active {
             rgb(palette.link)
         } else {

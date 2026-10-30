@@ -13,7 +13,7 @@ use nyaterm_core::{
 use nyaterm_ui::chat::{NyaMessageScroller, NyaMessageScrollerState};
 use nyaterm_ui::{
     NyaDropdownMenu, NyaInputShell, NyaMenuAnchor, NyaMenuItem, NyaScrollable, NyaSearchInput,
-    NyaTooltip,
+    NyaTooltip, radius_md, radius_sm,
 };
 
 use crate::features::NyaTermApp;
@@ -561,7 +561,7 @@ impl AiPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         div()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.link))
             .bg(rgb(palette.hover))
@@ -596,7 +596,7 @@ impl AiPanel {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .text_color(rgb(palette.text_muted))
                     .cursor_pointer()
                     .hover(move |this| {
@@ -707,7 +707,7 @@ impl AiPanel {
             .left_0()
             .right_0()
             .overflow_hidden()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(snapshot.chrome.surface)
@@ -752,7 +752,7 @@ impl AiPanel {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .bg(if focused || candidate.selected {
                         rgb(palette.hover)
                     } else {
@@ -858,7 +858,7 @@ impl AiPanel {
             .min_w_0()
             .max_w(gpui::relative(0.45))
             .flex_none()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.input))
@@ -947,7 +947,7 @@ impl AiPanel {
                     .debug_selector(|| "ai-model-control".to_string())
                     .h(px(28.))
                     .min_w_0()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))
@@ -1017,7 +1017,7 @@ impl AiPanel {
             .w(px(260.))
             .max_h(px(360.))
             .overflow_hidden()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(snapshot.chrome.surface)
@@ -1043,7 +1043,7 @@ impl AiPanel {
                         .px_2()
                         .flex()
                         .items_center()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .cursor_pointer()
                         .text_size(px(11.))
                         .text_color(rgb(palette.link))
@@ -1100,7 +1100,7 @@ impl AiPanel {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .text_size(px(11.))
                     .text_color(rgb(palette.text))
                     .bg(if snapshot.discovery_index == index {
@@ -1147,7 +1147,7 @@ impl AiPanel {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .bg(if focused || is_selected {
                         rgb(palette.hover)
                     } else {
@@ -1327,7 +1327,7 @@ impl AiPanel {
                         .mt_1()
                         .h(px(30.))
                         .px_3()
-                        .rounded_md()
+                        .rounded(radius_md())
                         .bg(rgb(palette.success))
                         .flex()
                         .items_center()
@@ -1384,7 +1384,7 @@ impl AiPanel {
             .top(px(4.))
             .right(px(8.))
             .w(px(260.))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(snapshot.chrome.surface)
@@ -1464,7 +1464,7 @@ impl AiPanel {
                 div()
                     .mt(px(1.))
                     .size(px(14.))
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(if enabled {
                         rgb(palette.link)
@@ -1677,7 +1677,7 @@ impl AiPanel {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .text_size(px(10.))
                         .text_color(rgb(palette.text_muted))
                         .cursor_pointer()
@@ -1759,7 +1759,7 @@ impl AiPanel {
                                 })
                                 .h(px(32.))
                                 .px_2()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .flex()
                                 .items_center()
                                 .gap_1()
@@ -1842,7 +1842,7 @@ impl AiPanel {
             .right(px(8.))
             .h(px(if filtered_count == 0 { 156. } else { 352. }))
             .max_h(gpui::relative(0.95))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(snapshot.chrome.surface)
@@ -1888,7 +1888,7 @@ impl AiPanel {
                             .id(SharedString::from("ai-history-clear-all"))
                             .h(px(22.))
                             .px_2()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .flex()
                             .items_center()
                             .text_size(px(11.))
@@ -1976,7 +1976,7 @@ impl AiPanel {
                     .top(px(menu_y))
                     .left(px(menu_x))
                     .w(px(128.))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(snapshot.chrome.surface)
@@ -2104,7 +2104,7 @@ fn ai_agent_status_badge(snapshot: &AiPanelSnapshot) -> impl IntoElement {
         .px_2()
         .flex()
         .items_center()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.input))

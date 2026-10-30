@@ -6,6 +6,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, rgb,
 };
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 use crate::models::{TransferJobKind, TransferJobMenuState, TransferJobStatus};
@@ -86,7 +87,7 @@ impl NyaTermApp {
                     .top(px(menu_y))
                     .left(px(menu_x))
                     .w(px(190.))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.bg))
@@ -187,7 +188,7 @@ fn transfer_job_menu_button(
         .px_2()
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .text_size(px(12.))
         .text_color(if enabled {
             rgb(palette.text)

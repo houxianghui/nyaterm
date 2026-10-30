@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_md;
 use rust_i18n::t;
 
 use std::collections::{HashMap, HashSet};
@@ -198,7 +199,7 @@ pub(in crate::features::pages::tunnels) fn tunnel_section(
             "tunnel-section-{}",
             section.id
         )))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .child(
@@ -310,7 +311,7 @@ fn tunnel_move_picker(
     if current_group_id.is_none() {
         targets = targets.child(
             div()
-                .rounded_md()
+                .rounded(radius_md())
                 .px_2()
                 .py_1()
                 .text_size(px(11.))

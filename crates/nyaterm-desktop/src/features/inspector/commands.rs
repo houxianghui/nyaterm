@@ -3,6 +3,7 @@ use rust_i18n::t;
 use gpui::{ClickEvent, Context, IntoElement, SharedString, div, prelude::*, px, rgb};
 use nyaterm_core::truncate_preview;
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::radius_sm;
 
 use crate::features::NyaTermApp;
 
@@ -34,7 +35,7 @@ impl NyaTermApp {
                         .id(SharedString::from(format!("command-history-row-{index}")))
                         .h(px(28.))
                         .px_2()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .flex()
                         .items_center()
                         .gap_1()

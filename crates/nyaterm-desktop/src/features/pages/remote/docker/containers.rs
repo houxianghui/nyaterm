@@ -9,6 +9,7 @@ use gpui::{
 use nyaterm_core::truncate_preview;
 use nyaterm_transport::DockerContainer;
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::radius_md;
 
 use super::super::panels::RemoteMonitorPanel;
 use crate::features::{
@@ -163,7 +164,7 @@ fn docker_container_row(
         .id(SharedString::from(format!("docker-container-{short}")))
         .relative()
         .h(px(60.))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         // Left accent bar painted as absolute child.
@@ -299,7 +300,7 @@ fn docker_container_action_menu(
     div()
         .id(SharedString::from(format!("docker-menu-{short}")))
         .w(px(148.))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(menu_bg)

@@ -8,7 +8,7 @@ use gpui::{
     },
     px, rgb, rgba, svg,
 };
-use nyaterm_ui::{NyaPopover, NyaScrollable};
+use nyaterm_ui::{NyaPopover, NyaScrollable, radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 use crate::models::{ConnectionEditorField, ConnectionEditorSelect};
@@ -51,7 +51,7 @@ fn serial_baud_picker(
         .items_center()
         .justify_between()
         .gap_2()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(if valid {
             rgb(palette.border)
@@ -97,7 +97,7 @@ fn serial_baud_picker(
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .border_1()
                 .border_color(if selected {
                     rgb(palette.primary)
@@ -122,7 +122,7 @@ fn serial_baud_picker(
     let content = div()
         .occlude()
         .w(px(300.))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.surface_elevated))
@@ -355,7 +355,7 @@ fn serial_terminal(
         div()
             .id("connection-editor-serial-advanced")
             .debug_selector(|| "connection-editor-serial-advanced".to_string())
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .p_3()

@@ -6,6 +6,7 @@ mod section;
 
 use crate::theme::ThemePalette;
 use gpui::{FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb};
+use nyaterm_ui::radius_xl;
 
 fn ai_card(
     palette: ThemePalette,
@@ -15,7 +16,7 @@ fn ai_card(
 ) -> gpui::Div {
     div()
         .min_w_0()
-        .rounded_xl()
+        .rounded(radius_xl())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.surface))

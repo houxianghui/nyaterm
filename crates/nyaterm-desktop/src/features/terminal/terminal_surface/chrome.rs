@@ -3,7 +3,7 @@ use gpui::{
     Window, div, prelude::*, px, rgb, rgba, svg,
 };
 use nyaterm_core::truncate_preview;
-use nyaterm_ui::{NyaInput, NyaScrollable};
+use nyaterm_ui::{NyaInput, NyaScrollable, radius_sm};
 use rust_i18n::t;
 
 use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
@@ -301,7 +301,7 @@ impl NyaTermApp {
                         history_rows =
                             history_rows.child(
                                 div()
-                                    .rounded_sm()
+                                    .rounded(radius_sm())
                                     .border_1()
                                     .border_color(rgb(palette.border))
                                     .bg(rgb(palette.input))
@@ -371,7 +371,7 @@ impl NyaTermApp {
             .right(px(4.))
             .w(px(420.))
             .max_w_full()
-            .rounded_sm()
+            .rounded(radius_sm())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.surface))
@@ -447,7 +447,7 @@ impl NyaTermApp {
                             .h(px(24.))
                             .min_w_0()
                             .flex_1()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .border_1()
                             .border_color(rgb(if search_focused {
                                 palette.primary
@@ -557,7 +557,7 @@ fn terminal_search_mode_button(
         .px_2()
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(if active {
             rgb(palette.accent)
         } else {
@@ -587,7 +587,7 @@ fn terminal_search_icon_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .text_color(rgb(palette.text_muted))
         .cursor_pointer()
         .hover(|this| this.opacity(0.8))
@@ -614,7 +614,7 @@ fn terminal_search_flag_button(
         .px_1()
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(if active {

@@ -26,7 +26,7 @@ use gpui::{
 use nyaterm_core::{ConnectionType, Group, SavedConnection, natural_compare, truncate_preview};
 use nyaterm_ui::{
     NyaCheckbox, NyaInput, NyaPopover, NyaScrollArea, NyaScrollable, NyaSelectOption,
-    NyaSelectState, NyaSwitch, NyaTooltip,
+    NyaSelectState, NyaSwitch, NyaTooltip, radius_md, radius_sm,
 };
 
 use self::local::connection_editor_local_section;
@@ -1370,7 +1370,7 @@ impl NyaTermApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .cursor_pointer()
                     .bg(if selected {
                         rgba((palette.primary << 8) | 0x26)
@@ -1403,7 +1403,7 @@ impl NyaTermApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .cursor_pointer()
                     .bg(if selected {
                         rgba((palette.primary << 8) | 0x26)
@@ -1460,7 +1460,7 @@ impl NyaTermApp {
             .flex()
             .items_center()
             .justify_center()
-            .rounded_sm()
+            .rounded(radius_sm())
             .border_1()
             .border_color(if icon_picker_open {
                 rgb(palette.primary)
@@ -1483,7 +1483,7 @@ impl NyaTermApp {
             // Seven 28 px icons plus gaps and a separate 16 px scrollbar track.
             .w(px(256.))
             .p_2()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))
@@ -1881,7 +1881,7 @@ impl NyaTermApp {
                     .w_full()
                     .max_w(px(460.))
                     .max_h(px(500.))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.surface_elevated))
@@ -2042,7 +2042,7 @@ fn connection_editor_agent_identity_picker(
                     .id(SharedString::from(format!(
                         "connection-agent-identity-picker-row-{index}"
                     )))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.surface))
@@ -2158,7 +2158,7 @@ fn connection_editor_agent_identity_picker(
         .w(px(560.))
         .max_w_full()
         .max_h_full()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.bg))
@@ -2189,7 +2189,7 @@ fn connection_editor_agent_identity_picker(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .text_lg()
                         .text_color(rgb(palette.text_muted))
                         .cursor_pointer()
@@ -2224,7 +2224,7 @@ fn connection_editor_agent_identity_picker(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .bg(rgb(palette.input))
@@ -2251,7 +2251,7 @@ fn connection_editor_agent_identity_picker(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .bg(rgb(palette.primary))
                         .text_sm()
                         .text_color(rgb(palette.on_primary))
@@ -2476,7 +2476,7 @@ fn connection_editor_group_control(
                         .items_center()
                         .justify_between()
                         .gap_2()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .border_1()
                         .border_color(if select_open {
                             rgb(palette.primary)
@@ -2520,7 +2520,7 @@ fn connection_editor_group_control(
                             div()
                                 .occlude()
                                 .w(popup_width)
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgb(palette.border))
                                 .bg(rgb(palette.surface_elevated))
@@ -2565,7 +2565,7 @@ fn connection_editor_group_control(
                                                         .px(px(ORDINARY_INPUT_SHELL_PADDING_X_PX))
                                                         .flex()
                                                         .items_center()
-                                                        .rounded_sm()
+                                                        .rounded(radius_sm())
                                                         .border_1()
                                                         .border_color(
                                                             ordinary_input_shell_border_color(
@@ -2595,7 +2595,7 @@ fn connection_editor_group_control(
                                                         .flex()
                                                         .items_center()
                                                         .justify_center()
-                                                        .rounded_sm()
+                                                        .rounded(radius_sm())
                                                         .border_1()
                                                         .border_color(rgb(palette.border))
                                                         .bg(rgb(palette.input))
@@ -2874,7 +2874,7 @@ fn connection_description_field(
                 .flex_none()
                 .min_w_0()
                 .overflow_hidden()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .border_1()
                 .border_color(ordinary_input_shell_border_color(palette, focused))
                 .when(focused, |this| {

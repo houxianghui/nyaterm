@@ -14,6 +14,7 @@ use gpui::{
 };
 use nyaterm_core::QuickCommand;
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::{radius_lg, radius_md, radius_sm};
 
 use super::super::quick_command_icon_mark;
 use crate::features::NyaTermApp;
@@ -159,7 +160,7 @@ pub(in crate::features) fn quick_command_detail_card(
                             div()
                                 .id(SharedString::from("quick-command-card-command"))
                                 .max_h(px(120.))
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgba((palette.border << 8) | 0x66))
                                 .bg(rgba((palette.bg << 8) | 0x80))
@@ -240,7 +241,7 @@ impl Render for QuickCommandTooltip {
             .flex()
             .items_center()
             .justify_center()
-            .rounded_sm()
+            .rounded(radius_sm())
             .cursor_pointer()
             .hover(move |this| this.bg(rgb(palette.hover)))
             .child(
@@ -271,7 +272,7 @@ impl Render for QuickCommandTooltip {
             // it.
             .occlude()
             .overflow_hidden()
-            .rounded_lg()
+            .rounded(radius_lg())
             .border_1()
             .border_color(rgba((self.palette.border << 8) | 0x99))
             .bg(self.surface)

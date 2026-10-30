@@ -8,7 +8,9 @@ use gpui::{
     SharedString, div, prelude::*, px, rgb, rgba,
 };
 use nyaterm_terminal::{TerminalScreen, TerminalSnapshot};
-use nyaterm_ui::{NyaContextMenu, NyaCopy, NyaPaste, NyaSelectAll};
+use nyaterm_ui::{
+    NyaContextMenu, NyaCopy, NyaPaste, NyaSelectAll, radius_lg, radius_md, radius_sm,
+};
 
 use crate::features::NyaTermApp;
 use crate::features::formatting::{
@@ -1085,7 +1087,7 @@ impl NyaTermApp {
                                         div()
                                             .absolute()
                                             .inset_2()
-                                            .rounded_lg()
+                                            .rounded(radius_lg())
                                             .border_2()
                                             .border_color(rgb(palette.link))
                                             .bg(rgba(0x3b82f624))
@@ -1095,7 +1097,7 @@ impl NyaTermApp {
                                             .child(
                                                 div()
                                                     .max_w(px(320.))
-                                                    .rounded_lg()
+                                                    .rounded(radius_lg())
                                                     .border_1()
                                                     .border_color(rgb(palette.link))
                                                     .bg(rgb(palette.surface))
@@ -1137,7 +1139,7 @@ impl NyaTermApp {
                                         .flex()
                                         .items_center()
                                         .gap_1()
-                                        .rounded_md()
+                                        .rounded(radius_md())
                                         .px_1()
                                         .py(px(2.))
                                         .border_1()
@@ -1157,7 +1159,7 @@ impl NyaTermApp {
                                                 .id(SharedString::from(format!(
                                                     "terminal-sync-pause-{output_session_id}"
                                                 )))
-                                                .rounded_sm()
+                                                .rounded(radius_sm())
                                                 .px_1()
                                                 .py(px(2.))
                                                 .cursor_pointer()
@@ -1184,7 +1186,7 @@ impl NyaTermApp {
                                                 .id(SharedString::from(format!(
                                                     "terminal-sync-leave-{output_session_id}"
                                                 )))
-                                                .rounded_sm()
+                                                .rounded(radius_sm())
                                                 .px_1()
                                                 .py(px(2.))
                                                 .cursor_pointer()
@@ -1207,7 +1209,7 @@ impl NyaTermApp {
                                                 .id(SharedString::from(format!(
                                                     "terminal-sync-close-{output_session_id}"
                                                 )))
-                                                .rounded_sm()
+                                                .rounded(radius_sm())
                                                 .px_1()
                                                 .py(px(2.))
                                                 .cursor_pointer()
@@ -1242,7 +1244,7 @@ impl NyaTermApp {
                                             .child(
                                                 div()
                                                     .max_w(px(360.))
-                                                    .rounded_md()
+                                                    .rounded(radius_md())
                                                     .border_1()
                                                     .border_color(rgb(palette.border))
                                                     .bg(rgb(palette.surface))

@@ -8,6 +8,7 @@ use nyaterm_transport::SftpTransferProgress;
 use crate::models::{TransferJobKind, TransferJobState, TransferJobStatus};
 use crate::theme::ThemePalette;
 use nyaterm_ui::NyaTooltip;
+use nyaterm_ui::radius_md;
 
 pub(in crate::features::pages::transfers) fn queue_action_button(
     palette: ThemePalette,
@@ -24,7 +25,7 @@ pub(in crate::features::pages::transfers) fn queue_action_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(if enabled {
             rgb(palette.text_muted)
         } else {

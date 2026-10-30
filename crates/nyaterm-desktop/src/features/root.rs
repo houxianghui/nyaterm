@@ -1,3 +1,4 @@
+use nyaterm_ui::{radius_lg, radius_md, radius_sm};
 use std::time::{Duration, Instant};
 
 use crate::models::{MainMode, NavItem, PanelResizeSide, PanelSide};
@@ -681,7 +682,7 @@ impl NyaTermApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .text_color(rgb(palette.text_muted))
                     .cursor_pointer()
                     .hover(|this| this.bg(rgb(palette.hover)).text_color(rgb(palette.text)))
@@ -947,7 +948,7 @@ impl NyaTermApp {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .rounded_lg()
+                    .rounded(radius_lg())
                     .border_1()
                     .border_color(rgb(palette.danger))
                     .bg(rgb(palette.surface))
@@ -1022,7 +1023,7 @@ impl NyaTermApp {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .rounded_lg()
+                    .rounded(radius_lg())
                     .border_1()
                     .border_color(rgb(if request.destructive {
                         palette.danger
@@ -1342,7 +1343,7 @@ fn overlay_button(
         .id(id)
         .px_3()
         .py_2()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(if danger {
             palette.danger

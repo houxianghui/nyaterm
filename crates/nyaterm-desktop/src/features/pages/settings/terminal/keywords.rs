@@ -10,6 +10,7 @@ use crate::models::KeywordHighlightEditorField;
 use crate::theme::ThemePalette;
 use nyaterm_ui::NyaSwitch;
 use nyaterm_ui::NyaTooltip;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use super::super::{
     settings_form_row, settings_form_section, settings_switch, settings_switch_with_enabled,
@@ -100,7 +101,7 @@ impl SettingsPanel {
                                                     parse_keyword_swatch(swatch).unwrap_or(0x79c0ff);
                                                 let rid = id.clone();
                                                 div()
-                                                    .rounded_md()
+                                                    .rounded(radius_md())
                                                     .border_1()
                                                     .border_color(rgb(palette.border))
                                                     .bg(rgb(palette.bg))
@@ -213,7 +214,7 @@ impl SettingsPanel {
                             .when(rules.is_empty(), |this| {
                                 this.child(
                                     div()
-                                        .rounded_md()
+                                        .rounded(radius_md())
                                         .border_1()
                                         .border_color(rgb(palette.border))
                                         .bg(rgb(palette.input))
@@ -389,7 +390,7 @@ impl SettingsPanel {
                                         "settings-keyword-rule-{}",
                                         rule.id
                                     )))
-                                    .rounded_md()
+                                    .rounded(radius_md())
                                     .border_1()
                                     .border_color(rgb(palette.border))
                                     .bg(rgb(palette.input))
@@ -571,7 +572,7 @@ impl SettingsPanel {
                                                                 .child(
                                                                     div()
                                                                         .size(px(20.))
-                                                                        .rounded_md()
+                                                                        .rounded(radius_md())
                                                                         .bg(rgb(
                                                                             parse_keyword_swatch(
                                                                                 &rule.color_dark,
@@ -604,7 +605,7 @@ impl SettingsPanel {
                                                                                 ),
                                                                             ))
                                                                             .size(px(16.))
-                                                                            .rounded_sm()
+                                                                            .rounded(radius_sm())
                                                                             .bg(rgb(color))
                                                                             .border_1()
                                                                             .border_color(rgb(
@@ -641,7 +642,7 @@ impl SettingsPanel {
                                                                 .child(
                                                                     div()
                                                                         .size(px(20.))
-                                                                        .rounded_md()
+                                                                        .rounded(radius_md())
                                                                         .bg(rgb(
                                                                             parse_keyword_swatch(
                                                                                 &rule.color_light,
@@ -683,7 +684,7 @@ impl SettingsPanel {
                                                                                     ),
                                                                                 ))
                                                                                 .size(px(16.))
-                                                                                .rounded_sm()
+                                                                                .rounded(radius_sm())
                                                                                 .bg(rgb(color))
                                                                                 .border_1()
                                                                                 .border_color(rgb(
@@ -734,7 +735,7 @@ fn keyword_highlight_static_input(
             |this| this.h(px(30.)).items_center(),
         )
         .px_2()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.input))
@@ -766,7 +767,7 @@ fn keyword_highlight_action_button(
         .px_3()
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.surface_elevated))
@@ -804,7 +805,7 @@ fn keyword_highlight_icon_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .text_color(rgb(palette.danger))
         .child(
             svg()

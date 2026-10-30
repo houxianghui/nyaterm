@@ -22,7 +22,7 @@ use crate::models::{
 };
 use nyaterm_ui::{
     NYA_FORM_CONTROL_HEIGHT_PX, NyaInput, NyaInputState, NyaNumberInput, NyaNumberInputState,
-    NyaSelect, NyaSelectState, NyaSwitch,
+    NyaSelect, NyaSelectState, NyaSwitch, radius_md, radius_sm,
 };
 
 #[derive(Clone)]
@@ -1350,7 +1350,7 @@ where
                 .items_center()
                 .gap_1()
                 .opacity(if disabled { 0.55 } else { 1.0 })
-                .rounded_sm()
+                .rounded(radius_sm())
                 .border_1()
                 .border_color(ordinary_input_shell_border_color(palette, focused))
                 .when(focused, |this| {
@@ -1423,7 +1423,7 @@ pub(super) fn forwarding_endpoint_editor_field(
                 .px(px(ORDINARY_INPUT_SHELL_PADDING_X_PX))
                 .flex()
                 .items_center()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .border_1()
                 .border_color(ordinary_input_shell_border_color(palette, focused))
                 .when(focused, |this| {
@@ -1471,7 +1471,7 @@ pub(super) fn editor_field_box(
         .px(px(ORDINARY_INPUT_SHELL_PADDING_X_PX))
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(ordinary_input_shell_border_color(palette, focused))
         .when(focused, |this| {
@@ -1587,7 +1587,7 @@ pub(super) fn icon_action_button_styled(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_size(px(11.))
         .text_color(rgb(base_color))
         .cursor_pointer()

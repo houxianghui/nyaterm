@@ -6,6 +6,7 @@ use gpui::{
     Context, FontWeight, IntoElement, SharedString, canvas, div, prelude::*, px, relative, rgb,
     rgba,
 };
+use nyaterm_ui::{radius_md, radius_sm};
 use rust_i18n::t;
 
 impl NyaTermApp {
@@ -307,7 +308,7 @@ impl NyaTermApp {
             .flex()
             .items_center()
             .justify_center()
-            .rounded_md()
+            .rounded(radius_md())
             .border_2()
             .border_color(accent)
             .bg(rgba((palette.link << 8) | 0x28));
@@ -333,7 +334,7 @@ impl NyaTermApp {
             .child(
                 zone_box.child(
                     div()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .border_1()
                         .border_color(accent)
                         .bg(self.shell_surface_color(palette.surface))

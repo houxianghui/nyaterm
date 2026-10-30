@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_sm;
 use std::{ops::Range, sync::Arc};
 
 use gpui::{
@@ -90,7 +91,7 @@ impl UniformListDecoration for ConnectionRowActionsDecoration {
                     .px_1()
                     .flex()
                     .items_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .bg(rgb(palette.hover))
                     // A mouse-down reaches the list before a click. Stop both so
                     // pressing an action never clears the current multi-selection.

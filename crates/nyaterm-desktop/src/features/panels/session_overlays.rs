@@ -5,7 +5,9 @@ use gpui::{
     ParentElement as _, SharedString, Styled as _, div, prelude::*, px, rgb, rgba,
 };
 use nyaterm_core::truncate_preview;
-use nyaterm_ui::{NyaNumberInputOptions, NyaScrollable as _, NyaSelectableText};
+use nyaterm_ui::{
+    NyaNumberInputOptions, NyaScrollable as _, NyaSelectableText, radius_md, radius_sm,
+};
 
 use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
 use crate::widgets::small_button;
@@ -117,7 +119,7 @@ impl NyaTermApp {
                 div()
                     .id(SharedString::from("tab-color-dialog"))
                     .w(px(300.))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.bg))
@@ -186,7 +188,7 @@ impl NyaTermApp {
         if details.is_empty() {
             rows = rows.child(
                 div()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))
@@ -322,7 +324,7 @@ impl NyaTermApp {
                     .relative()
                     .left(px(offset.0))
                     .top(px(offset.1))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.bg))
@@ -477,7 +479,7 @@ impl NyaTermApp {
                 div()
                     .h(px(36.))
                     .px_3()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))

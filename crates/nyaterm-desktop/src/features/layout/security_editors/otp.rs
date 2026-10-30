@@ -6,6 +6,7 @@ use gpui::{
     Context, FontWeight, IntoElement, KeyDownEvent, SharedString, div, prelude::*, px, rgb,
 };
 use nyaterm_ui::NyaNumberInputOptions;
+use nyaterm_ui::radius_sm;
 
 use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
 use crate::models::SecurityOtpEditorState;
@@ -68,7 +69,7 @@ impl NyaTermApp {
                             .px_2()
                             .flex()
                             .items_center()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .text_size(px(10.))
                             .font_weight(FontWeight(700.))
                             .when(!self.security.editor_busy(), |this| this.cursor_pointer())

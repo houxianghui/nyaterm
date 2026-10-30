@@ -7,6 +7,7 @@ use gpui::{
 };
 use nyaterm_core::truncate_preview;
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use crate::features::{NyaTermApp, shell::gpui_code_font_family};
 use crate::models::TransferBrowserFavoritesMenuState;
@@ -78,7 +79,7 @@ impl NyaTermApp {
                         "transfer-browser-favorite-menu-item-{path}"
                     )))
                     .min_h(px(30.))
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(if is_current {
                         rgb(0x256d3f)
@@ -124,7 +125,7 @@ impl NyaTermApp {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .text_color(rgb(0x86efac))
                             .hover(|this| this.bg(rgb(palette.border)).text_color(rgb(0xfca5a5)))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -161,7 +162,7 @@ impl NyaTermApp {
                     .top(px(menu_y))
                     .left(px(menu_x))
                     .w(px(300.))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.bg))
@@ -207,7 +208,7 @@ impl NyaTermApp {
                                         |this| {
                                             this.child(
                                                 div()
-                                                    .rounded_sm()
+                                                    .rounded(radius_sm())
                                                     .border_1()
                                                     .border_color(rgb(palette.border))
                                                     .bg(rgb(palette.input))
@@ -241,7 +242,7 @@ fn favorite_menu_button(
         .px_2()
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.surface))

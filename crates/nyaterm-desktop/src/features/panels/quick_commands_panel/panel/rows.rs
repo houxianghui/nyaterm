@@ -8,6 +8,7 @@ use gpui::{
 };
 use nyaterm_core::QuickCommand;
 use nyaterm_ui::NyaMenuItem;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use super::super::super::{
     quick_command_icon_mark, quick_command_pin_mark, quick_command_single_line,
@@ -91,7 +92,7 @@ impl NyaTermApp {
                         // only a chip wider than the row truncates.
                         .flex_none()
                         .max_w_full()
-                        .rounded_md()
+                        .rounded(radius_md())
                         .border_1()
                         .border_color(rgba((palette.border << 8) | 0x59))
                         .bg(rgba((palette.surface_elevated << 8) | 0x33))
@@ -211,7 +212,7 @@ impl NyaTermApp {
                             .relative()
                             .h(px(32.))
                             .w_full()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .px(px(6.))
                             .flex()
                             .items_center()
@@ -314,7 +315,7 @@ impl NyaTermApp {
                         .relative()
                         .min_h(px(44.))
                         .w_full()
-                        .rounded_md()
+                        .rounded(radius_md())
                         .border_1()
                         .border_color(rgba((palette.border << 8) | 0x59))
                         .bg(rgba((palette.surface_elevated << 8) | 0x26))

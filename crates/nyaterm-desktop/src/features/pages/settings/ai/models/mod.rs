@@ -13,7 +13,9 @@ use nyaterm_core::ai::provider_settings::{
     provider_label, provider_name_taken, provider_requires_api_key,
 };
 use nyaterm_core::ai::{AiModelSource, AiProviderKind};
-use nyaterm_ui::{NyaButton, NyaButtonVariant, NyaIconButton, NyaSelectOption};
+use nyaterm_ui::{
+    NyaButton, NyaButtonVariant, NyaIconButton, NyaSelectOption, radius_md, radius_sm,
+};
 use rust_i18n::t;
 
 impl SettingsPanel {
@@ -91,7 +93,7 @@ impl SettingsPanel {
             providers = providers.child(
                 div()
                     .min_w_0()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(if is_selected {
                         palette.accent
@@ -785,7 +787,7 @@ fn status_color(palette: ThemePalette, status: ConnectionStatus) -> u32 {
 fn model_badge(palette: ThemePalette, text: impl Into<SharedString>) -> impl IntoElement {
     div()
         .flex_none()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgb(palette.border))
         .px_1()

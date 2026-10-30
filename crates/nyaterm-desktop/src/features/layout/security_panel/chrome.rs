@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_md;
 use rust_i18n::t;
 
 use gpui::{Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb, rgba, svg};
@@ -36,7 +37,7 @@ impl NyaTermApp {
                         div()
                             .size(px(24.))
                             .flex_none()
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgba((palette.primary << 8) | 0x40))
                             .bg(self.shell_surface_color(palette.bg))

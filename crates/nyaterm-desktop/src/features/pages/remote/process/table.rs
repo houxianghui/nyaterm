@@ -1,3 +1,4 @@
+use nyaterm_ui::{radius_md, radius_sm};
 use std::borrow::Cow;
 
 use gpui::{
@@ -33,7 +34,7 @@ pub(in crate::features::pages::remote) fn process_sort_button(
         .flex()
         .items_center()
         .when(numeric, |this| this.justify_end())
-        .rounded_sm()
+        .rounded(radius_sm())
         .text_size(px(10.))
         .font_weight(if active {
             FontWeight(700.)
@@ -160,7 +161,7 @@ where
                         .top(px(26.))
                         .right_0()
                         .w(px(148.))
-                        .rounded_md()
+                        .rounded(radius_md())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .bg(menu_bg)

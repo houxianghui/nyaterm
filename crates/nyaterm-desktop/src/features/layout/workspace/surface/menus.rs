@@ -1,6 +1,6 @@
 use rust_i18n::t;
 
-use nyaterm_ui::{NyaPopover, NyaPopoverAlign, NyaPopoverPlacement, NyaScrollArea};
+use nyaterm_ui::{NyaPopover, NyaPopoverAlign, NyaPopoverPlacement, NyaScrollArea, radius_md};
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
@@ -425,7 +425,7 @@ impl NyaTermApp {
         div()
             .id("workspace-open-tabs-dropdown")
             .w(px(256.))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.surface))
@@ -663,7 +663,7 @@ impl NyaTermApp {
                 "workspace-new-session-dropdown-{menu_id_suffix}"
             )))
             .w(px(NEW_SESSION_MENU_WIDTH))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.surface))
@@ -789,7 +789,7 @@ impl NyaTermApp {
                 "new-session-all-sessions-level-{menu_id_suffix}-{depth}"
             )))
             .w(px(NEW_SESSION_SUBMENU_WIDTH))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.surface))

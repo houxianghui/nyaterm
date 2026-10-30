@@ -6,7 +6,7 @@ use gpui::{
     App, ClickEvent, Context, FontWeight, IntoElement, SharedString, Window, div, prelude::*, px,
     rgb, svg,
 };
-use nyaterm_ui::{NyaSelectOption, NyaTooltip};
+use nyaterm_ui::{NyaSelectOption, NyaTooltip, radius_md, radius_sm};
 
 use crate::features::pages::settings::panel::SettingsPanel;
 use crate::theme::ThemePalette;
@@ -383,7 +383,7 @@ fn terminal_action_matcher_row(
         enabled,
     } = presentation;
     div()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.input))
@@ -413,7 +413,7 @@ fn terminal_action_matcher_row(
                             div()
                                 .px_2()
                                 .py(px(1.))
-                                .rounded_sm()
+                                .rounded(radius_sm())
                                 .bg(rgb(palette.surface_elevated))
                                 .font_family(crate::features::shell::gpui_code_font_family())
                                 .text_size(px(10.))

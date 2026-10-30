@@ -7,6 +7,7 @@ use gpui::{
     px, rgb,
 };
 use nyaterm_ui::NyaSwitch;
+use nyaterm_ui::radius_md;
 
 use crate::features::{NyaTermApp, connections::ConnectionEditorToggle};
 use crate::models::{ConnectionEditorField, ConnectionEditorSelect};
@@ -28,7 +29,7 @@ fn rdp_switch_row(
     let label: SharedString = label.into();
     let description: SharedString = description.into();
     div()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .px_3()

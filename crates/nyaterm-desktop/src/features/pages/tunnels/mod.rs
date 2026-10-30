@@ -8,7 +8,7 @@ use gpui::{
 use std::collections::HashMap;
 
 use crate::models::NetworkTab;
-use nyaterm_ui::{NyaScrollable, NyaTabItem, NyaTabs};
+use nyaterm_ui::{NyaScrollable, NyaTabItem, NyaTabs, radius_md};
 
 use super::super::NyaTermApp;
 
@@ -248,7 +248,7 @@ fn icon_network_action(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(rgb(palette.text_muted))
         .cursor_pointer()
         .hover(|this| {
@@ -279,7 +279,7 @@ fn network_create_button(
         .flex()
         .items_center()
         .gap_1()
-        .rounded_md()
+        .rounded(radius_md())
         .text_size(px(12.))
         .text_color(rgb(palette.link))
         .when(enabled, |this| {
@@ -306,7 +306,7 @@ fn network_empty_state(
 ) -> impl IntoElement {
     div()
         .min_h(px(132.))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .px_4()

@@ -1,5 +1,5 @@
 use gpui::{Context, IntoElement, div, prelude::*, px, rgb};
-use nyaterm_ui::{NyaIconButton, NyaInput, NyaTag};
+use nyaterm_ui::{NyaIconButton, NyaInput, NyaTag, radius_sm};
 use rust_i18n::t;
 
 use crate::features::NyaTermApp;
@@ -30,7 +30,7 @@ pub(super) fn connection_tags_field(
         .gap_1()
         .px_2()
         .py_1()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(ordinary_input_shell_border_color(palette, focused))
         .when(focused, |this| {

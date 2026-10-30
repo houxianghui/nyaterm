@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_md;
 use std::borrow::Cow;
 
 use gpui::{
@@ -138,7 +139,7 @@ pub(in crate::features::pages::remote) fn process_details(
                         .flex_none()
                         .flex()
                         .items_center()
-                        .rounded_md()
+                        .rounded(radius_md())
                         .border_1()
                         .border_color(state_color)
                         .text_size(px(10.))
@@ -154,7 +155,7 @@ pub(in crate::features::pages::remote) fn process_details(
                 .max_h(px(command_height))
                 .flex_none()
                 .min_w_0()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(0x1d4f67))
                 .bg(rgb(palette.surface))
@@ -232,7 +233,7 @@ fn process_metric(
     div()
         .h(px(39.))
         .min_w_0()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(color.opacity(0.35))
         .bg(rgb(palette.surface))

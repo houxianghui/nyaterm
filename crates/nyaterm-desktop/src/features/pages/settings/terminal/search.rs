@@ -13,6 +13,7 @@ use crate::features::{
 };
 use crate::theme::ThemePalette;
 use nyaterm_ui::NyaTooltip;
+use nyaterm_ui::{radius_lg, radius_md, radius_sm};
 
 use super::super::settings_switch;
 
@@ -72,7 +73,7 @@ impl SettingsPanel {
                 .when(engines.is_empty(), |this| {
                     this.child(
                         div()
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .bg(rgb(palette.input))
@@ -89,7 +90,7 @@ impl SettingsPanel {
                 .when(!engines.is_empty(), |this| {
                     this.child(
                         div()
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .bg(rgb(palette.input))
@@ -138,7 +139,7 @@ impl SettingsPanel {
                                                     )))
                                                     .mt(px(2.))
                                                     .size(px(36.))
-                                                    .rounded_md()
+                                                    .rounded(radius_md())
                                                     .bg(rgb(palette.bg))
                                                     .border_1()
                                                     .border_color(if icon_picker_open {
@@ -475,7 +476,7 @@ fn search_engine_icon_choice(
     div()
         .id(SharedString::from(id))
         .h(px(28.))
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(if selected {
             rgb(palette.primary)
@@ -507,7 +508,7 @@ fn search_engine_settings_section(
     let title: SharedString = title.into();
     let desc: SharedString = desc.into();
     div()
-        .rounded_lg()
+        .rounded(radius_lg())
         .border_1()
         .border_color(rgba((palette.border << 8) | 0xb3))
         .bg(rgba((palette.surface << 8) | 0x99))
@@ -558,7 +559,7 @@ fn search_engine_icon_button(
     div()
         .id(SharedString::from(id))
         .size(px(28.))
-        .rounded_sm()
+        .rounded(radius_sm())
         .flex()
         .items_center()
         .justify_center()
@@ -599,7 +600,7 @@ fn search_engine_text_button(
         .id(SharedString::from(id.into()))
         .h(px(28.))
         .px_2()
-        .rounded_sm()
+        .rounded(radius_sm())
         .flex()
         .items_center()
         .gap_1()

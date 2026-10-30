@@ -1,6 +1,6 @@
 use rust_i18n::t;
 
-use nyaterm_ui::{NyaScrollable, NyaTooltip};
+use nyaterm_ui::{NyaScrollable, NyaTooltip, radius_lg, radius_sm};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1160,7 +1160,7 @@ impl NyaTermApp {
                         .flex_none()
                         .w(px(20.))
                         .h(px(20.))
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .flex()
                         .items_center()
                         .justify_center()
@@ -1196,7 +1196,7 @@ impl NyaTermApp {
             .h(px(placement.height))
             .flex()
             .flex_col()
-            .rounded_lg()
+            .rounded(radius_lg())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgba((palette.surface << 8) | 0xf2))
@@ -1210,7 +1210,7 @@ impl NyaTermApp {
                         .w_full()
                         .max_w(px(560.))
                         .p_2()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .bg(rgb(palette.surface_elevated))

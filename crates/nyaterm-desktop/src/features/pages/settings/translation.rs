@@ -2,6 +2,7 @@ use rust_i18n::t;
 
 use gpui::{AnyElement, Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb};
 use nyaterm_ui::NyaSelectOption;
+use nyaterm_ui::radius_md;
 
 use crate::features::pages::settings::panel::SettingsPanel;
 use crate::models::TranslateInputField;
@@ -293,7 +294,7 @@ fn translation_provider_card(
         (palette.text_muted, palette.border)
     };
     div()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.input))

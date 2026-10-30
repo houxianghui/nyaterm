@@ -7,7 +7,7 @@ use gpui::{
 use nyaterm_core::truncate_preview;
 use nyaterm_ui::{
     NyaButton, NyaButtonVariant, NyaPopover, NyaScrollArea, NyaScrollable, NyaSwitch, NyaTabItem,
-    NyaTabs, NyaTabsVariant, NyaTooltip,
+    NyaTabs, NyaTabsVariant, NyaTooltip, radius_md, radius_sm,
 };
 
 use super::{
@@ -251,7 +251,7 @@ impl NyaTermApp {
         let new_category_add = div()
             .id("quick-command-editor-new-category-add")
             .size(px(28.))
-            .rounded_sm()
+            .rounded(radius_sm())
             .flex()
             .items_center()
             .justify_center()
@@ -277,7 +277,7 @@ impl NyaTermApp {
             .h(px(36.))
             .w_full()
             .px_3()
-            .rounded_sm()
+            .rounded(radius_sm())
             .border_1()
             .border_color(if category_picker_open {
                 rgb(palette.focus_ring)
@@ -310,7 +310,7 @@ impl NyaTermApp {
             );
         let category_picker_content = div()
             .w(px((viewport_width - 38.).clamp(320., 560.)))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(if native_window {
@@ -397,7 +397,7 @@ impl NyaTermApp {
             .w(px(192.))
             .max_h(px(220.))
             .p_2()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(if native_window {
@@ -460,7 +460,7 @@ impl NyaTermApp {
                     .when(native_window, |this| this.size_full())
                     .when(!native_window, |this| this.max_w(px(560.)).max_h(px(640.)))
                     .when(!native_window, |this| {
-                        this.rounded_md()
+                        this.rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .shadow_lg()
@@ -493,7 +493,7 @@ impl NyaTermApp {
                             .when_some(general_error, |this, error| {
                                 this.child(
                                     div()
-                                        .rounded_sm()
+                                        .rounded(radius_sm())
                                         .border_1()
                                         .border_color(rgb(palette.danger))
                                         .bg(rgb(0x1f0b0b))
@@ -526,7 +526,7 @@ impl NyaTermApp {
                             .child(description_input)
                             .child(
                                 div()
-                                    .rounded_sm()
+                                    .rounded(radius_sm())
                                     .border_1()
                                     .border_color(rgb(palette.border))
                                     .bg(rgb(palette.input))
@@ -805,7 +805,7 @@ fn quick_command_icon_option(
             "quick-command-icon-option-{icon_tag}"
         )))
         .size(px(24.))
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(if selected {
             rgb(palette.text)

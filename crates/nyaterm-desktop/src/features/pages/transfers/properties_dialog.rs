@@ -3,7 +3,7 @@ use rust_i18n::t;
 use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px, rgb};
 use nyaterm_core::truncate_preview;
 use nyaterm_transport::{SftpFileProperties, SftpFileType};
-use nyaterm_ui::{NyaCheckbox, NyaScrollable};
+use nyaterm_ui::{NyaCheckbox, NyaScrollable, radius_sm};
 
 use crate::features::{NyaTermApp, text_inputs::TextInputSetup, transfers::format_file_size};
 use crate::models::{TransferPermissionTarget, TransferPropertiesState};
@@ -169,7 +169,7 @@ impl NyaTermApp {
                 this.child(
                     div()
                         .mt_3()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .bg(rgb(0x351216))
                         .px_3()
                         .py_2()

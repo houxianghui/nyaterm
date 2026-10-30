@@ -12,7 +12,7 @@ use nyaterm_core::{
 };
 use nyaterm_ui::{
     NyaContextMenu, NyaHorizontalScrollbar, NyaIconButton, NyaScrollable, NyaSearchInput,
-    NyaSelect, NyaUniformListScrollbar,
+    NyaSelect, NyaUniformListScrollbar, radius_md, radius_sm,
 };
 use rust_i18n::t;
 
@@ -175,7 +175,7 @@ fn asset_action_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgb(border))
         .child(
@@ -319,7 +319,7 @@ impl NyaTermApp {
                             .items_center()
                             .gap_1()
                             .p(px(2.))
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .bg(self.shell_surface_color(palette.surface))
@@ -353,7 +353,7 @@ impl NyaTermApp {
             )))
             .h(px(26.))
             .px_3()
-            .rounded_sm()
+            .rounded(radius_sm())
             .flex()
             .items_center()
             .justify_center()
@@ -580,7 +580,7 @@ impl NyaTermApp {
             .id(SharedString::from(format!("asset-view-{id}")))
             .h(px(28.))
             .px_2()
-            .rounded_md()
+            .rounded(radius_md())
             .cursor_pointer()
             .flex()
             .items_center()
@@ -1106,7 +1106,7 @@ impl NyaTermApp {
             .w_full()
             .min_w_0()
             .h(px(190.))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.surface))
@@ -1123,7 +1123,7 @@ impl NyaTermApp {
                             div()
                                 .size(px(30.))
                                 .flex_none()
-                                .rounded_sm()
+                                .rounded(radius_sm())
                                 .border_1()
                                 .border_color(rgb(palette.border))
                                 .bg(self.shell_surface_color(palette.hover))

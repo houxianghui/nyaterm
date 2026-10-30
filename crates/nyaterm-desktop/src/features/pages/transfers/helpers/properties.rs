@@ -3,6 +3,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, rgb,
 };
 use nyaterm_transport::SftpFileEntry;
+use nyaterm_ui::radius_sm;
 
 use crate::models::TransferPropertiesState;
 use crate::theme::ThemePalette;
@@ -34,7 +35,7 @@ pub(in crate::features::pages::transfers) fn symlink_input_row(
                 .min_w_0()
                 // The box draws its own border; a bad name reddens it from here.
                 .when(invalid, |this| {
-                    this.rounded_sm()
+                    this.rounded(radius_sm())
                         .border_1()
                         .border_color(rgb(palette.danger))
                 })

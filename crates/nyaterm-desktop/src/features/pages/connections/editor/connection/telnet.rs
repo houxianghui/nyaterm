@@ -10,6 +10,7 @@ use gpui::{
 use crate::features::{NyaTermApp, connections::ConnectionEditorToggle};
 use crate::models::{ConnectionEditorField, ConnectionEditorSelect};
 use nyaterm_ui::NyaSwitch;
+use nyaterm_ui::radius_md;
 
 use super::super::super::list::{
     ConnectionEditorRenderContext, connection_editor_select, editor_field, editor_stepper_field,
@@ -30,7 +31,7 @@ fn telnet_switch_row(
     let label: SharedString = label.into();
     let description: SharedString = description.into();
     div()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.bg))
@@ -165,7 +166,7 @@ fn telnet_terminal(
         .gap_3()
         .child(
             div()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgb(palette.bg))
@@ -208,7 +209,7 @@ fn telnet_terminal(
         )
         .child(
             div()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgb(palette.bg))
@@ -243,7 +244,7 @@ fn telnet_compatibility(
     } = section;
     div().flex().flex_col().gap_3().child(
         div()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.bg))

@@ -2,7 +2,7 @@ use gpui::{
     Context, IntoElement, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb,
 };
 use nyaterm_core::models::window_material::WindowMaterial;
-use nyaterm_ui::{NyaSelectOption, NyaSlider};
+use nyaterm_ui::{NyaSelectOption, NyaSlider, radius_sm};
 use rust_i18n::t;
 
 use crate::features::pages::settings::panel::SettingsPanel;
@@ -167,7 +167,7 @@ impl SettingsPanel {
                     .child(
                         div()
                             .flex_none()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .bg(rgb(palette.input))

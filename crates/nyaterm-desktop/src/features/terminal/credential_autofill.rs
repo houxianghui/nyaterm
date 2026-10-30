@@ -3,6 +3,7 @@ use rust_i18n::t;
 use futures::StreamExt as _;
 
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::radius_lg;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{
@@ -1021,7 +1022,7 @@ impl NyaTermApp {
             .h(px(placement.height))
             .flex()
             .flex_col()
-            .rounded_lg()
+            .rounded(radius_lg())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgba((palette.surface << 8) | 0xf2))

@@ -6,7 +6,7 @@ use gpui::{
     Context, FontWeight, IntoElement, KeyDownEvent, SharedString, div, prelude::*, px, rgb, rgba,
 };
 use nyaterm_core::truncate_preview;
-use nyaterm_ui::{NyaScrollable, NyaSearchInput};
+use nyaterm_ui::{NyaScrollable, NyaSearchInput, radius_md, radius_sm};
 
 use crate::features::formatting::session_kind_label;
 use crate::features::view_widgets::{dialog_action_button, full_window_input_layer};
@@ -68,7 +68,7 @@ impl NyaTermApp {
         if self.sync_input.groups().is_empty() {
             group_list = group_list.child(
                 div()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))
@@ -84,7 +84,7 @@ impl NyaTermApp {
             group_list = group_list.child(
                 div()
                     .id(SharedString::from(format!("sync-group-{}", group.id)))
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(if selected {
                         rgb(0x3b82f6)
@@ -179,7 +179,7 @@ impl NyaTermApp {
         if sessions.is_empty() {
             session_rows = session_rows.child(
                 div()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.input))
@@ -202,7 +202,7 @@ impl NyaTermApp {
             session_rows = session_rows.child(
                 div()
                     .id(SharedString::from(format!("sync-session-{session_id}")))
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(if in_group {
@@ -389,7 +389,7 @@ impl NyaTermApp {
                     .w(px(dialog_width))
                     .max_w_full()
                     .mx_4()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.bg))
@@ -507,7 +507,7 @@ impl NyaTermApp {
                                                     .px(px(ORDINARY_INPUT_SHELL_PADDING_X_PX))
                                                     .flex()
                                                     .items_center()
-                                                    .rounded_sm()
+                                                    .rounded(radius_sm())
                                                     .border_1()
                                                     .border_color(
                                                         ordinary_input_shell_border_color(
@@ -659,7 +659,7 @@ impl NyaTermApp {
                                 .w(px(384.))
                                 .max_w_full()
                                 .mx_4()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgb(palette.border))
                                 .bg(rgb(palette.surface_elevated))

@@ -13,7 +13,7 @@ use crate::features::text_inputs::number_input_box_from_state;
 use crate::models::RemoteProcessSortKey;
 use crate::widgets::empty_panel_with_icon;
 use gpui::Entity;
-use nyaterm_ui::{NyaInputState, NyaNumberInputState, NyaScrollable, NyaSearchInput};
+use nyaterm_ui::{NyaInputState, NyaNumberInputState, NyaScrollable, NyaSearchInput, radius_md};
 
 use super::process::{
     ProcessDetailLabels, ProcessDisplayMode, ProcessTableLabels, ProcessTableRowActions,
@@ -262,7 +262,7 @@ pub(in crate::features::pages::remote) fn processes_panel(
                     div()
                         .h(px(32.))
                         .px_2()
-                        .rounded_md()
+                        .rounded(radius_md())
                         .border_1()
                         .border_color(rgba((palette.link << 8) | 0x4d))
                         .bg(rgba((palette.link << 8) | 0x1a))
@@ -282,7 +282,7 @@ pub(in crate::features::pages::remote) fn processes_panel(
                 .flex_1()
                 .min_h_0()
                 .overflow_hidden()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .flex()

@@ -1,4 +1,5 @@
 use gpui::{Context, IntoElement, MouseButton, SharedString, div, prelude::*, px, rgb};
+use nyaterm_ui::radius_md;
 
 use super::super::super::panels::RemoteMonitorPanel;
 use crate::models::{DockerConfirmAction, DockerConfirmState};
@@ -32,7 +33,7 @@ pub(super) fn docker_compose_project_action_menu(
             "docker-compose-project-menu-{short}"
         )))
         .w(px(140.))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(menu_bg)
@@ -136,7 +137,7 @@ pub(super) fn docker_compose_service_action_menu(
             "docker-compose-service-menu-{short}"
         )))
         .w(px(140.))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(menu_bg)

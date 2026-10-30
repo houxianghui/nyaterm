@@ -18,6 +18,7 @@ use crate::models::{
 };
 use crate::theme::ThemePalette;
 use nyaterm_ui::NyaTooltip;
+use nyaterm_ui::radius_md;
 
 const EXCLUSIVE_PANEL_IDS: &[&str] = &["aiAssistant"];
 const NON_PANEL_IDS: &[&str] = &["settings", "lock", "quickCmdBar", "serialSend"];
@@ -1063,7 +1064,7 @@ impl NyaTermApp {
                                             .top(px(30.))
                                             .right_0()
                                             .w(px(160.))
-                                            .rounded_md()
+                                            .rounded(radius_md())
                                             .border_1()
                                             .border_color(rgb(palette.border))
                                             .bg(self.shell_surface_color(palette.surface))
@@ -1252,7 +1253,7 @@ fn header_svg_icon_button_with_color(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(rgb(if enabled {
             icon_color.unwrap_or(palette.text_muted)
         } else {

@@ -1,3 +1,4 @@
+use nyaterm_ui::{radius_md, radius_sm};
 use rust_i18n::t;
 
 use gpui::{
@@ -295,7 +296,7 @@ pub(in crate::features::panels) fn import_source_card(
         .id(id)
         .min_h(px(128.))
         .min_w_0()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .p_3()
@@ -350,7 +351,7 @@ pub(in crate::features::panels) fn import_docs_link(
         .flex()
         .items_center()
         .gap_1()
-        .rounded_sm()
+        .rounded(radius_sm())
         .text_size(px(11.))
         .text_color(rgb(palette.link))
         .cursor_pointer()

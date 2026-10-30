@@ -3,7 +3,7 @@ use rust_i18n::t;
 use gpui::{
     Context, FontWeight, IntoElement, KeyDownEvent, SharedString, div, prelude::*, px, rgb, rgba,
 };
-use nyaterm_ui::{NyaScrollable, NyaSelectOption};
+use nyaterm_ui::{NyaScrollable, NyaSelectOption, radius_md, radius_sm};
 
 use crate::features::view_widgets::dialog_action_button;
 use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
@@ -123,7 +123,7 @@ impl NyaTermApp {
                     .id(SharedString::from("quick-command-variable-dialog"))
                     .w(px((self.shell.viewport_size().0 - 32.).clamp(280., 400.)))
                     .max_w_full()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.bg))
@@ -153,7 +153,7 @@ impl NyaTermApp {
                             .child(
                                 div()
                                     .mt_4()
-                                    .rounded_sm()
+                                    .rounded(radius_sm())
                                     .bg(rgb(palette.input))
                                     .p_2()
                                     .child(

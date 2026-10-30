@@ -17,7 +17,9 @@ use gpui::{
     Window, div, prelude::*, px, rgb, rgba, svg,
 };
 use nyaterm_core::WorkspaceId;
-use nyaterm_ui::{NyaPopover, NyaPopoverAlign, NyaPopoverPlacement, NyaScrollable};
+use nyaterm_ui::{
+    NyaPopover, NyaPopoverAlign, NyaPopoverPlacement, NyaScrollable, radius_md, radius_sm,
+};
 
 use super::super::TAB_PRESET_COLORS;
 
@@ -403,7 +405,7 @@ impl NyaTermApp {
             div()
                 .id(SharedString::from("tab-actions-submenu"))
                 .w(px(submenu_width))
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(self.shell_surface_color(palette.surface))
@@ -463,7 +465,7 @@ impl NyaTermApp {
                     .left(px(menu_x))
                     .top(px(menu_y))
                     .w(px(TAB_ACTIONS_MENU_WIDTH))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.surface))
@@ -974,7 +976,7 @@ where
         .flex()
         .items_center()
         .gap_2()
-        .rounded_sm()
+        .rounded(radius_sm())
         .text_size(px(12.))
         .text_color(text_color)
         .opacity(if enabled { 1. } else { 0.5 })

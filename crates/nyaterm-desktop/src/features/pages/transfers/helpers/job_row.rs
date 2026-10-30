@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use nyaterm_core::truncate_preview;
 use nyaterm_ui::NyaTooltip;
+use nyaterm_ui::radius_sm;
 
 use crate::features::formatting::format_rate;
 use crate::features::shell::gpui_code_font_family;
@@ -66,7 +67,7 @@ pub(in crate::features::pages::transfers) fn transfer_job_row(
         .debug_selector(|| format!("transfer-job-row-{}", job.id))
         .w_full()
         .min_w_0()
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(if job_selected {
             rgb(palette.hover)
         } else {

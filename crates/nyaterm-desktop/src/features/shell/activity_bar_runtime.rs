@@ -3,6 +3,7 @@ use gpui::{
     rgb, rgba,
 };
 use nyaterm_core::truncate_preview;
+use nyaterm_ui::radius_sm;
 use rust_i18n::t;
 
 use crate::features::{NyaTermApp, runtime_jobs::ActivitySide, view_widgets::mono_icon};
@@ -46,7 +47,7 @@ impl Render for ActivityBarDragPreview {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .border_1()
                     .border_color(rgb(0x334155))
                     .bg(rgba(0x151b24dd))

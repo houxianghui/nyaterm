@@ -11,6 +11,7 @@ use nyaterm_ui::{
     NyaConfirmDialog, NyaDialogFooter, NyaDialogWindowExt as _, NyaDocumentEditor,
     NyaDocumentEditorEvent, NyaDocumentEditorState, NyaDropdownMenu, NyaInput, NyaInputEvent,
     NyaInputShell, NyaInputState, NyaMenuItem, NyaScrollable as _, NyaWindowHandle, nya_root,
+    radius_sm,
 };
 use rust_i18n::t;
 
@@ -676,7 +677,7 @@ impl NoteEditorWindow {
                     .h(px(26.))
                     .flex()
                     .items_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .cursor_pointer()
                     .hover(move |this| this.bg(rgb(palette.hover)))
                     .on_click(move |_, window, cx| {
@@ -691,7 +692,7 @@ impl NoteEditorWindow {
                     .h(px(26.))
                     .flex()
                     .items_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .cursor_pointer()
                     .hover(move |this| this.bg(rgb(palette.hover)))
                     .on_click(move |_, window, cx| {
@@ -721,7 +722,7 @@ impl NoteEditorWindow {
                     .h(px(26.))
                     .flex()
                     .items_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .cursor_pointer()
                     .hover(move |this| this.bg(rgb(palette.hover)))
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -737,7 +738,7 @@ impl NoteEditorWindow {
                 .h(px(26.))
                 .flex()
                 .items_center()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .cursor_pointer()
                 .hover(move |this| this.bg(rgb(palette.hover)))
                 .on_click(cx.listener(|this, _, window, cx| this.open_link_dialog(window, cx)))
@@ -779,7 +780,7 @@ impl NoteEditorWindow {
                     .h(px(26.))
                     .flex()
                     .items_center()
-                    .rounded_sm()
+                    .rounded(radius_sm())
                     .cursor_pointer()
                     .bg(if self.mode == mode {
                         rgb(palette.surface_elevated)
@@ -877,7 +878,7 @@ fn action_button(
         .id(id)
         .px_2()
         .py_1()
-        .rounded_sm()
+        .rounded(radius_sm())
         .cursor_pointer()
         .bg(rgb(palette.surface))
         .hover(move |this| this.bg(rgb(palette.hover)))

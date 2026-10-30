@@ -1,6 +1,7 @@
 use gpui::{FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb, svg};
 use nyaterm_transport::SessionKind;
 use nyaterm_ui::NyaNumberInputOptions;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 
@@ -70,7 +71,7 @@ pub(super) fn security_type_chip(
         .px_2()
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .text_size(px(10.))
         .font_weight(FontWeight(700.))
         .when(!disabled, |this| this.cursor_pointer())
@@ -119,7 +120,7 @@ pub(super) fn session_action_svg_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_md()
+        .rounded(radius_md())
         .text_color(rgb(icon_color))
         .when(enabled, |this| {
             this.cursor_pointer().hover(|this| {

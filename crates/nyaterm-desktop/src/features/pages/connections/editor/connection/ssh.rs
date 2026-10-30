@@ -13,7 +13,9 @@ use gpui::{
 
 use nyaterm_core::truncate_preview;
 use nyaterm_transport::{SshAlgorithmOption, SshAlgorithmRisk};
-use nyaterm_ui::{NyaCheckbox, NyaScrollable, NyaSelect, NyaTabItem, NyaTabs, NyaTooltip};
+use nyaterm_ui::{
+    NyaCheckbox, NyaScrollable, NyaSelect, NyaTabItem, NyaTabs, NyaTooltip, radius_md, radius_sm,
+};
 
 use crate::features::{NyaTermApp, connections::ConnectionEditorToggle};
 use crate::models::{
@@ -48,7 +50,7 @@ fn ssh_advanced_content(
     let title: SharedString = title.into();
     let description = description.into();
     div()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.bg))
@@ -90,7 +92,7 @@ fn ssh_algorithm_move_button(
         .id(SharedString::from(id))
         .size(px(24.))
         .flex_none()
-        .rounded_sm()
+        .rounded(radius_sm())
         .flex()
         .items_center()
         .justify_center()
@@ -261,7 +263,7 @@ pub(super) fn ssh_algorithm_list(
     div()
         .w_full()
         .flex_none()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.bg))
@@ -405,7 +407,7 @@ fn ssh_authentication(
                 div()
                     .px_3()
                     .py_2()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .bg(rgba((palette.accent << 8) | 0x18))
                     .text_size(px(10.))
                     .text_color(rgb(palette.text_muted))
@@ -423,7 +425,7 @@ fn ssh_authentication(
                     .gap_2()
                     .px_3()
                     .py_3()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .child(
@@ -675,7 +677,7 @@ fn ssh_forwarding(
                                         .gap_1()
                                         .border_1()
                                         .border_color(rgb(palette.border))
-                                        .rounded_md()
+                                        .rounded(radius_md())
                                         .p_2()
                                         .on_click(select_endpoint)
                                         .child(
@@ -790,7 +792,7 @@ fn ssh_forwarding(
                                 .id("connection-agent-choose-identity")
                                 .h(px(32.))
                                 .px_3()
-                                .rounded_sm()
+                                .rounded(radius_sm())
                                 .border_1()
                                 .border_color(rgb(palette.border))
                                 .bg(rgb(palette.input))
@@ -820,7 +822,7 @@ fn ssh_forwarding(
                             }
                             this.child(
                                 div()
-                                    .rounded_md()
+                                    .rounded(radius_md())
                                     .border_1()
                                     .border_color(rgb(palette.border))
                                     .bg(rgb(palette.bg))
@@ -914,7 +916,7 @@ fn ssh_forwarding(
                                             .when(external_agent, |this| {
                                                 this.child(
                                                     div()
-                                                        .rounded_sm()
+                                                        .rounded(radius_sm())
                                                         .border_1()
                                                         .border_color(rgb(palette.border))
                                                         .bg(rgb(palette.surface))
@@ -941,7 +943,7 @@ fn ssh_forwarding(
                                                                         .id("connection-agent-add-endpoint")
                                                                         .px_2()
                                                                         .py_1()
-                                                                        .rounded_sm()
+                                                                        .rounded(radius_sm())
                                                                         .border_1()
                                                                         .border_color(rgb(palette.border))
                                                                         .text_xs()
@@ -955,7 +957,7 @@ fn ssh_forwarding(
                                                         .when(endpoints.is_empty(), |this| {
                                                             this.child(
                                                                 div()
-                                                                    .rounded_sm()
+                                                                    .rounded(radius_sm())
                                                                     .border_1()
                                                                     .border_color(rgb(palette.border))
                                                                     .px_2()
@@ -1206,7 +1208,7 @@ fn ssh_terminal(
                     |this| {
                         this.child(
                             div()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgb(palette.warning))
                                 .bg(rgba((palette.warning << 8) | 0x18))

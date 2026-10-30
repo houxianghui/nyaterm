@@ -3,6 +3,7 @@ use rust_i18n::t;
 use gpui::{Context, IntoElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 use nyaterm_core::truncate_preview;
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::{radius_lg, radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 
@@ -112,7 +113,7 @@ impl NyaTermApp {
                     .top(px(menu_y))
                     .left(px(menu_x))
                     .w(px(260.))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.surface))
@@ -156,7 +157,7 @@ impl NyaTermApp {
             .left(px(x.max(8.0)))
             .top(px(y.max(8.0)))
             .max_w(px(340.))
-            .rounded_lg()
+            .rounded(radius_lg())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.surface_elevated))
@@ -179,7 +180,7 @@ impl NyaTermApp {
                             .gap_1()
                             .px_1()
                             .py(px(1.))
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(kind_color))
                             .text_size(px(10.))
@@ -218,7 +219,7 @@ impl NyaTermApp {
                                     .child(
                                         div()
                                             .px_1()
-                                            .rounded_sm()
+                                            .rounded(radius_sm())
                                             .border_1()
                                             .border_color(rgb(palette.border))
                                             .bg(rgb(palette.input))

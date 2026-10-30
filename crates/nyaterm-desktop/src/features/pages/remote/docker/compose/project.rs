@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_md;
 use std::collections::{HashMap, HashSet};
 
 use gpui::{Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb, svg};
@@ -121,7 +122,7 @@ fn docker_compose_project_row(
         .id(SharedString::from(format!(
             "docker-compose-project-{project_key}"
         )))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.section_header))
@@ -149,7 +150,7 @@ fn docker_compose_project_row(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_md()
+                        .rounded(radius_md())
                         .text_color(rgb(palette.text_muted))
                         .cursor_pointer()
                         .hover(|this| {

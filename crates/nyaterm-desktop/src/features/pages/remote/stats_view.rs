@@ -23,7 +23,7 @@ use crate::features::remote::{
 use crate::features::{shell::gpui_code_font_family, view_widgets::stats_progress_bar};
 use gpui::Entity;
 use nyaterm_ui::plot::NyaRingGauge;
-use nyaterm_ui::{NyaInputState, NyaSearchInput, NyaSelectState};
+use nyaterm_ui::{NyaInputState, NyaSearchInput, NyaSelectState, radius_md};
 
 use super::process::usage_color;
 
@@ -695,7 +695,7 @@ fn accelerator_summary_grid(
     for (label, value) in items {
         grid = grid.child(
             div()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgba((palette.surface_elevated << 8) | 0x33))
@@ -954,7 +954,7 @@ fn accelerator_device_card(
     let accent = accelerator_accent_color(palette, severity_percent);
     div()
         .id(SharedString::from(format!("{id_prefix}-{key}")))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(accent))
         .bg(rgba((palette.surface_elevated << 8) | 0x33))
@@ -975,7 +975,7 @@ fn accelerator_badge(
 ) -> gpui::Div {
     div()
         .flex_none()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(if primary {
             rgba((palette.link << 8) | 0x66)
@@ -1046,7 +1046,7 @@ fn accelerator_metric_bar(
             div()
                 .h(px(6.))
                 .w_full()
-                .rounded_md()
+                .rounded(radius_md())
                 .bg(rgb(palette.input))
                 .overflow_hidden()
                 .child(
@@ -1144,7 +1144,7 @@ fn accelerator_detail_grid(
     for (label, value) in items {
         grid = grid.child(
             div()
-                .rounded_md()
+                .rounded(radius_md())
                 .bg(rgba((palette.input << 8) | 0x66))
                 .px_2()
                 .py_1()
@@ -1202,7 +1202,7 @@ fn accelerator_process_section(
     if total_processes == 0 {
         list_rows = list_rows.child(
             div()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .p_4()
@@ -1290,7 +1290,7 @@ fn accelerator_process_row(
         .child(
             div()
                 .size_full()
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(rgba((palette.surface_elevated << 8) | 0x33))
@@ -1583,7 +1583,7 @@ fn resource_section_card_with_action(
     child: impl IntoElement,
 ) -> gpui::Div {
     div()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.bg))
@@ -1681,7 +1681,7 @@ fn resource_load_badge(
 ) -> gpui::Div {
     div()
         .min_w_0()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.input))

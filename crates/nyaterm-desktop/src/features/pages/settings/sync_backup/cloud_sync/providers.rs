@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_md;
 use rust_i18n::t;
 
 use gpui::{AnyElement, Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb};
@@ -417,7 +418,7 @@ impl SettingsPanel {
             .when_some(user_code, |this, code| {
                 this.child(
                     div()
-                        .rounded_md()
+                        .rounded(radius_md())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .bg(rgb(palette.input))
@@ -479,7 +480,7 @@ impl SettingsPanel {
                     this.child(
                         div()
                             .min_w_0()
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .bg(rgb(palette.surface))

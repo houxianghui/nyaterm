@@ -23,7 +23,10 @@ use gpui::{
     SharedString, Subscription, UniformListScrollHandle, Window, div, img, prelude::*, px, rgb,
     svg, uniform_list,
 };
-use nyaterm_ui::{NyaScrollable, NyaTooltip, NyaWindowHandle, activate_child_window, nya_root};
+use nyaterm_ui::{
+    NyaScrollable, NyaTooltip, NyaWindowHandle, activate_child_window, nya_root, radius_md,
+    radius_sm,
+};
 
 use crate::features::transfers::RemoteTextEditor;
 use crate::features::view_widgets::markdown_content_view;
@@ -227,7 +230,7 @@ impl RemoteFilePreviewWindow {
                     .gap_1()
                     .px_2()
                     .py_1()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .cursor_pointer()
                     .bg(if is_active {
                         rgb(palette.surface_elevated)
@@ -253,7 +256,7 @@ impl RemoteFilePreviewWindow {
                         div()
                             .id(SharedString::from(format!("preview-tab-close-{id}")))
                             .px_1()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .cursor_pointer()
                             .text_color(rgb(palette.text_dimmed))
                             .hover(|this| this.text_color(rgb(palette.text)))
@@ -302,7 +305,7 @@ impl RemoteFilePreviewWindow {
             .flex_none()
             .px_2()
             .py_1()
-            .rounded_md()
+            .rounded(radius_md())
             .cursor_pointer()
             .bg(rgb(palette.surface))
             .text_color(rgb(palette.text_muted))
@@ -579,7 +582,7 @@ impl RemoteFilePreviewWindow {
             .flex()
             .items_center()
             .justify_center()
-            .rounded_md()
+            .rounded(radius_md())
             .cursor_pointer()
             .bg(rgb(palette.surface))
             .text_color(rgb(palette.text))
@@ -843,7 +846,7 @@ fn session_badge_element(palette: ThemePalette, session: &str) -> gpui::AnyEleme
         .flex_none()
         .px_1p5()
         .py_0p5()
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(rgb(palette.surface_elevated))
         .text_color(rgb(palette.text))
         .max_w(px(180.))

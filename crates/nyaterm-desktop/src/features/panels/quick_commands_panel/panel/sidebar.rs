@@ -1,7 +1,7 @@
 use rust_i18n::t;
 
 use gpui::{AppContext as _, Context, FontWeight, SharedString, div, prelude::*, px, rgb, rgba};
-use nyaterm_ui::{NyaContextMenu, NyaMenuItem, NyaScrollable};
+use nyaterm_ui::{NyaContextMenu, NyaMenuItem, NyaScrollable, radius_md, radius_sm};
 
 use super::super::super::QuickCommandCategoryOption;
 use crate::features::{
@@ -95,7 +95,7 @@ impl NyaTermApp {
                 .items_center()
                 .gap_2()
                 .pl(px(8. + depth as f32 * 12.))
-                .rounded_md()
+                .rounded(radius_md())
                 .bg(if selected {
                     rgb(palette.hover)
                 } else {
@@ -157,7 +157,7 @@ impl NyaTermApp {
                 .child(
                     div()
                         .flex_none()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .px(px(6.))
                         .py(px(2.))
                         .bg(if selected {

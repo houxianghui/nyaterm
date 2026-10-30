@@ -5,7 +5,7 @@ use gpui::{
     rgb,
 };
 use nyaterm_transport::RemoteDockerOverview;
-use nyaterm_ui::{NyaTabItem, NyaTabs};
+use nyaterm_ui::{NyaTabItem, NyaTabs, radius_md, radius_sm};
 
 use super::super::panels::RemoteMonitorPanel;
 use crate::features::shell::gpui_code_font_family;
@@ -50,7 +50,7 @@ pub(in crate::features::pages::remote) fn docker_overview_strip(
     div()
         .h(px(30.))
         .flex_none()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.section_header))
@@ -242,7 +242,7 @@ pub(in crate::features::pages::remote) fn docker_tab_bar(
             let mut menu = div()
                 .id("docker-tab-more-menu")
                 .w(px(160.))
-                .rounded_md()
+                .rounded(radius_md())
                 .border_1()
                 .border_color(rgb(palette.border))
                 .bg(menu_bg)
@@ -288,7 +288,7 @@ fn docker_tab_button(
         .px_2()
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(if active {
             rgb(palette.surface_elevated)
         } else {

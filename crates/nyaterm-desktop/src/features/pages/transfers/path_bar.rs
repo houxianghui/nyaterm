@@ -6,7 +6,7 @@ use gpui::{
 };
 use nyaterm_core::truncate_preview;
 use nyaterm_transport::SftpFileEntry;
-use nyaterm_ui::{NyaInput, NyaScrollable};
+use nyaterm_ui::{NyaInput, NyaScrollable, radius_md, radius_sm};
 
 use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
 use crate::models::{
@@ -65,7 +65,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_path_row(
                 .px_1()
                 .flex()
                 .items_center()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .bg(rgb(palette.input))
                 .cursor_text()
                 .on_click(move |_, window, cx| {
@@ -165,7 +165,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_path_row(
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .cursor_pointer()
                             .hover(|this| this.bg(rgb(palette.surface_elevated)))
                             .tooltip(|window, cx| {
@@ -195,7 +195,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_path_row(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .text_sm()
                         .text_color(if is_current_favorite {
                             rgb(palette.link)
@@ -449,7 +449,7 @@ impl NyaTermApp {
                             .id(SharedString::from("transfer-browser-path-menu-retry"))
                             .h(px(26.))
                             .px_2()
-                            .rounded_sm()
+                            .rounded(radius_sm())
                             .flex()
                             .items_center()
                             .text_xs()
@@ -508,7 +508,7 @@ impl NyaTermApp {
                     .left(px(menu_x))
                     .w(px(280.))
                     .h(px(menu_height))
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(self.shell_surface_color(palette.bg))
@@ -698,7 +698,7 @@ fn transfer_browser_breadcrumb_row(
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .text_color(rgb(palette.text_muted))
                 .cursor_pointer()
                 .hover(|this| {
@@ -943,7 +943,7 @@ fn transfer_browser_path_menu_entries(
                 .flex()
                 .items_center()
                 .gap_2()
-                .rounded_sm()
+                .rounded(radius_sm())
                 .text_xs()
                 .text_color(rgb(palette.text))
                 .cursor_pointer()

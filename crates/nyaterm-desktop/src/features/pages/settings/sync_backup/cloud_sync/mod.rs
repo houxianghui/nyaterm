@@ -6,6 +6,7 @@ use gpui::{
 };
 use nyaterm_core::{CloudConflictKind, CloudSyncSettings};
 use nyaterm_ui::NyaSelectOption;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use crate::features::sync::CloudSyncLiveState;
 use crate::features::{
@@ -120,7 +121,7 @@ impl SettingsPanel {
         });
 
         div()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgba((palette.warning << 8) | 0x4d))
             .bg(rgba((palette.warning << 8) | 0x1a))
@@ -447,7 +448,7 @@ impl SettingsPanel {
                     .when(!form_enabled, |this| {
                         this.child(
                             div()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgb(palette.warning))
                                 .bg(rgba((palette.warning << 8) | 0x14))
@@ -478,7 +479,7 @@ impl SettingsPanel {
                     .when_some(validation_message, |this, message| {
                         this.child(
                             div()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgb(palette.warning))
                                 .bg(rgba((palette.warning << 8) | 0x14))
@@ -589,7 +590,7 @@ impl SettingsPanel {
                     .when_some(action_block_message, |this, message| {
                         this.child(
                             div()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgb(palette.warning))
                                 .bg(rgba((palette.warning << 8) | 0x14))
@@ -635,7 +636,7 @@ impl SettingsPanel {
                         this.child(
                             div()
                                 .min_w_0()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgb(palette.border))
                                 .bg(rgb(palette.surface_elevated))
@@ -706,7 +707,7 @@ impl SettingsPanel {
                         .into_any_element()
                 } else {
                     div()
-                        .rounded_md()
+                        .rounded(radius_md())
                         .border_1()
                         .border_color(rgb(palette.border))
                         .px_4()
@@ -729,7 +730,7 @@ fn cloud_sync_conflict_stat(
     let label: SharedString = label.into();
     div()
         .min_w_0()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.input))
@@ -893,7 +894,7 @@ fn cloud_sync_action_button(
         .px_3()
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.surface_elevated))
@@ -915,7 +916,7 @@ fn cloud_sync_status_item(
 ) -> impl IntoElement {
     let label: SharedString = label.into();
     div()
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.input))

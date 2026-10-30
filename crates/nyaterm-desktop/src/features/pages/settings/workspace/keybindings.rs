@@ -1,7 +1,7 @@
 use rust_i18n::t;
 
 use gpui::{Context, FontWeight, IntoElement, KeyDownEvent, div, prelude::*, px, rgb};
-use nyaterm_ui::{NyaKbd, NyaSearchInput};
+use nyaterm_ui::{NyaKbd, NyaSearchInput, radius_md};
 
 use crate::features::pages::settings::panel::SettingsPanel;
 use crate::shortcuts::{
@@ -242,7 +242,7 @@ impl SettingsPanel {
         let reset_shortcut_id = shortcut.id.as_str().to_string();
 
         div()
-            .rounded_md()
+            .rounded(radius_md())
             .px_2()
             .py_1()
             .border_1()

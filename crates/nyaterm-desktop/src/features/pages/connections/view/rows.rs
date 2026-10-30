@@ -10,7 +10,10 @@ use gpui::{
     px, relative, rgb, rgba, svg,
 };
 use nyaterm_core::SavedConnection;
-use nyaterm_ui::{NyaHoverCard, NyaIconButton, NyaInput, NyaPopoverAlign, NyaPopoverPlacement};
+use nyaterm_ui::{
+    NyaHoverCard, NyaIconButton, NyaInput, NyaPopoverAlign, NyaPopoverPlacement, radius_md,
+    radius_sm,
+};
 use rust_i18n::t;
 
 use crate::features::{
@@ -142,7 +145,7 @@ impl RenderOnce for ConnectionDetailsHoverCard {
             .id(SharedString::from(content_selector.clone()))
             .debug_selector(move || content_selector.clone())
             .w(px(220.))
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(self.palette.border))
             .bg(rgb(self.palette.surface_elevated))
@@ -192,7 +195,7 @@ pub(in crate::features::pages::connections) fn connection_section(
         .gap(px(6.))
         .px_2()
         .pl(px(8. + section.depth as f32 * 16.))
-        .rounded_sm()
+        .rounded(radius_sm())
         .cursor_pointer()
         .bg({
             let drop_inside = snapshot.drop_position_for_kind_target(
@@ -416,7 +419,7 @@ pub(in crate::features::pages::connections) fn connection_inline_group_editor_ro
         .gap(px(6.))
         .px_2()
         .pl(px(connection_tree_indent_px(depth)))
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(rgb(palette.hover))
         .on_mouse_down(
             MouseButton::Left,
@@ -468,7 +471,7 @@ fn connection_group_editor_input_box(
         .px(px(ORDINARY_INPUT_SHELL_PADDING_X_PX))
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .border_1()
         .border_color(if has_error {
             rgb(palette.danger)

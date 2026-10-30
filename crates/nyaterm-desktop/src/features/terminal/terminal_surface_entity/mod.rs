@@ -3,6 +3,7 @@ use gpui::{
     ScrollWheelEvent, SharedString, WeakEntity, Window, div, font, prelude::*, px, rgb, rgba,
 };
 use nyaterm_terminal::{TerminalLineId, TerminalScreen, TerminalSnapshot};
+use nyaterm_ui::radius_md;
 
 use crate::features::NyaTermApp;
 use crate::features::formatting::{
@@ -3012,7 +3013,7 @@ impl Render for TerminalSurface {
                                 .top_2()
                                 .px_2()
                                 .py_1()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .bg(rgb(palette.surface_elevated))
                                 .border_1()
                                 .border_color(rgb(palette.border))

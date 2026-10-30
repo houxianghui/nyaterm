@@ -5,7 +5,7 @@ use gpui::{
     rgb, svg,
 };
 use nyaterm_core::ai::AiCommandCard;
-use nyaterm_ui::{NyaButton, NyaButtonVariant};
+use nyaterm_ui::{NyaButton, NyaButtonVariant, radius_md, radius_sm};
 
 use crate::features::formatting::compact_id;
 use crate::theme::ThemePalette;
@@ -97,7 +97,7 @@ pub(super) fn ai_message_menu_button(
         .flex()
         .items_center()
         .gap_2()
-        .rounded_sm()
+        .rounded(radius_sm())
         .text_size(px(12.))
         .text_color(rgb(palette.text))
         .cursor_pointer()
@@ -122,7 +122,7 @@ pub(super) fn ai_setup_step(
     div()
         .w_full()
         .max_w(px(280.))
-        .rounded_md()
+        .rounded(radius_md())
         .border_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.bg))

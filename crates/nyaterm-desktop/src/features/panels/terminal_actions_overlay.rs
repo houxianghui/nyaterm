@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_md;
 use rust_i18n::t;
 
 use std::borrow::Cow;
@@ -79,7 +80,7 @@ impl NyaTermApp {
                     .max_h(px((viewport_h - 24.).max(260.)))
                     .max_w_full()
                     .mx_4()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(0x0b0f16))

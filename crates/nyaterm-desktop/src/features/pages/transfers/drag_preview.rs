@@ -1,4 +1,5 @@
 use gpui::{Context, IntoElement, Pixels, Point, Render, Window, div, prelude::*, px, rgb};
+use nyaterm_ui::radius_md;
 
 use crate::theme::ThemePalette;
 
@@ -22,7 +23,7 @@ impl Render for TransferDragPreview {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .rounded_md()
+                    .rounded(radius_md())
                     .border_1()
                     .border_color(rgb(self.palette.primary))
                     .bg(rgb(self.palette.surface_elevated))

@@ -16,7 +16,7 @@ use nyaterm_core::{
 use nyaterm_ui::{
     NYA_FORM_CONTROL_HEIGHT_PX, NyaInputShell, NyaNumberInputState, NyaSelect, NyaSelectOption,
     NyaSelectState, NyaSettingsLayout, NyaSettingsNavGroup, NyaSettingsNavItem, NyaSliderState,
-    NyaSliderValue,
+    NyaSliderValue, radius_md,
 };
 
 use crate::features::selects::SelectRegistry;
@@ -1161,7 +1161,7 @@ impl Render for SettingsPanel {
                                 .px_2()
                                 .flex()
                                 .items_center()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .text_size(px(11.))
                                 .text_color(rgb(palette.text_muted))
                                 .cursor_pointer()
@@ -1370,7 +1370,7 @@ impl SettingsPanel {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .text_size(px(11.))
@@ -1391,7 +1391,7 @@ impl SettingsPanel {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .text_size(px(11.))
@@ -1420,7 +1420,7 @@ impl SettingsPanel {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded_md()
+                            .rounded(radius_md())
                             .bg(if confirm_disabled {
                                 rgb(palette.surface_elevated)
                             } else {

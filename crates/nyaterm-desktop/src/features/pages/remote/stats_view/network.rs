@@ -1,6 +1,6 @@
 use gpui::{Entity, FontWeight, Hsla, IntoElement, div, prelude::*, px, rgb};
 use nyaterm_ui::plot::{NyaLinePlot, NyaLinePoint, NyaLineSeries};
-use nyaterm_ui::{NYA_FORM_CONTROL_HEIGHT_PX, NyaSelect, NyaSelectState};
+use nyaterm_ui::{NYA_FORM_CONTROL_HEIGHT_PX, NyaSelect, NyaSelectState, radius_md, radius_sm};
 use rust_i18n::t;
 
 use super::{format_resource_rate, resource_empty_value, resource_section_card_with_action};
@@ -74,7 +74,7 @@ fn network_metric(
 ) -> gpui::Div {
     div()
         .min_w_0()
-        .rounded_md()
+        .rounded(radius_md())
         .bg(rgb(palette.surface))
         .p_2()
         .flex()
@@ -120,7 +120,7 @@ fn network_history_chart(
         div()
             .h(px(84.))
             .w_full()
-            .rounded_sm()
+            .rounded(radius_sm())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.surface))

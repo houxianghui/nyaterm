@@ -2,7 +2,7 @@ use rust_i18n::t;
 
 use gpui::{Context, FontWeight, IntoElement, div, prelude::*, px, relative, rgb};
 use nyaterm_core::RuntimeMode;
-use nyaterm_ui::{NyaMarkdown, NyaScrollable};
+use nyaterm_ui::{NyaMarkdown, NyaScrollable, radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 use crate::features::update::UpdatePhase;
@@ -149,7 +149,7 @@ impl NyaTermApp {
                             .id("update-release-notes")
                             .h(px((viewport_h * 0.42).clamp(120., 320.)))
                             .overflow_y_scrollbar()
-                            .rounded_md()
+                            .rounded(radius_md())
                             .border_1()
                             .border_color(rgb(palette.border))
                             .p_3()
@@ -198,13 +198,13 @@ impl NyaTermApp {
                                 div()
                                     .h(px(8.))
                                     .w_full()
-                                    .rounded_sm()
+                                    .rounded(radius_sm())
                                     .bg(rgb(palette.hover))
                                     .child(
                                         div()
                                             .h_full()
                                             .w(relative(ratio))
-                                            .rounded_sm()
+                                            .rounded(radius_sm())
                                             .bg(rgb(palette.primary)),
                                     ),
                             )

@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_md;
 use rust_i18n::t;
 
 use gpui::{Context, FontWeight, div, prelude::*, px, rgb};
@@ -73,7 +74,7 @@ impl NyaTermApp {
         let entries = self.security.otp_entries().to_vec();
         let entry_count = entries.len();
         let mut rows = div()
-            .rounded_md()
+            .rounded(radius_md())
             .border_1()
             .border_color(rgb(palette.border))
             .overflow_hidden();
@@ -246,7 +247,7 @@ impl NyaTermApp {
                         this.child(
                             div()
                                 .mt_1()
-                                .rounded_md()
+                                .rounded(radius_md())
                                 .border_1()
                                 .border_color(rgb(palette.border))
                                 .bg(rgb(palette.input))

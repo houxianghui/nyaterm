@@ -4,7 +4,7 @@ use gpui::{
     Pixels, SharedString, StatefulInteractiveElement as _, Styled as _, div, prelude::*, px, rgb,
 };
 use nyaterm_transport::{SftpFileEntry, SftpFileType};
-use nyaterm_ui::{NyaHoverCard, NyaPopoverAlign, NyaPopoverPlacement};
+use nyaterm_ui::{NyaHoverCard, NyaPopoverAlign, NyaPopoverPlacement, radius_sm};
 
 use std::collections::HashSet;
 
@@ -42,7 +42,7 @@ pub(super) fn transfer_browser_parent_entry_row(
         .h(px(30.))
         .flex()
         .items_center()
-        .rounded_sm()
+        .rounded(radius_sm())
         .bg(gpui::rgba(0x00000000))
         .cursor_pointer()
         .hover(|this| this.bg(rgb(palette.hover)))
@@ -383,7 +383,9 @@ pub(super) fn transfer_browser_entry_row(
                             })
                             // A name that cannot be saved reddens the box.
                             .when(rename_has_error, |this| {
-                                this.rounded_sm().border_1().border_color(rgb(0x7f1d1d))
+                                this.rounded(radius_sm())
+                                    .border_1()
+                                    .border_color(rgb(0x7f1d1d))
                             })
                             // Escape and Enter belong to the row, which the box
                             // leaves unconsumed.

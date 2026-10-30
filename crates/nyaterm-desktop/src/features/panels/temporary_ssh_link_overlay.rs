@@ -5,6 +5,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, rgb,
 };
 use nyaterm_ui::NyaSelectOption;
+use nyaterm_ui::radius_sm;
 
 use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
 use crate::temporary_ssh_link::{
@@ -82,7 +83,7 @@ impl NyaTermApp {
                                 div()
                                     .h(px(32.))
                                     .w_full()
-                                    .rounded_sm()
+                                    .rounded(radius_sm())
                                     .border_1()
                                     .border_color(rgb(palette.border))
                                     .px_2()

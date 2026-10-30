@@ -7,7 +7,7 @@ use gpui::{
 };
 use nyaterm_core::ai::{AiAgentStepStatus, AiCommandCard, AiMessage, AiMessageRole, RiskLevel};
 use nyaterm_ui::chat::{NyaDisclosure, NyaShimmerText, running_indicator};
-use nyaterm_ui::{NyaButton, NyaButtonVariant};
+use nyaterm_ui::{NyaButton, NyaButtonVariant, radius_md};
 use rust_i18n::t;
 
 use crate::features::ai::is_agent_command_card;
@@ -363,7 +363,7 @@ impl AiPanel {
             .line_height(px(18.))
             .text_color(rgb(palette.text))
             .when(is_user, |body| {
-                body.rounded_md()
+                body.rounded(radius_md())
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.hover))
@@ -767,7 +767,7 @@ impl AiPanel {
             .min_w_0()
             .w_full()
             .when(!in_timeline, |block| {
-                block.rounded_md().bg(rgb(palette.surface)).p_2()
+                block.rounded(radius_md()).bg(rgb(palette.surface)).p_2()
             })
             .flex()
             .flex_col()

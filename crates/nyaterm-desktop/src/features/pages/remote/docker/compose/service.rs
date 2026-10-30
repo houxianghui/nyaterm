@@ -1,6 +1,7 @@
 use gpui::{Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb};
 use nyaterm_core::truncate_preview;
 use nyaterm_transport::DockerComposeService;
+use nyaterm_ui::radius_md;
 use rust_i18n::t;
 
 use super::super::super::panels::RemoteMonitorPanel;
@@ -194,7 +195,7 @@ fn docker_compose_service_row(
         .id(SharedString::from(row_id.clone()))
         .relative()
         .h(px(58.))
-        .rounded_md()
+        .rounded(radius_md())
         .bg(rgb(palette.bg))
         .hover(|this| this.bg(rgb(0x151b24)))
         .px_2()

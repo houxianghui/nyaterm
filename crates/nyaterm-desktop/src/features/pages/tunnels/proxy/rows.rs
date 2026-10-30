@@ -1,3 +1,4 @@
+use nyaterm_ui::radius_md;
 use rust_i18n::t;
 
 use std::borrow::Cow;
@@ -114,7 +115,7 @@ pub(in crate::features::pages::tunnels) fn proxy_move_picker(
     if current_group_id.is_none() {
         targets = targets.child(
             div()
-                .rounded_md()
+                .rounded(radius_md())
                 .px_2()
                 .py_1()
                 .text_size(px(11.))

@@ -6,6 +6,7 @@ use nyaterm_core::TranslationSettings;
 use nyaterm_store::StoreDomain;
 use nyaterm_ui::NyaDialogWindowExt as _;
 use nyaterm_ui::NyaScrollable;
+use nyaterm_ui::radius_sm;
 
 use crate::features::NyaTermApp;
 use crate::http::translation::translate_text;
@@ -202,7 +203,7 @@ impl NyaTermApp {
 
         let source_box = div()
             .id(SharedString::from("translation-dialog-source"))
-            .rounded_sm()
+            .rounded(radius_sm())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.input))
@@ -217,7 +218,7 @@ impl NyaTermApp {
 
         let mut result_box = div()
             .id(SharedString::from("translation-dialog-result"))
-            .rounded_sm()
+            .rounded(radius_sm())
             .border_1()
             .border_color(rgb(palette.border))
             .bg(rgb(palette.input))
@@ -255,7 +256,7 @@ impl NyaTermApp {
                     div()
                         .px_2()
                         .py(px(2.))
-                        .rounded_sm()
+                        .rounded(radius_sm())
                         .bg(rgb(palette.surface))
                         .text_size(px(11.))
                         .text_color(rgb(palette.text_muted))
