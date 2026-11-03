@@ -3,12 +3,25 @@ use rust_i18n::t;
 use std::borrow::Cow;
 
 use gpui::{Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb};
+use nyaterm_core::TerminalRightClickAction;
 use nyaterm_ui::NyaSelectOption;
 
-use crate::features::{pages::settings::panel::SettingsPanel, shell::TAB_MOUSE_ACTIONS};
+use crate::features::{
+    pages::settings::panel::SettingsPanel,
+    shell::{TAB_MOUSE_ACTIONS, TabMouseActionTarget},
+};
 use crate::theme::ThemePalette;
 
-use super::super::{settings_form_row, settings_form_section, settings_switch};
+use super::super::{
+    settings_form_row, settings_form_section, settings_segmented_control,
+    settings_segmented_selected_index, settings_switch,
+};
+
+const TERMINAL_RIGHT_CLICK_ACTIONS: [TerminalRightClickAction; 3] = [
+    TerminalRightClickAction::None,
+    TerminalRightClickAction::Menu,
+    TerminalRightClickAction::Paste,
+];
 
 impl SettingsPanel {
     pub(in crate::features) fn interaction_settings_section(
@@ -98,22 +111,27 @@ impl SettingsPanel {
                         palette,
                         t!("settings.terminalRightClickAction"),
                         None,
-                        self.settings_select_control(
+                        settings_segmented_control(
                             "settings.interaction.terminal-right-click-action",
-                            vec![
-                                NyaSelectOption::new("none", t!("settings.terminalRightClickNone")),
-                                NyaSelectOption::new("menu", t!("settings.terminalRightClickMenu")),
-                                NyaSelectOption::new(
-                                    "paste",
-                                    t!("settings.terminalRightClickPaste"),
-                                ),
+                            [
+                                t!("settings.terminalRightClickNone"),
+                                t!("settings.terminalRightClickMenu"),
+                                t!("settings.terminalRightClickPaste"),
                             ],
-                            self.settings
-                                .summary()
-                                .interaction_terminal_right_click_action
-                                .compat_value(),
+                            terminal_right_click_selected_index(
+                                self.settings
+                                    .summary()
+                                    .interaction_terminal_right_click_action,
+                            ),
                             false,
-                            cx,
+                            cx.listener(|this, index, _, cx| {
+                                let Some(action) = terminal_right_click_action(*index) else {
+                                    return;
+                                };
+                                this.with_app(cx, |app, cx| {
+                                    app.set_terminal_right_click_action(action, cx);
+                                });
+                            }),
                         ),
                     ))
                     .child(settings_form_row(
@@ -255,6 +273,7 @@ impl SettingsPanel {
                             label: t!("settings.tabDoubleClickAction"),
                             description: None,
                             id: "settings.interaction.tab-double",
+                            target: TabMouseActionTarget::Double,
                             current: &double_action,
                         },
                         cx,
@@ -264,6 +283,7 @@ impl SettingsPanel {
                             label: t!("settings.tabMiddleClickAction"),
                             description: None,
                             id: "settings.interaction.tab-middle",
+                            target: TabMouseActionTarget::Middle,
                             current: &middle_action,
                         },
                         cx,
@@ -273,6 +293,7 @@ impl SettingsPanel {
                             label: t!("settings.tabRightClickAction"),
                             description: Some(t!("settings.tabRightClickActionDesc")),
                             id: "settings.interaction.tab-right",
+                            target: TabMouseActionTarget::Right,
                             current: &right_action,
                         },
                         cx,
@@ -284,26 +305,55 @@ impl SettingsPanel {
         &mut self,
         presentation: TabMouseActionPresentation<'_>,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> gpui::AnyElement {
         let TabMouseActionPresentation {
             label,
             description,
             id,
+            target,
             current,
         } = presentation;
-        let selected = normalized_tab_mouse_action(current).to_string();
-        let options = TAB_MOUSE_ACTIONS
-            .iter()
-            .map(|action| NyaSelectOption::new(*action, t!(tab_mouse_action_i18n_key(action))))
-            .collect();
+        let selected_index = settings_segmented_selected_index(&TAB_MOUSE_ACTIONS, &current);
 
-        self.settings_select_field(
-            id,
+        if selected_index.is_none() {
+            let options = TAB_MOUSE_ACTIONS
+                .iter()
+                .map(|action| NyaSelectOption::new(*action, t!(tab_mouse_action_i18n_key(action))))
+                .collect();
+            return self
+                .settings_select_field(
+                    id,
+                    label,
+                    description.map(SharedString::from),
+                    (options, current.to_string(), false),
+                    cx,
+                )
+                .into_any_element();
+        }
+
+        let palette = self.theme_palette();
+        settings_form_row(
+            palette,
             label,
             description.map(SharedString::from),
-            (options, selected, false),
-            cx,
+            settings_segmented_control(
+                id,
+                TAB_MOUSE_ACTIONS
+                    .iter()
+                    .map(|action| t!(tab_mouse_action_i18n_key(action))),
+                selected_index,
+                false,
+                cx.listener(move |this, index, _, cx| {
+                    let Some(action) = TAB_MOUSE_ACTIONS.get(*index).copied() else {
+                        return;
+                    };
+                    this.with_app(cx, |app, cx| {
+                        app.set_tab_mouse_action(target, action, cx);
+                    });
+                }),
+            ),
         )
+        .into_any_element()
     }
 }
 
@@ -311,6 +361,7 @@ struct TabMouseActionPresentation<'a> {
     label: Cow<'static, str>,
     description: Option<Cow<'static, str>>,
     id: &'static str,
+    target: TabMouseActionTarget,
     current: &'a str,
 }
 
@@ -339,12 +390,14 @@ fn settings_field_meta(
         )
 }
 
-fn normalized_tab_mouse_action(action: &str) -> &'static str {
-    TAB_MOUSE_ACTIONS
+fn terminal_right_click_selected_index(action: TerminalRightClickAction) -> Option<usize> {
+    TERMINAL_RIGHT_CLICK_ACTIONS
         .iter()
-        .copied()
-        .find(|candidate| *candidate == action)
-        .unwrap_or("none")
+        .position(|candidate| *candidate == action)
+}
+
+fn terminal_right_click_action(index: usize) -> Option<TerminalRightClickAction> {
+    TERMINAL_RIGHT_CLICK_ACTIONS.get(index).copied()
 }
 
 fn tab_mouse_action_i18n_key(action: &str) -> &'static str {
@@ -358,5 +411,65 @@ fn tab_mouse_action_i18n_key(action: &str) -> &'static str {
         "disconnect_session" => "tabCtx.disconnect",
         "close_tab" => "tabCtx.close",
         _ => "settings.tabMouseActionNone",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+    use nyaterm_core::{AppSettingsSummary, KeywordHighlightConfig, TerminalRightClickAction};
+
+    use crate::features::settings::{
+        SettingsFeatureFocus, SettingsFeatureInit, SettingsFeatureState,
+    };
+
+    use super::{terminal_right_click_action, terminal_right_click_selected_index};
+
+    fn settings_state() -> SettingsFeatureState {
+        let cx = TestAppContext::single();
+        let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let focus = || cx.update(|cx| cx.focus_handle());
+        SettingsFeatureState::new(
+            SettingsFeatureInit {
+                summary: AppSettingsSummary::default(),
+                keyword_config: KeywordHighlightConfig::default(),
+                store_path: String::new(),
+                store_message: String::new(),
+                store_ready: true,
+                ui_font_options: vec!["Inter".to_string()],
+                terminal_font_options: vec!["JetBrains Mono".to_string()],
+            },
+            SettingsFeatureFocus {
+                search_engine: focus(),
+                keyword_highlight: focus(),
+                keybindings: focus(),
+            },
+        )
+    }
+
+    #[test]
+    fn interaction_right_click_segmented_mapping_preserves_compatibility() {
+        for (index, action) in [
+            TerminalRightClickAction::None,
+            TerminalRightClickAction::Menu,
+            TerminalRightClickAction::Paste,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(terminal_right_click_selected_index(action), Some(index));
+            assert_eq!(terminal_right_click_action(index), Some(action));
+        }
+        assert_eq!(terminal_right_click_action(3), None);
+
+        let mut state = settings_state();
+        state.set_terminal_right_click_action(
+            terminal_right_click_action(2).expect("paste should be selectable"),
+        );
+        assert_eq!(
+            state.summary().interaction_terminal_right_click_action,
+            TerminalRightClickAction::Paste
+        );
+        assert!(state.summary().interaction_right_click_paste);
     }
 }
