@@ -104,8 +104,6 @@ pub struct NyaSettingsLayout {
     id: SharedString,
     groups: Vec<NyaSettingsNavGroup>,
     active_item_id: SharedString,
-    active_title: SharedString,
-    sidebar_title: SharedString,
     content: AnyElement,
     palette: ThemePalette,
     viewport_width: Option<f32>,
@@ -123,22 +121,10 @@ impl NyaSettingsLayout {
         active_item_id: impl Into<SharedString>,
         content: impl IntoElement,
     ) -> Self {
-        let groups: Vec<NyaSettingsNavGroup> = groups.into_iter().collect();
-        let active_item_id = active_item_id.into();
-        let active_title = active_item_title(&groups, &active_item_id).unwrap_or_else(|| {
-            groups
-                .iter()
-                .flat_map(|group| group.items.iter())
-                .next()
-                .map(|item| item.label.clone())
-                .unwrap_or_default()
-        });
         Self {
             id: id.into(),
-            groups,
-            active_item_id,
-            active_title,
-            sidebar_title: SharedString::from("Settings"),
+            groups: groups.into_iter().collect(),
+            active_item_id: active_item_id.into(),
             content: content.into_any_element(),
             palette: theme_palette("github-dark"),
             viewport_width: None,
@@ -152,16 +138,6 @@ impl NyaSettingsLayout {
 
     pub fn palette(mut self, palette: ThemePalette) -> Self {
         self.palette = palette;
-        self
-    }
-
-    pub fn active_title(mut self, title: impl Into<SharedString>) -> Self {
-        self.active_title = title.into();
-        self
-    }
-
-    pub fn sidebar_title(mut self, title: impl Into<SharedString>) -> Self {
-        self.sidebar_title = title.into();
         self
     }
 
@@ -231,7 +207,6 @@ impl RenderOnce for NyaSettingsLayout {
                 palette,
                 sidebar_width,
                 compact,
-                sidebar_title: self.sidebar_title,
                 groups: self.groups,
                 active_item_id,
                 on_select,
@@ -241,29 +216,16 @@ impl RenderOnce for NyaSettingsLayout {
                 palette,
                 compact,
                 wide,
-                self.active_title,
                 self.content,
                 self.content_scroll_handle,
             ))
     }
 }
 
-fn active_item_title(
-    groups: &[NyaSettingsNavGroup],
-    active_item_id: &SharedString,
-) -> Option<SharedString> {
-    groups
-        .iter()
-        .flat_map(|group| group.items.iter())
-        .find(|item| &item.id == active_item_id)
-        .map(|item| item.label.clone())
-}
-
 struct SettingsSidebarParams {
     palette: ThemePalette,
     sidebar_width: f32,
     compact: bool,
-    sidebar_title: SharedString,
     groups: Vec<NyaSettingsNavGroup>,
     active_item_id: SharedString,
     on_select: Option<NyaSettingsSelectHandler>,
@@ -275,7 +237,6 @@ fn settings_sidebar(params: SettingsSidebarParams) -> impl IntoElement {
         palette,
         sidebar_width,
         compact,
-        sidebar_title,
         groups,
         active_item_id,
         on_select,
@@ -290,7 +251,6 @@ fn settings_sidebar(params: SettingsSidebarParams) -> impl IntoElement {
         .border_r_1()
         .border_color(rgba((palette.border << 8) | 0xb3))
         .bg(rgba((palette.surface_elevated << 8) | 0x33))
-        .child(settings_sidebar_header(palette, compact, sidebar_title))
         .child(
             div()
                 .id(SharedString::from("settings-sidebar-scroll"))
@@ -311,39 +271,6 @@ fn settings_sidebar(params: SettingsSidebarParams) -> impl IntoElement {
                     .into_any_element()
                 })),
         )
-}
-
-fn settings_sidebar_header(
-    palette: ThemePalette,
-    compact: bool,
-    sidebar_title: SharedString,
-) -> impl IntoElement {
-    div()
-        .h(px(64.))
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap_3()
-        .when(compact, |this| this.justify_center())
-        .when(!compact, |this| this.px_3())
-        .child(
-            svg()
-                .size(px(if compact { 22. } else { 24. }))
-                .flex_none()
-                .path("icons/settings.svg")
-                .text_color(rgb(palette.primary)),
-        )
-        .when(!compact, |this| {
-            this.child(
-                div()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_size(px(16.))
-                    .font_weight(FontWeight(700.))
-                    .text_color(rgb(palette.text))
-                    .child(sidebar_title),
-            )
-        })
 }
 
 fn settings_nav_group(
@@ -547,7 +474,6 @@ fn settings_content_panel(
     palette: ThemePalette,
     compact: bool,
     wide: bool,
-    active_title: SharedString,
     content: AnyElement,
     scroll_handle: Option<ScrollHandle>,
 ) -> impl IntoElement {
@@ -565,24 +491,6 @@ fn settings_content_panel(
                 .flex()
                 .flex_col()
                 .overflow_hidden()
-                .child(
-                    div()
-                        .flex_none()
-                        .when(compact, |this| this.px_4().py_4())
-                        .when(!compact, |this| this.px_6().py_5())
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .child(
-                            div()
-                                .min_w_0()
-                                .text_size(px(if compact { 18. } else { 24. }))
-                                .font_weight(FontWeight(700.))
-                                .text_color(rgb(palette.text))
-                                .child(active_title),
-                        ),
-                )
                 .child(
                     div()
                         .flex_1()

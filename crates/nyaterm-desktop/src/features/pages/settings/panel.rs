@@ -1196,7 +1196,6 @@ impl SettingsPanel {
     ) -> impl IntoElement {
         let viewport_width = f32::from(window.viewport_size().width);
         let active_item_id = settings_tab_nav_id(snapshot.active_tab);
-        let active_label = t!(snapshot.active_tab.i18n_key());
         let scroll_handle = self
             .content_scroll_handles
             .entry(active_item_id.to_string())
@@ -1213,8 +1212,6 @@ impl SettingsPanel {
             content,
         )
         .palette(snapshot.chrome.palette)
-        .active_title(active_label)
-        .sidebar_title(t!("settings.title"))
         .content_scroll_handle(scroll_handle)
         .viewport_width(viewport_width)
         .compact_breakpoint(640.)
