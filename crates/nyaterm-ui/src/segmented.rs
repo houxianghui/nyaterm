@@ -144,6 +144,7 @@ impl RenderOnce for NyaSegmentedControl {
                 return;
             };
             let next = match event.keystroke.key.as_str() {
+                "left" => current.saturating_sub(1),
                 "right" => current.saturating_add(1).min(item_count - 1),
                 "home" => 0,
                 "end" => item_count - 1,
@@ -281,6 +282,33 @@ mod tests {
         cx.simulate_keystrokes("right");
 
         assert_eq!(clicks.borrow().as_slice(), &[1]);
+    }
+
+    #[gpui::test]
+    fn left_follows_actual_focus_for_middle_and_last_items(cx: &mut TestAppContext) {
+        let (cx, clicks) = harness(cx, Some(2), false);
+        cx.update(|window, cx| {
+            window.focus_next(cx);
+            window.focus_next(cx);
+        });
+
+        cx.simulate_keystrokes("left");
+        assert_eq!(clicks.borrow().as_slice(), &[0]);
+
+        cx.simulate_keystrokes("end left");
+        assert_eq!(clicks.borrow().as_slice(), &[0, 2, 1]);
+    }
+
+    #[gpui::test]
+    fn left_at_the_first_item_stays_at_the_boundary(cx: &mut TestAppContext) {
+        let (cx, clicks) = harness(cx, Some(1), false);
+        cx.update(|window, cx| window.focus_next(cx));
+
+        cx.simulate_keystrokes("left left");
+        assert_eq!(clicks.borrow().as_slice(), &[0]);
+
+        cx.simulate_keystrokes("right");
+        assert_eq!(clicks.borrow().as_slice(), &[0, 1]);
     }
 
     #[gpui::test]
