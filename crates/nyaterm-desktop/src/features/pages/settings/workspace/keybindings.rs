@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use rust_i18n::t;
 
 use gpui::{Context, FontWeight, IntoElement, KeyDownEvent, div, prelude::*, px, rgb};
-use nyaterm_ui::{NyaKbd, NyaSearchInput, radius_md};
+use nyaterm_ui::{NyaButton, NyaButtonVariant, NyaKbd, NyaSearchInput, radius_md};
 
 use crate::features::pages::settings::panel::SettingsPanel;
 use crate::shortcuts::{
@@ -82,14 +82,16 @@ impl SettingsPanel {
                                 })),
                         ),
                     )
-                    .child(small_button(
-                        palette,
-                        "keybindings-custom-only",
-                        t!("settings.keybindingsCustom"),
-                        cx.listener(|this, _, _, cx| {
-                            this.toggle_keybinding_custom_only(cx);
-                        }),
-                    ))
+                    .child(
+                        NyaButton::new("keybindings-custom-only", t!("settings.keybindingsCustom"))
+                            .variant(NyaButtonVariant::Secondary)
+                            .small()
+                            .compact()
+                            .focus_on_click()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.toggle_keybinding_custom_only(cx);
+                            })),
+                    )
                     .when(override_count > 0, |this| {
                         this.child(small_button(
                             palette,

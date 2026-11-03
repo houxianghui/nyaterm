@@ -2522,6 +2522,57 @@ mod tests {
         });
     }
 
+    fn assert_keybinding_custom_only(
+        app: &Entity<NyaTermApp>,
+        vcx: &mut VisualTestContext,
+        expected: bool,
+    ) {
+        let (authoritative, presented) = vcx.update(|_, cx| {
+            let panel = main_panel(app, cx);
+            (
+                app.read(cx).settings.keybinding_presentation().custom_only,
+                panel
+                    .read(cx)
+                    .settings
+                    .keybinding_presentation()
+                    .custom_only,
+            )
+        });
+        assert_eq!(authoritative, expected, "authoritative filter state");
+        assert_eq!(presented, expected, "published panel filter state");
+        assert_eq!(
+            vcx.debug_bounds("keybinding-record-terminal.copy")
+                .is_some(),
+            !expected,
+            "the default shortcut rows must follow the rendered filter"
+        );
+    }
+
+    #[test]
+    fn keybinding_custom_only_mouse_click_then_space_round_trips() {
+        let test_dir = TestConfigDir::new("nyaterm-keybinding-custom-only-focus");
+        let mut cx = TestAppContext::single();
+        let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let (app, vcx) = hosted(&mut cx, test_dir.path());
+        activate(&app, vcx, SettingsTab::Keybindings);
+        assert_keybinding_custom_only(&app, vcx, false);
+
+        let custom = vcx
+            .debug_bounds("keybindings-custom-only")
+            .expect("custom-only button");
+        vcx.simulate_click(custom.center(), Default::default());
+        draw(&app, vcx);
+        assert_keybinding_custom_only(&app, vcx, true);
+
+        vcx.simulate_keystrokes("space");
+        draw(&app, vcx);
+        assert_keybinding_custom_only(&app, vcx, false);
+
+        vcx.simulate_keystrokes("space");
+        draw(&app, vcx);
+        assert_keybinding_custom_only(&app, vcx, true);
+    }
+
     fn activate(app: &Entity<NyaTermApp>, vcx: &mut VisualTestContext, tab: SettingsTab) {
         vcx.update(|_, cx| {
             app.update(cx, |app, cx| app.focus_settings_tab(tab, cx));

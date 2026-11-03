@@ -37,6 +37,7 @@ pub struct NyaButton {
     disabled: bool,
     loading: bool,
     autofocus: bool,
+    focus_on_click: bool,
     tooltip: Option<SharedString>,
     on_click: Option<NyaButtonClickHandler>,
 }
@@ -62,6 +63,7 @@ impl NyaButton {
             disabled: false,
             loading: false,
             autofocus: false,
+            focus_on_click: false,
             tooltip: None,
             on_click: None,
         }
@@ -150,6 +152,12 @@ impl NyaButton {
         self
     }
 
+    /// Focus after activation, including pointer clicks whose mouse-down does not focus.
+    pub fn focus_on_click(mut self) -> Self {
+        self.focus_on_click = true;
+        self
+    }
+
     pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
         self.tooltip = Some(tooltip.into());
         self
@@ -177,6 +185,12 @@ impl RenderOnce for NyaButton {
                 focus
             });
         }
+        let focus_on_click = self.focus_on_click.then(|| {
+            window
+                .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
+                .read(cx)
+                .clone()
+        });
         let mut button = Button::new(self.id).loading(self.loading);
         if icon_only {
             // An empty label would create a second content slot and offset the icon.
@@ -241,7 +255,13 @@ impl RenderOnce for NyaButton {
             button = button.tooltip(tooltip);
         }
         if let Some(on_click) = self.on_click {
-            button = button.on_click(on_click);
+            button = match focus_on_click {
+                Some(focus) => button.on_click(move |event, window, cx| {
+                    window.focus(&focus, cx);
+                    on_click(event, window, cx);
+                }),
+                None => button.on_click(on_click),
+            };
         }
         if let Some(height) = self.height {
             button = button.h(height);
