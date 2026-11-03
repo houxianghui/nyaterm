@@ -33,6 +33,7 @@
 | 圆角专项文档 | `e9b904161` | 记录有效 DWM 组合、失败方案、渲染层与验收要求，并在 `AGENTS.md` 建立优先参考入口 |
 | 设置共享布局 | `bd12dbe32` | 删除设置页重复标题区，独立窗口与主窗口内嵌设置页共用紧凑布局 |
 | macOS 交互第一阶段 | `f7593b13b`…`1cb606ba0` | segmented、菜单/焦点可见性、常规与交互页短选项、背景图预览、快捷键筛选与空状态 |
+| 第一阶段验收修复 | `f6fe3ff19`、`de37a9faa` | 补齐 segmented Left 实际焦点导航；Custom 支持点击后 Space 往返切换 |
 
 ### 2.1 菜单选中态
 
@@ -126,17 +127,25 @@ fork 使用 **6 / 8 / 10 / 14px**，GPUI 内建尺度是 4 / 6 / 8 / 12px。统�
 - `cargo build --release --target x86_64-pc-windows-msvc -p nyaterm-app --bin nyaterm`：通过，12 分 59 秒。
 - 便携 ZIP 重打成功：`NyaTerm_local-gpui_windows_x64_portable.zip`，54,009,846 字节。
 
+Left/Custom 修复后的复测使用 HEAD `de37a9faa`，重新执行并通过：
+
+- `cargo fmt --all -- --check`：通过，无输出。
+- `cargo check --workspace --locked`：通过，1 分 31 秒。
+- `cargo test -p nyaterm-ui segmented --lib`：10 passed，0 failed，包含两个新增 Left 测试。
+- `cargo build --release --target x86_64-pc-windows-msvc -p nyaterm-app --bin nyaterm`：通过，13 分 04 秒。
+- 便携 ZIP 再次重打成功，54,006,154 字节；随后启动全新便携 `data` 目录完成真实 UI 复测。
+
 便携版使用独立 `data` 目录，验收输入为真实鼠标和键盘事件，截图为真实屏幕抓取，未使用 `PrintWindow`。实际结果：
 
-- 常规页：点击 Debug、Home 到 Warn、Right 到 Info、End 到 Debug 均有屏幕选中态证据；从 Info 按 Left 仍停在 Info，从 Debug 按 Left 也仍停在 Debug，**Left 未通过**。
+- 常规页：初次验收中 Left 未通过；`f6fe3ff19` 后重新执行 Debug → Left Info → Left Warn、Right Info、Home Warn、End Debug，真实屏幕选中态全部符合预期，**Left/Right/Home/End 复测通过**。
 - 交互页：点击 Paste 生效，Home 后 Right 返回 Menu；数值输入仍显示 Min History Length 2、Max History Length 64。
-- 外观页：WindTerm Light/Dark 均真实切换；有效 PNG 出现预览，损坏 PNG 选择后旧预览像素归零。未覆盖“已持久化但文件不存在”的路径场景。
-- 快捷键页：仅自定义筛选为空、搜索与仅自定义组合为空时均显示 `No shortcuts match your filters`；但开启后再次点击 Custom 及使用 Space 都未恢复列表，**筛选往返未通过**。
+- 外观页：WindTerm Light/Dark 均真实切换；有效 PNG 出现预览，损坏 PNG 选择后旧预览像素归零。未覆盖“已持久化但文件不存在”的路径场景和真实 OS drop。
+- 快捷键页：初次验收中 Custom 筛选往返未通过；`de37a9faa` 后，物理点击开启/再次点击关闭恢复列表，以及点击开启/Space 关闭恢复列表均通过。独立搜索在 Enter 后显示空状态，清空并 Enter 后恢复列表。
 - 常规页滚动位置在页面切换后恢复；679×608 窄窗口仍显示导航、搜索、筛选和空状态。
 - 独立设置窗口右下角真实拖动：816×568 → 876×608，随后缩到 679×608 并恢复 816×568；真实屏幕边缘未出现白色直角外框。
-- disabled 的 segmented 点击行为仅由上述 UI 定向测试覆盖；本次四个页面没有可用于单独验收的 disabled segmented 实例。
+- disabled 的 segmented 点击行为仅由 UI 定向测试覆盖；四个页面没有可用于单独验收的 disabled segmented 实例，本次不为此新增生产控件。
 
-因此第一阶段不能标记为“全部验收通过”。Left 导航和 Custom 筛选往返需要后续修复与复测，desktop 测试仍需在允许执行测试二进制的环境补跑。
+初次验收的 Left 导航和 Custom 筛选往返失败均已在当前 HEAD 复测转绿，第一阶段真实应用验收完成。仍保留的限制是：desktop 测试需在允许执行测试二进制的环境补跑；persisted missing wallpaper、真实 OS drop 和无真实 disabled segmented 实例未覆盖。
 
 ## 5. 关键坑点与禁止重复的试错
 
@@ -190,8 +199,6 @@ fork 使用 **6 / 8 / 10 / 14px**，GPUI 内建尺度是 4 / 6 / 8 / 12px。统�
 
 ## 7. 后续工作顺序
 
-1. 修复 segmented 的 Left 真实键盘导航，并补充 left 定向测试和常规/交互页复测。
-2. 修复快捷键 Custom 在空状态下的往返切换，分别复测仅搜索、仅自定义及组合筛选。
-3. 在允许执行测试二进制的环境补跑 desktop 定向测试，不能把编译成功当作测试通过。
-4. 补验已持久化但文件不存在的背景图路径；disabled segmented 若无实际页面入口，继续明确其覆盖仅限组件测试。
-5. 圆角或原生窗口问题先查专项指南；后续设置子系统按独立计划推进，不在第一阶段夹带新页面迁移。
+1. 在允许执行测试二进制的环境补跑 desktop 定向测试，不能把编译成功当作测试通过。
+2. 后续如需补全覆盖，再单独验收 persisted missing wallpaper 与真实 OS drop；disabled segmented 继续保持组件测试覆盖，不为验收新增生产控件。
+3. 圆角或原生窗口问题先查专项指南；后续设置子系统按独立计划推进，不在第一阶段夹带新页面迁移。

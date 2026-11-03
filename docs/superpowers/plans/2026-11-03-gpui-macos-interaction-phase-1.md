@@ -354,7 +354,7 @@ Run: `cargo build --release --target x86_64-pc-windows-msvc -p nyaterm-app --bin
 
 若 desktop 测试因 `os error 5` 未执行，记录准确命令和原因，不修改测试来绕过。
 
-- [ ] **Step 2: 真实应用验收**
+- [x] **Step 2: 真实应用验收**
 
 启动便携版，逐页检查常规、交互、外观、快捷键：点击、左右/Home/End、disabled、搜索与筛选空状态、背景图无效路径、亮暗主题、窄窗口、滚动恢复、独立设置窗口圆角和右下缩放。
 
