@@ -1,5 +1,6 @@
 use rust_i18n::t;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -769,12 +770,7 @@ impl NyaTermApp {
             };
             let _ = this.update(cx, |this, cx| {
                 if let Some(path) = path {
-                    this.settings
-                        .select_background_image(path.display().to_string());
-                    this.queue_wallpaper_refresh(cx);
-                    this.save_appearance_settings(cx);
-                    this.shell
-                        .set_status("wallpaper image selected".to_string());
+                    this.select_background_image(path, cx);
                 } else {
                     this.shell
                         .set_status("wallpaper selection cancelled".to_string());
@@ -784,6 +780,19 @@ impl NyaTermApp {
         })
         .detach();
         cx.notify();
+    }
+
+    pub(in crate::features) fn select_background_image(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings
+            .select_background_image(path.display().to_string());
+        self.queue_wallpaper_refresh(cx);
+        self.save_appearance_settings(cx);
+        self.shell
+            .set_status("wallpaper image selected".to_string());
     }
 
     pub(in crate::features) fn clear_background_image(&mut self, cx: &mut Context<Self>) {

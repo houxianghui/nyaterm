@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rust_i18n::t;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, FontWeight, IntoElement, SharedString, Window, div,
-    prelude::*, px, rgb, rgba,
+    AnyElement, App, ClickEvent, Context, ExternalPaths, FontWeight, IntoElement, ObjectFit,
+    SharedString, Window, div, img, prelude::*, px, rgb, rgba,
 };
 use nyaterm_ui::{NYA_FORM_CONTROL_HEIGHT_PX, NyaSelectOption, radius_lg, radius_md, radius_sm};
 
@@ -123,6 +124,14 @@ impl SettingsPanel {
                 Some(t!("settings.backgroundImage")),
                 Some(t!("settings.backgroundImageDesc")),
                 {
+                    let current_path = self.settings.summary().background_image_path.clone();
+                    let wallpaper = self.with_app(cx, |app, _| {
+                        current_path
+                            .as_deref()
+                            .filter(|path| app.shell.wallpaper_is_requested(path))
+                            .and_then(|_| app.shell.wallpaper_asset())
+                            .map(|asset| asset.image().clone())
+                    });
                     let path_label = self
                         .settings
                         .summary()
@@ -150,6 +159,32 @@ impl SettingsPanel {
                         .flex()
                         .flex_col()
                         .gap_5()
+                        .can_drop(|drag, _, _| drag.is::<ExternalPaths>())
+                        .on_drop(cx.listener(
+                            |panel, paths: &ExternalPaths, _, cx| {
+                                let Some(path) = appearance_wallpaper_drop_path(paths.paths())
+                                    .map(Path::to_path_buf)
+                                else {
+                                    return;
+                                };
+                                panel.with_app(cx, |app, cx| {
+                                    app.select_background_image(path, cx);
+                                });
+                            },
+                        ))
+                        .when_some(wallpaper, |this, image| {
+                            this.child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(576.))
+                                    .h(px(144.))
+                                    .overflow_hidden()
+                                    .rounded(radius_md())
+                                    .border_1()
+                                    .border_color(rgb(palette.border))
+                                    .child(img(image).size_full().object_fit(ObjectFit::Cover)),
+                            )
+                        })
                         .child(
                             div()
                                 .flex()
@@ -806,4 +841,89 @@ fn appearance_icon_button(
         .text_color(rgb(palette.danger))
         .tooltip(tooltip)
         .on_click(on_click)
+}
+
+fn appearance_wallpaper_drop_path(paths: &[PathBuf]) -> Option<&Path> {
+    let [path] = paths else {
+        return None;
+    };
+    (path.is_file()
+        && matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("png" | "jpg" | "jpeg" | "webp")
+        ))
+    .then_some(path.as_path())
+}
+
+#[cfg(test)]
+fn appearance_wallpaper_preview_is_current(
+    draft_path: Option<&str>,
+    cached_path: Option<&str>,
+) -> bool {
+    matches!((draft_path, cached_path), (Some(draft), Some(cached)) if draft == cached)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use crate::test_support::TestConfigDir;
+
+    use super::{appearance_wallpaper_drop_path, appearance_wallpaper_preview_is_current};
+
+    #[test]
+    fn appearance_wallpaper_drop_preview_requires_current_cached_path() {
+        assert!(!appearance_wallpaper_preview_is_current(None, None));
+        assert!(!appearance_wallpaper_preview_is_current(
+            Some("current.png"),
+            None
+        ));
+        assert!(appearance_wallpaper_preview_is_current(
+            Some("current.png"),
+            Some("current.png")
+        ));
+        assert!(!appearance_wallpaper_preview_is_current(
+            Some("current.png"),
+            Some("previous.png")
+        ));
+    }
+
+    #[test]
+    fn appearance_wallpaper_drop_rejects_multiple_files() {
+        let temp = TestConfigDir::new("nyaterm-wallpaper-drop-multiple");
+        fs::create_dir_all(temp.path()).expect("create test directory");
+        let first = temp.path().join("first.png");
+        let second = temp.path().join("second.jpg");
+        fs::write(&first, []).expect("create first image");
+        fs::write(&second, []).expect("create second image");
+
+        assert_eq!(appearance_wallpaper_drop_path(&[first, second]), None);
+    }
+
+    #[test]
+    fn appearance_wallpaper_drop_rejects_directories_and_unsupported_extensions() {
+        let temp = TestConfigDir::new("nyaterm-wallpaper-drop-invalid");
+        let directory = temp.path().join("directory.png");
+        let text = temp.path().join("notes.txt");
+        fs::create_dir_all(&directory).expect("create test directory");
+        fs::write(&text, []).expect("create text file");
+
+        assert_eq!(appearance_wallpaper_drop_path(&[directory]), None);
+        assert_eq!(appearance_wallpaper_drop_path(&[text]), None);
+    }
+
+    #[test]
+    fn appearance_wallpaper_drop_accepts_one_supported_image_file() {
+        let temp = TestConfigDir::new("nyaterm-wallpaper-drop-valid");
+        fs::create_dir_all(temp.path()).expect("create test directory");
+
+        for extension in ["png", "jpg", "jpeg", "webp"] {
+            let path = temp.path().join(format!("wallpaper.{extension}"));
+            fs::write(&path, []).expect("create image file");
+            assert_eq!(
+                appearance_wallpaper_drop_path(std::slice::from_ref(&path)),
+                Some(path.as_path())
+            );
+        }
+    }
 }
