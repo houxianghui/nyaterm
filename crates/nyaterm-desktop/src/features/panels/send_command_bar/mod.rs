@@ -1,6 +1,7 @@
 use gpui::{Context, IntoElement, div, prelude::*, px};
 
 use crate::features::NyaTermApp;
+use nyaterm_ui::radius_md;
 
 mod composer;
 mod controls;
@@ -51,6 +52,8 @@ impl NyaTermApp {
             .flex_none()
             .flex()
             .flex_col()
+            .rounded(radius_md())
+            .overflow_hidden()
             .bg(self.shell_surface_color(palette.surface))
             .child(
                 div()

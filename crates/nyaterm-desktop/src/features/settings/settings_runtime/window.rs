@@ -3,11 +3,13 @@ use rust_i18n::t;
 use std::rc::Rc;
 
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Subscription, Window, div,
-    prelude::*, px, rgb,
+    App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Subscription, Window,
+    WindowBackgroundAppearance, div, prelude::*, px, rgb,
 };
-use nyaterm_ui::{NyaWindowHandle, activate_child_window, nya_root};
+use nyaterm_ui::{NyaWindowHandle, activate_child_window, nya_root, radius_xl};
 
+#[cfg(target_os = "windows")]
+use super::native_frame::configure_settings_native_frame;
 use crate::features::pages::settings::panel::{SettingsPanel, SettingsSurface};
 use crate::features::{
     NyaTermApp,
@@ -22,6 +24,8 @@ pub(in crate::features) struct SettingsWindow {
     settings_panel: Entity<SettingsPanel>,
     shell_focus: FocusHandle,
     chrome: ChildWindowChrome,
+    #[cfg(target_os = "windows")]
+    native_frame_configured: bool,
     _app_subscription: Subscription,
 }
 
@@ -39,6 +43,8 @@ impl SettingsWindow {
             settings_panel,
             shell_focus: cx.focus_handle(),
             chrome,
+            #[cfg(target_os = "windows")]
+            native_frame_configured: false,
             _app_subscription: app_subscription,
         }
     }
@@ -65,6 +71,10 @@ impl Render for SettingsWindow {
             )
         });
         window.set_window_title(&title);
+        #[cfg(target_os = "windows")]
+        if !self.native_frame_configured && configure_settings_native_frame(window) {
+            self.native_frame_configured = true;
+        }
         let content = self
             .settings_panel
             .clone()
@@ -87,6 +97,7 @@ impl Render for SettingsWindow {
         // Settings deliberately does not close on `escape`: the draft can hold a
         // long edit and closing discards it.
         child_window_root(&self.shell_focus, false, on_close)
+            .rounded(radius_xl())
             .bg(rgb(palette.bg))
             .text_color(rgb(palette.text))
             .font(font)
@@ -221,7 +232,10 @@ fn open_settings_window_now_from_app(app: Entity<NyaTermApp>, cx: &mut App) {
         .min_size(640., 480.);
     let chrome = spec.chrome();
     let parent = app.read(cx).shell.main_window();
-    let options = child_window_options(&spec, parent, cx);
+    let mut options = child_window_options(&spec, parent, cx);
+    // The rounded content owns the interior, including the full-size panel and
+    // footer. DWM clips the transparent native frame to the same rounded outline.
+    options.window_background = WindowBackgroundAppearance::Transparent;
     let close_app = app.clone();
     let view_app = app.clone();
     let result: anyhow::Result<NyaWindowHandle> = cx.open_window(options, move |window, cx| {
@@ -233,7 +247,11 @@ fn open_settings_window_now_from_app(app: Entity<NyaTermApp>, cx: &mut App) {
                 app.request_settings_window_close(&panel, window, cx)
             })
         });
-        cx.new(|cx| nya_root(view, window, cx))
+        cx.new(|cx| {
+            let mut root = nya_root(view, window, cx);
+            nyaterm_ui::set_nya_root_transparent(&mut root, true);
+            root
+        })
     });
 
     app.update(cx, |app, cx| match result {

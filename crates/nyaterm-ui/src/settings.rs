@@ -7,7 +7,7 @@ use gpui::{
 
 use gpui_kit::component::scroll::ScrollableElement;
 
-use crate::sizing::radius_lg;
+use crate::sizing::{radius_lg, radius_xl};
 use crate::theme::{ThemePalette, theme_palette};
 use crate::tooltip::NyaTooltip;
 
@@ -326,8 +326,6 @@ fn settings_sidebar_header(
         .gap_3()
         .when(compact, |this| this.justify_center())
         .when(!compact, |this| this.px_3())
-        .border_b_1()
-        .border_color(rgba((palette.border << 8) | 0xb3))
         .child(
             svg()
                 .size(px(if compact { 22. } else { 24. }))
@@ -414,7 +412,7 @@ fn group_header(
             .items_center()
             .when(compact, |this| this.justify_center())
             .when(!compact, |this| this.justify_between())
-            .rounded(radius_lg())
+            .rounded(radius_xl())
             .cursor_pointer()
             .hover(move |this| this.bg(rgb(palette.hover)))
             .child(
@@ -482,7 +480,7 @@ fn settings_nav_item(
         .items_center()
         .when(compact, |this| this.justify_center())
         .gap_2()
-        .rounded(radius_lg())
+        .rounded(if nested { radius_lg() } else { radius_xl() })
         .border_1()
         .border_color(if selected {
             rgba((palette.primary << 8) | 0x33)
@@ -572,8 +570,6 @@ fn settings_content_panel(
                         .flex_none()
                         .when(compact, |this| this.px_4().py_4())
                         .when(!compact, |this| this.px_6().py_5())
-                        .border_b_1()
-                        .border_color(rgb(palette.border))
                         .flex()
                         .items_center()
                         .justify_between()

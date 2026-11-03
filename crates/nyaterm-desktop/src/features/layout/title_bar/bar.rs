@@ -124,15 +124,15 @@ impl NyaTermApp {
         let narrow_right = compact_layout && self.shell.viewport_size().0 < 768.;
         let header_status_visible = self.settings.summary().ui_header_status_visible;
         let header_status = self.header_status_content();
-        // Match Tauri Header: h-10.
+        // Match Tauri Header: h-10. No background of its own — the Tauri header
+        // is transparent, so the shell root colour shows through and the bar
+        // reads as part of the window surface instead of a white strip that
+        // covers the 6px shell inset at the top.
         div()
             .h(px(40.))
             .flex()
             .items_center()
             .justify_between()
-            .border_b_1()
-            .border_color(rgb(palette.border))
-            .bg(self.shell_surface_color(palette.surface))
             .child(
                 div()
                     .h_full()

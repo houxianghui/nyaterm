@@ -253,8 +253,6 @@ impl NyaTermApp {
             .flex_none()
             .px_3()
             .py_3()
-            .border_b_1()
-            .border_color(rgb(palette.border))
             .flex()
             .flex_col()
             .gap_2()

@@ -173,9 +173,6 @@ pub(in crate::features) fn child_window_header(
         .flex_none()
         .flex()
         .items_center()
-        .border_b_1()
-        .border_color(rgb(palette.border))
-        .bg(rgb(palette.surface))
         .child(
             div()
                 .h_full()
@@ -293,8 +290,6 @@ pub(in crate::features) fn panel_header_with_actions(
         .gap_x_3()
         .px_3()
         .py(px(3.))
-        .border_b_1()
-        .border_color(rgb(palette.border))
         .bg(background)
         .child(
             div()

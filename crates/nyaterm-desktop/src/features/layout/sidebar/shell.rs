@@ -3,6 +3,7 @@ use gpui::{Context, IntoElement, div, prelude::*, px, rgb};
 use crate::features::NyaTermApp;
 use crate::features::pages::remote::RemoteMonitorKind;
 use crate::models::{NavItem, PanelSide};
+use nyaterm_ui::radius_md;
 
 /// Layout for a cached panel subtree.
 ///
@@ -31,6 +32,8 @@ impl NyaTermApp {
             .flex_none()
             .flex()
             .flex_col()
+            .rounded(radius_md())
+            .overflow_hidden()
             .when(draw_shared_edge, |this| this.border_r_1())
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.surface))

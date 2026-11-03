@@ -9,7 +9,9 @@ use gpui::{
     ScrollWheelEvent, SharedString, div, point, prelude::*, px, rgb, rgba, svg,
 };
 use nyaterm_core::truncate_preview;
-use nyaterm_ui::{NyaHoverCard, NyaPopover, NyaPopoverAlign, NyaPopoverPlacement, radius_sm};
+use nyaterm_ui::{
+    NyaHoverCard, NyaPopover, NyaPopoverAlign, NyaPopoverPlacement, radius_md, radius_sm,
+};
 
 use crate::features::NyaTermApp;
 use crate::features::icons::resolve_connection_icon;
@@ -390,6 +392,9 @@ impl NyaTermApp {
             .min_w_0()
             .flex()
             .flex_col()
+            .gap(px(3.))
+            .rounded(radius_md())
+            .overflow_hidden()
             .bg(self.shell_transparent_color(palette.bg))
             .child(self.workspace_view(cx))
     }
@@ -1001,8 +1006,6 @@ impl NyaTermApp {
                     .h_full()
                     .min_w(px(SESSION_TAB_END_DROP_TARGET_MIN_WIDTH))
                     .flex_1()
-                    .border_b_1()
-                    .border_color(rgb(palette.border))
                     .hover(move |this| this.bg(shell_hover_bg))
                     .drag_over::<WorkspaceTabDragPayload>(move |this, payload, _, _| {
                         if payload.source_workspace_id == drop_workspace_id
@@ -1036,8 +1039,6 @@ impl NyaTermApp {
                     )))
                     .h_full()
                     .flex_1()
-                    .border_b_1()
-                    .border_color(rgb(palette.border))
                     .drag_over::<WorkspaceTabDragPayload>(move |this, _, _, _| {
                         this.bg(shell_hover_bg)
                             .border_l_2()
@@ -1069,14 +1070,7 @@ impl NyaTermApp {
             tab_strip_has_overflow || open_tabs_menu
         };
 
-        let mut session_actions = div()
-            .h_full()
-            .flex()
-            .items_center()
-            .gap_0()
-            .border_l_1()
-            .border_b_1()
-            .border_color(rgb(palette.border));
+        let mut session_actions = div().h_full().flex().items_center().gap_0();
 
         if show_open_tabs_menu {
             let open_tabs_trigger = div()

@@ -523,6 +523,8 @@ impl NyaTermApp {
             .flex_none()
             .flex()
             .flex_col()
+            .rounded(radius_md())
+            .overflow_hidden()
             .border_color(rgb(palette.border))
             .when(side == ActivitySide::Left, |this| this.border_r_1())
             .when(side == ActivitySide::Right, |this| this.border_l_1())

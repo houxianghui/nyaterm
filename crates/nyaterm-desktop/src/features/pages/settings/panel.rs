@@ -16,7 +16,7 @@ use nyaterm_core::{
 use nyaterm_ui::{
     NYA_FORM_CONTROL_HEIGHT_PX, NyaInputShell, NyaNumberInputState, NyaSelect, NyaSelectOption,
     NyaSelectState, NyaSettingsLayout, NyaSettingsNavGroup, NyaSettingsNavItem, NyaSliderState,
-    NyaSliderValue, radius_md,
+    NyaSliderValue, radius_md, radius_xl,
 };
 
 use crate::features::selects::SelectRegistry;
@@ -1099,6 +1099,11 @@ impl Render for SettingsPanel {
             .flex_col()
             .size_full()
             .bg(rgb(palette.bg))
+            // This full-size background is what repainted the bottom corners
+            // square even after the window and footer were rounded.
+            .when(native_window, |this| {
+                this.rounded(radius_xl()).overflow_hidden()
+            })
             .when(!native_window, |this| {
                 this.child(
                     div()
@@ -1342,8 +1347,9 @@ impl SettingsPanel {
             .gap_3()
             .px_5()
             .py_3()
-            .border_t_1()
-            .border_color(rgb(palette.border))
+            .rounded_bl(radius_xl())
+            .rounded_br(radius_xl())
+            .overflow_hidden()
             .bg(rgb(palette.section_header))
             .child(
                 div()

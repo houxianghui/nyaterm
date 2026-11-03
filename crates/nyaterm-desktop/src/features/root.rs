@@ -1,4 +1,4 @@
-use nyaterm_ui::{radius_lg, radius_md, radius_sm};
+use nyaterm_ui::{radius_lg, radius_md, radius_sm, radius_xl};
 use std::time::{Duration, Instant};
 
 use crate::models::{MainMode, NavItem, PanelResizeSide, PanelSide};
@@ -446,6 +446,10 @@ impl NyaTermApp {
                     .flex()
                     .flex_col()
                     .size_full()
+                    // React AppLayout keeps the chrome inside a 6px shell inset
+                    // with 3px between the title bar and workspace surfaces.
+                    .p_1p5()
+                    .gap(px(3.))
                     .child(self.title_bar(window, cx))
                     .child(self.workspace_surface(palette, window, cx)),
             );
@@ -466,6 +470,10 @@ impl NyaTermApp {
                 .flex()
                 .flex_1()
                 .min_h_0()
+                .rounded(radius_xl())
+                .border_1()
+                .border_color(rgb(palette.border))
+                .overflow_hidden()
                 .bg(self.shell_surface_color(palette.bg))
                 .child(self.settings_view(cx))
                 .into_any_element()
@@ -498,6 +506,7 @@ impl NyaTermApp {
                 .min_h_0()
                 .relative()
                 .overflow_hidden()
+                .gap(px(3.))
                 .bg(self.shell_transparent_color(palette.bg))
                 .when(has_left_activity_items, |this| {
                     this.child(self.activity_bar(ActivitySide::Left, cx))
@@ -538,6 +547,8 @@ impl NyaTermApp {
                         .left(px(40.))
                         .w(px(width))
                         .flex()
+                        .rounded(radius_md())
+                        .overflow_hidden()
                         .border_r_1()
                         .border_color(rgb(palette.border))
                         .bg(self.shell_surface_color(palette.surface))
@@ -564,6 +575,8 @@ impl NyaTermApp {
                         .right(px(40.))
                         .w(px(width))
                         .flex()
+                        .rounded(radius_md())
+                        .overflow_hidden()
                         .border_l_1()
                         .border_color(rgb(palette.border))
                         .bg(self.shell_surface_color(palette.surface))
@@ -608,6 +621,8 @@ impl NyaTermApp {
                                 .h_full()
                                 .flex()
                                 .flex_col()
+                                .rounded(radius_md())
+                                .overflow_hidden()
                                 .child(self.mobile_drawer_header("mobile-left-close", true, cx))
                                 .child(
                                     div()
@@ -636,6 +651,8 @@ impl NyaTermApp {
                                 .h_full()
                                 .flex()
                                 .flex_col()
+                                .rounded(radius_md())
+                                .overflow_hidden()
                                 .child(self.mobile_drawer_header("mobile-right-close", false, cx))
                                 .child(
                                     div()

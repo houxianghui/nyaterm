@@ -6,7 +6,7 @@ use gpui::{
 
 use crate::theme::ThemePalette;
 use nyaterm_ui::NyaSwitch;
-use nyaterm_ui::radius_lg;
+use nyaterm_ui::radius_xl;
 
 use super::super::NyaTermApp;
 
@@ -44,9 +44,7 @@ pub(super) fn settings_form_section(
     content: impl IntoElement,
 ) -> impl IntoElement {
     div()
-        .rounded(radius_lg())
-        .border_1()
-        .border_color(rgba((palette.border << 8) | 0xb3))
+        .rounded(radius_xl())
         .bg(rgba((palette.surface << 8) | 0x99))
         .overflow_hidden()
         .when(title.is_some() || desc.is_some(), |this| {
@@ -54,8 +52,6 @@ pub(super) fn settings_form_section(
                 div()
                     .px_4()
                     .py_4()
-                    .border_b_1()
-                    .border_color(rgba((palette.surface_elevated << 8) | 0x99))
                     .flex()
                     .flex_col()
                     .gap_1()

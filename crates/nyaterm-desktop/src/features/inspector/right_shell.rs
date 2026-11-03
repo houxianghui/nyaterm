@@ -4,6 +4,7 @@ use std::time::Instant;
 use crate::features::NyaTermApp;
 use crate::features::perf::record_gpui_perf_sample;
 use crate::models::{NavItem, PanelSide};
+use nyaterm_ui::radius_md;
 
 impl NyaTermApp {
     pub(in crate::features) fn right_panel(
@@ -23,6 +24,8 @@ impl NyaTermApp {
             .flex_none()
             .flex()
             .flex_col()
+            .rounded(radius_md())
+            .overflow_hidden()
             .when(draw_shared_edge, |this| this.border_l_1())
             .border_color(rgb(palette.border))
             .bg(self.shell_surface_color(palette.surface))

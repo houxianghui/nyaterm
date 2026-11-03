@@ -160,8 +160,6 @@ impl NyaTermApp {
                     .h(px(40.))
                     .flex_none()
                     .px_2()
-                    .border_b_1()
-                    .border_color(rgb(palette.border))
                     .bg(self.shell_transparent_color(palette.section_header))
                     .flex()
                     .items_center()

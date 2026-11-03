@@ -2,6 +2,7 @@ use gpui::{Context, div, prelude::*, px};
 
 use crate::features::NyaTermApp;
 use crate::models::BottomPanelMode;
+use nyaterm_ui::radius_md;
 
 impl NyaTermApp {
     pub(in crate::features) fn bottom_panel_view(
@@ -14,6 +15,8 @@ impl NyaTermApp {
                 div()
                     .h(px(self.shell.quick_commands_height().clamp(36., 520.)))
                     .flex_none()
+                    .rounded(radius_md())
+                    .overflow_hidden()
                     .bg(self.shell_surface_color(palette.surface))
                     .child(self.quick_commands_panel(cx))
                     .into_any_element()

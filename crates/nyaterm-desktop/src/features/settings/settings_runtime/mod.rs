@@ -3,6 +3,8 @@ use gpui::Context;
 use crate::features::NyaTermApp;
 
 mod helpers;
+#[cfg(target_os = "windows")]
+mod native_frame;
 
 mod draft;
 mod general_interaction;
