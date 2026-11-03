@@ -191,6 +191,17 @@ impl NyaTermApp {
                     Ok((image, width, height)) => {
                         if this.shell.cache_wallpaper(path, image, width, height) {
                             this.refresh_background_surfaces(cx);
+                            this.request_settings_panel_refresh(cx);
+                            // The decoded asset is not part of SettingsSnapshot, so an unchanged
+                            // snapshot alone cannot repaint either independent settings panel.
+                            this.settings_panel.update(cx, |_, cx| cx.notify());
+                            if let Some(panel) = this
+                                .native_settings_panel
+                                .as_ref()
+                                .and_then(gpui::WeakEntity::upgrade)
+                            {
+                                panel.update(cx, |_, cx| cx.notify());
+                            }
                         }
                     }
                     Err(()) if this.shell.wallpaper_is_requested(&path) => {

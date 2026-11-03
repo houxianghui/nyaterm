@@ -70,17 +70,13 @@ impl SettingsPanel {
                     .child(appearance_settings_field(
                         palette,
                         t!("settings.minimumContrastRatio"),
-                        Some(SharedString::from(
-                            t!("settings.minimumContrastRatioDesc"),
-                        )),
+                        Some(SharedString::from(t!("settings.minimumContrastRatioDesc"))),
                         self.appearance_contrast_select(cx),
                     ))
                     .child(settings_form_row(
                         palette,
                         t!("settings.boldDefaultForeground"),
-                        Some(SharedString::from(t!(
-                            "settings.boldDefaultForegroundDesc"
-                        ))),
+                        Some(SharedString::from(t!("settings.boldDefaultForegroundDesc"))),
                         settings_switch(
                             palette,
                             "appearance-bold-default-foreground",
@@ -101,147 +97,21 @@ impl SettingsPanel {
                 palette,
                 None,
                 None,
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_5()
-                    .child(settings_form_row(
+                div().flex().flex_col().gap_5().child(settings_form_row(
+                    palette,
+                    t!("settings.panelMultiOpen"),
+                    Some(SharedString::from(t!("settings.panelMultiOpenDesc"))),
+                    settings_switch(
                         palette,
-                        t!("settings.panelMultiOpen"),
-                        Some(SharedString::from(t!("settings.panelMultiOpenDesc"))),
-                        settings_switch(
-                            palette,
-                            "appearance-panel-multi-open",
-                            self.settings.panel_multi_open(),
-                            cx.listener(|this, _, _, cx| {
-                                this.toggle_panel_multi_open(cx);
-                            }),
-                        ),
-                    )),
+                        "appearance-panel-multi-open",
+                        self.settings.panel_multi_open(),
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_panel_multi_open(cx);
+                        }),
+                    ),
+                )),
             ))
-            .child(settings_form_section(
-                palette,
-                Some(t!("settings.backgroundImage")),
-                Some(t!("settings.backgroundImageDesc")),
-                {
-                    let current_path = self.settings.summary().background_image_path.clone();
-                    let wallpaper = self.with_app(cx, |app, _| {
-                        current_path
-                            .as_deref()
-                            .filter(|path| app.shell.wallpaper_is_requested(path))
-                            .and_then(|_| app.shell.wallpaper_asset())
-                            .map(|asset| asset.image().clone())
-                    });
-                    let path_label = self
-                        .settings
-                        .summary()
-                        .background_image_path
-                        .as_deref()
-                        .map(|p| {
-                            if p.chars().count() > 56 {
-                                format!(
-                                    "…{}",
-                                    p.chars()
-                                        .rev()
-                                        .take(52)
-                                        .collect::<String>()
-                                        .chars()
-                                        .rev()
-                                        .collect::<String>()
-                                )
-                            } else {
-                                p.to_string()
-                            }
-                        })
-                        .unwrap_or_else(|| t!("settings.backgroundImageEmpty").to_string());
-                    let has_image = self.settings.summary().background_image_path.is_some();
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_5()
-                        .can_drop(|drag, _, _| drag.is::<ExternalPaths>())
-                        .on_drop(cx.listener(
-                            |panel, paths: &ExternalPaths, _, cx| {
-                                let Some(path) = appearance_wallpaper_drop_path(paths.paths())
-                                    .map(Path::to_path_buf)
-                                else {
-                                    return;
-                                };
-                                panel.with_app(cx, |app, cx| {
-                                    app.select_background_image(path, cx);
-                                });
-                            },
-                        ))
-                        .when_some(wallpaper, |this, image| {
-                            this.child(
-                                div()
-                                    .w_full()
-                                    .max_w(px(576.))
-                                    .h(px(144.))
-                                    .overflow_hidden()
-                                    .rounded(radius_md())
-                                    .border_1()
-                                    .border_color(rgb(palette.border))
-                                    .child(img(image).size_full().object_fit(ObjectFit::Cover)),
-                            )
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .h(px(NYA_FORM_CONTROL_HEIGHT_PX))
-                                        .flex()
-                                        .items_center()
-                                        .min_w_0()
-                                        .flex_1()
-                                        .px_3()
-                                        .rounded(radius_sm())
-                                        .border_1()
-                                        .border_color(rgb(palette.border))
-                                        .bg(rgb(palette.input))
-                                        .font_family(crate::features::shell::gpui_code_font_family())
-                                        .text_size(px(11.))
-                                        .text_color(rgb(if has_image {
-                                            palette.text
-                                        } else {
-                                            palette.text_muted
-                                        }))
-                                        .child(div().min_w_0().truncate().child(path_label)),
-                                )
-                                .child(appearance_icon_text_button(
-                                    palette,
-                                    "appearance-wallpaper-browse",
-                                    "icons/conn/folder.svg",
-                                    t!("settings.selectBackgroundImage"),
-                                    cx.listener(|this, _, _, cx| {
-                                        this.prompt_background_image(cx);
-                                    }),
-                                ))
-                                .when(has_image, |this| {
-                                    this.child(appearance_icon_text_button(
-                                        palette,
-                                        "appearance-wallpaper-clear",
-                                        "icons/fe/delete.svg",
-                                        t!("settings.removeBackgroundImage"),
-                                        cx.listener(|this, _, _, cx| {
-                                            this.clear_background_image(cx);
-                                        }),
-                                    ))
-                                }),
-                        )
-                        .child(appearance_settings_field(
-                            palette,
-                            t!("settings.backgroundImageFit"),
-                            None,
-                            self.appearance_background_fit_select(has_image, cx),
-                        ))
-                        .child(self.appearance_opacity_slider(AppearanceOpacity::Image, has_image, cx))
-                },
-            ))
+            .child(self.appearance_background_image_section(cx))
             .child(self.appearance_font_stack_settings_section(false, cx))
             .child(self.appearance_font_stack_settings_section(true, cx))
             .child(settings_form_section(
@@ -272,6 +142,140 @@ impl SettingsPanel {
                         ),
                     )),
             ))
+    }
+
+    fn appearance_background_image_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = self.theme_palette();
+        settings_form_section(
+            palette,
+            Some(t!("settings.backgroundImage")),
+            Some(t!("settings.backgroundImageDesc")),
+            {
+                let wallpaper = self.appearance_wallpaper_preview(cx);
+                let path_label = self
+                    .settings
+                    .summary()
+                    .background_image_path
+                    .as_deref()
+                    .map(|p| {
+                        if p.chars().count() > 56 {
+                            format!(
+                                "…{}",
+                                p.chars()
+                                    .rev()
+                                    .take(52)
+                                    .collect::<String>()
+                                    .chars()
+                                    .rev()
+                                    .collect::<String>()
+                            )
+                        } else {
+                            p.to_string()
+                        }
+                    })
+                    .unwrap_or_else(|| t!("settings.backgroundImageEmpty").to_string());
+                let has_image = self.settings.summary().background_image_path.is_some();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_5()
+                    .debug_selector(|| "appearance-wallpaper-drop".to_string())
+                    .can_drop(|drag, _, _| drag.is::<ExternalPaths>())
+                    .on_drop(cx.listener(|panel, paths: &ExternalPaths, _, cx| {
+                        let Some(path) =
+                            appearance_wallpaper_drop_path(paths.paths()).map(Path::to_path_buf)
+                        else {
+                            return;
+                        };
+                        panel.with_app(cx, |app, cx| {
+                            app.select_background_image(path, cx);
+                        });
+                    }))
+                    .when_some(wallpaper, |this, image| {
+                        this.child(
+                            div()
+                                .w_full()
+                                .max_w(px(576.))
+                                .h(px(144.))
+                                .overflow_hidden()
+                                .rounded(radius_md())
+                                .border_1()
+                                .border_color(rgb(palette.border))
+                                .debug_selector(|| "appearance-wallpaper-preview".to_string())
+                                .child(img(image).size_full().object_fit(ObjectFit::Cover)),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .h(px(NYA_FORM_CONTROL_HEIGHT_PX))
+                                    .flex()
+                                    .items_center()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .px_3()
+                                    .rounded(radius_sm())
+                                    .border_1()
+                                    .border_color(rgb(palette.border))
+                                    .bg(rgb(palette.input))
+                                    .font_family(crate::features::shell::gpui_code_font_family())
+                                    .text_size(px(11.))
+                                    .text_color(rgb(if has_image {
+                                        palette.text
+                                    } else {
+                                        palette.text_muted
+                                    }))
+                                    .child(div().min_w_0().truncate().child(path_label)),
+                            )
+                            .child(appearance_icon_text_button(
+                                palette,
+                                "appearance-wallpaper-browse",
+                                "icons/conn/folder.svg",
+                                t!("settings.selectBackgroundImage"),
+                                cx.listener(|this, _, _, cx| {
+                                    this.prompt_background_image(cx);
+                                }),
+                            ))
+                            .when(has_image, |this| {
+                                this.child(appearance_icon_text_button(
+                                    palette,
+                                    "appearance-wallpaper-clear",
+                                    "icons/fe/delete.svg",
+                                    t!("settings.removeBackgroundImage"),
+                                    cx.listener(|this, _, _, cx| {
+                                        this.clear_background_image(cx);
+                                    }),
+                                ))
+                            }),
+                    )
+                    .child(appearance_settings_field(
+                        palette,
+                        t!("settings.backgroundImageFit"),
+                        None,
+                        self.appearance_background_fit_select(has_image, cx),
+                    ))
+                    .child(self.appearance_opacity_slider(AppearanceOpacity::Image, has_image, cx))
+            },
+        )
+    }
+
+    fn appearance_wallpaper_preview(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<gpui::RenderImage>> {
+        let current_path = self.settings.summary().background_image_path.clone();
+        self.with_app(cx, |app, _| {
+            current_path
+                .as_deref()
+                .filter(|path| app.shell.wallpaper_is_requested(path))
+                .and_then(|_| app.shell.wallpaper_asset())
+                .map(|asset| asset.image().clone())
+        })
     }
 
     fn appearance_font_stack_settings_section(
@@ -856,74 +860,297 @@ fn appearance_wallpaper_drop_path(paths: &[PathBuf]) -> Option<&Path> {
 }
 
 #[cfg(test)]
-fn appearance_wallpaper_preview_is_current(
-    draft_path: Option<&str>,
-    cached_path: Option<&str>,
-) -> bool {
-    matches!((draft_path, cached_path), (Some(draft), Some(cached)) if draft == cached)
-}
-
-#[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
 
+    use gpui::{
+        AppContext as _, Entity, ExternalPaths, FileDropEvent, IntoElement, ParentElement as _,
+        PlatformInput, Render, RenderImage, Styled as _, TestAppContext, VisualTestContext, div,
+        point, px,
+    };
+    use nyaterm_core::{AppRuntime, RuntimeMode};
+
+    use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
+    use crate::features::NyaTermApp;
+    use crate::features::pages::settings::panel::SettingsPanel;
+    use crate::models::{NavItem, SettingsTab};
     use crate::test_support::TestConfigDir;
 
-    use super::{appearance_wallpaper_drop_path, appearance_wallpaper_preview_is_current};
+    struct MainHost {
+        panel: Entity<SettingsPanel>,
+    }
 
-    #[test]
-    fn appearance_wallpaper_drop_preview_requires_current_cached_path() {
-        assert!(!appearance_wallpaper_preview_is_current(None, None));
-        assert!(!appearance_wallpaper_preview_is_current(
-            Some("current.png"),
-            None
-        ));
-        assert!(appearance_wallpaper_preview_is_current(
-            Some("current.png"),
-            Some("current.png")
-        ));
-        assert!(!appearance_wallpaper_preview_is_current(
-            Some("current.png"),
-            Some("previous.png")
-        ));
+    impl Render for MainHost {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div().size_full().child(self.panel.clone())
+        }
+    }
+
+    struct WallpaperHost {
+        panel: Entity<SettingsPanel>,
+    }
+
+    impl Render for WallpaperHost {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div()
+                .w(px(720.))
+                .h(px(560.))
+                .child(self.panel.update(cx, |panel, cx| {
+                    panel
+                        .appearance_background_image_section(cx)
+                        .into_any_element()
+                }))
+        }
+    }
+
+    fn app(cx: &mut TestAppContext, root: &Path) -> Entity<NyaTermApp> {
+        let runtime = AppRuntime::from_parts_for_test(
+            RuntimeMode::Portable,
+            root.to_path_buf(),
+            root.join("config"),
+            root.join("logs"),
+            root.join("cache"),
+            None,
+        );
+        let stores = UiStoreHandles {
+            startup_restore: cx.new(|_| StartupRestoreStore::default()),
+            overlays: cx.new(|_| OverlayStore::default()),
+        };
+        let app = cx.new(|cx| NyaTermApp::new(runtime, stores, cx));
+        cx.update_entity(&app, |app, cx| {
+            app.sync_component_theme(cx);
+            app.open_page(NavItem::Settings, cx);
+            app.shell.set_settings_active_tab(SettingsTab::Appearance);
+            app.flush_settings_panel_snapshots(cx);
+        });
+        app
+    }
+
+    fn main_panel_window<'a>(
+        cx: &'a mut TestAppContext,
+        app: &Entity<NyaTermApp>,
+    ) -> (Entity<SettingsPanel>, &'a mut VisualTestContext) {
+        let panel = cx.update_entity(app, |app, _| app.settings_panel.clone());
+        let host_panel = panel.clone();
+        let (_, vcx) = cx.add_window_view(move |_, _| MainHost {
+            panel: host_panel.clone(),
+        });
+        let vcx: &mut VisualTestContext = vcx;
+        vcx.run_until_parked();
+        vcx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        vcx.run_until_parked();
+        (panel, vcx)
+    }
+
+    fn wallpaper_window<'a>(
+        cx: &'a mut TestAppContext,
+        app: &Entity<NyaTermApp>,
+    ) -> &'a mut VisualTestContext {
+        let panel = cx.update_entity(app, |app, _| app.settings_panel.clone());
+        let (_, vcx) = cx.add_window_view(move |_, _| WallpaperHost {
+            panel: panel.clone(),
+        });
+        let vcx: &mut VisualTestContext = vcx;
+        vcx.run_until_parked();
+        vcx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        vcx.run_until_parked();
+        vcx
+    }
+
+    fn external_paths(paths: impl IntoIterator<Item = PathBuf>) -> ExternalPaths {
+        ExternalPaths(paths.into_iter().collect())
+    }
+
+    fn dispatch_wallpaper_drop(vcx: &mut VisualTestContext, paths: ExternalPaths) {
+        let bounds = vcx
+            .debug_bounds("appearance-wallpaper-drop")
+            .expect("wallpaper drop target bounds");
+        let position = point(
+            bounds.origin.x + bounds.size.width / 2.,
+            bounds.origin.y + bounds.size.height / 2.,
+        );
+        vcx.update(|window, cx| {
+            _ = window.dispatch_event(
+                PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }),
+                cx,
+            );
+            _ = window.dispatch_event(
+                PlatformInput::FileDrop(FileDropEvent::Submit { position }),
+                cx,
+            );
+            _ = window.dispatch_event(PlatformInput::FileDrop(FileDropEvent::Ended), cx);
+        });
+    }
+
+    fn image() -> Arc<RenderImage> {
+        Arc::new(RenderImage::new(vec![image::Frame::new(
+            image::RgbaImage::new(1, 1),
+        )]))
     }
 
     #[test]
-    fn appearance_wallpaper_drop_rejects_multiple_files() {
-        let temp = TestConfigDir::new("nyaterm-wallpaper-drop-multiple");
-        fs::create_dir_all(temp.path()).expect("create test directory");
-        let first = temp.path().join("first.png");
-        let second = temp.path().join("second.jpg");
-        fs::write(&first, []).expect("create first image");
-        fs::write(&second, []).expect("create second image");
+    fn appearance_wallpaper_drop_preview_uses_only_current_cached_asset() {
+        let temp = TestConfigDir::new("nyaterm-wallpaper-preview-state");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx, temp.path());
+        let panel = cx.update_entity(&app, |app, _| app.settings_panel.clone());
 
-        assert_eq!(appearance_wallpaper_drop_path(&[first, second]), None);
+        let no_path_preview = cx.update_entity(&app, |_, cx| {
+            panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx))
+        });
+        assert!(no_path_preview.is_none());
+
+        let current = temp.path().join("current.png").display().to_string();
+        let cached_image = image();
+        cx.update_entity(&app, |app, cx| {
+            app.settings.select_background_image(current.clone());
+            assert!(app.shell.request_wallpaper(Some(current.clone())));
+            assert!(
+                app.shell
+                    .cache_wallpaper(current.clone(), cached_image.clone(), 1, 1)
+            );
+            app.flush_settings_panel_snapshots(cx);
+        });
+        let current_preview = cx.update_entity(&app, |_, cx| {
+            panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx))
+        });
+        assert!(Arc::ptr_eq(
+            &current_preview.expect("current wallpaper preview"),
+            &cached_image
+        ));
+
+        cx.update_entity(&app, |app, cx| {
+            app.settings
+                .select_background_image(temp.path().join("next.png").display().to_string());
+            app.flush_settings_panel_snapshots(cx);
+        });
+        let stale_preview = cx.update_entity(&app, |app, cx| {
+            assert!(app.shell.wallpaper_asset().is_some());
+            panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx))
+        });
+        assert!(stale_preview.is_none());
     }
 
     #[test]
-    fn appearance_wallpaper_drop_rejects_directories_and_unsupported_extensions() {
+    fn appearance_wallpaper_drop_rejects_invalid_paths_without_touching_draft() {
         let temp = TestConfigDir::new("nyaterm-wallpaper-drop-invalid");
         let directory = temp.path().join("directory.png");
         let text = temp.path().join("notes.txt");
-        fs::create_dir_all(&directory).expect("create test directory");
-        fs::write(&text, []).expect("create text file");
+        let first = temp.path().join("first.png");
+        let second = temp.path().join("second.jpg");
+        std::fs::create_dir_all(&directory).expect("create test directory");
+        std::fs::write(&text, []).expect("create text file");
+        std::fs::write(&first, []).expect("create first image");
+        std::fs::write(&second, []).expect("create second image");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx, temp.path());
+        let vcx = wallpaper_window(&mut cx, &app);
+        let before = vcx.update(|_, cx| app.read(cx).settings.summary().clone());
+        let before_store_message =
+            vcx.update(|_, cx| app.read(cx).settings.store_status().message.to_string());
 
-        assert_eq!(appearance_wallpaper_drop_path(&[directory]), None);
-        assert_eq!(appearance_wallpaper_drop_path(&[text]), None);
+        for paths in [
+            external_paths([first, second]),
+            external_paths([directory]),
+            external_paths([text]),
+        ] {
+            dispatch_wallpaper_drop(vcx, paths);
+        }
+        vcx.run_until_parked();
+
+        vcx.update(|_, cx| {
+            let app = app.read(cx);
+            assert_eq!(*app.settings.summary(), before);
+            assert_eq!(app.settings.store_status().message, before_store_message);
+            assert!(app.shell.wallpaper_asset().is_none());
+        });
     }
 
     #[test]
-    fn appearance_wallpaper_drop_accepts_one_supported_image_file() {
+    fn appearance_wallpaper_drop_selects_queues_and_stages_one_image() {
         let temp = TestConfigDir::new("nyaterm-wallpaper-drop-valid");
-        fs::create_dir_all(temp.path()).expect("create test directory");
+        std::fs::create_dir_all(temp.path()).expect("create test directory");
+        let path = temp.path().join("wallpaper.png");
+        image::RgbaImage::new(1, 1)
+            .save(&path)
+            .expect("write image");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx, temp.path());
+        let vcx = wallpaper_window(&mut cx, &app);
+        let before = vcx.update(|_, cx| app.read(cx).settings.summary().clone());
 
-        for extension in ["png", "jpg", "jpeg", "webp"] {
-            let path = temp.path().join(format!("wallpaper.{extension}"));
-            fs::write(&path, []).expect("create image file");
-            assert_eq!(
-                appearance_wallpaper_drop_path(std::slice::from_ref(&path)),
-                Some(path.as_path())
+        dispatch_wallpaper_drop(vcx, external_paths([path.clone()]));
+
+        vcx.update(|_, cx| {
+            let app = app.read(cx);
+            let mut expected = before.clone();
+            expected.background_image_path = Some(path.display().to_string());
+            assert_eq!(*app.settings.summary(), expected);
+            assert!(
+                app.shell
+                    .wallpaper_is_requested(&path.display().to_string())
             );
-        }
+            assert!(app.shell.wallpaper_asset().is_none());
+            assert_eq!(
+                app.settings.store_status().message,
+                "appearance settings changes staged"
+            );
+        });
+        vcx.run_until_parked();
+        vcx.update(|_, cx| {
+            assert!(app.read(cx).shell.wallpaper_asset().is_some());
+        });
+    }
+
+    #[test]
+    fn appearance_wallpaper_drop_async_cache_repaints_panel_preview() {
+        let temp = TestConfigDir::new("nyaterm-wallpaper-preview-lifecycle");
+        std::fs::create_dir_all(temp.path()).expect("create test directory");
+        let path = temp.path().join("wallpaper.png");
+        image::RgbaImage::new(1, 1)
+            .save(&path)
+            .expect("write image");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx, temp.path());
+        let (panel, vcx) = main_panel_window(&mut cx, &app);
+        assert!(vcx.debug_bounds("appearance-wallpaper-preview").is_none());
+
+        vcx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.select_background_image(path.clone(), cx);
+                assert!(app.shell.wallpaper_asset().is_none());
+                app.flush_settings_panel_snapshots(cx);
+            });
+            _ = window.draw(cx);
+        });
+        assert!(vcx.debug_bounds("appearance-wallpaper-preview").is_none());
+        let paints_before_cache = vcx.update(|_, cx| panel.read(cx).paint_count());
+
+        vcx.run_until_parked();
+
+        vcx.update(|_, cx| {
+            assert!(app.read(cx).shell.wallpaper_asset().is_some());
+            let preview = panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx));
+            assert!(preview.is_some());
+            assert!(panel.read(cx).paint_count() > paints_before_cache);
+        });
+        assert!(vcx.debug_bounds("appearance-wallpaper-preview").is_some());
     }
 }
