@@ -2695,6 +2695,7 @@
     "keybindingsCustom": "Personnalisé",
     "keybindingsIndexedHint": "Appuyez sur le raccourci et le chiffre 1.",
     "keybindingsIndexedInvalid": "Échec. Réinitialisé par défaut.",
+    "keybindingsNoMatches": "Aucun raccourci ne correspond aux filtres",
     "keybindingsRecording": "Appuyez sur la combinaison de touches…",
     "keybindingsReset": "Réinitialiser",
     "keybindingsResetAll": "Tout réinitialiser",

@@ -2688,6 +2688,7 @@
     "keybindingsCustom": "自定义",
     "keybindingsIndexedHint": "按下快捷键和数字1键",
     "keybindingsIndexedInvalid": "设置失败，已恢复默认值。",
+    "keybindingsNoMatches": "没有符合筛选条件的快捷键",
     "keybindingsRecording": "请按下快捷键组合...",
     "keybindingsReset": "恢复默认",
     "keybindingsResetAll": "全部重置",

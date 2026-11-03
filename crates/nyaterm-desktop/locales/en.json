@@ -2688,6 +2688,7 @@
     "keybindingsCustom": "Custom",
     "keybindingsIndexedHint": "Press the shortcut and number 1.",
     "keybindingsIndexedInvalid": "Failed. Reset to default.",
+    "keybindingsNoMatches": "No shortcuts match your filters",
     "keybindingsRecording": "Press key combination...",
     "keybindingsReset": "Reset",
     "keybindingsResetAll": "Reset All",

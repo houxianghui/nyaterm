@@ -2695,6 +2695,7 @@
     "keybindingsCustom": "사용자 지정",
     "keybindingsIndexedHint": "단축키와 숫자 1을 누르세요.",
     "keybindingsIndexedInvalid": "실패했습니다. 기본값으로 재설정합니다.",
+    "keybindingsNoMatches": "필터와 일치하는 단축키가 없습니다",
     "keybindingsRecording": "키 조합을 누르세요...",
     "keybindingsReset": "재설정",
     "keybindingsResetAll": "모두 재설정",

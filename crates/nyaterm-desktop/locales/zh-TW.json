@@ -2695,6 +2695,7 @@
     "keybindingsCustom": "自訂",
     "keybindingsIndexedHint": "按下快捷鍵和數字1鍵",
     "keybindingsIndexedInvalid": "設定失敗，已恢復預設值。",
+    "keybindingsNoMatches": "沒有符合篩選條件的快捷鍵",
     "keybindingsRecording": "請按下快捷鍵組合...",
     "keybindingsReset": "恢復預設",
     "keybindingsResetAll": "全部重置",

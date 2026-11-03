@@ -2695,6 +2695,7 @@
     "keybindingsCustom": "カスタム",
     "keybindingsIndexedHint": "ショートカットと数字の 1 を押してください。",
     "keybindingsIndexedInvalid": "失敗しました。既定にリセットしました。",
+    "keybindingsNoMatches": "条件に一致するショートカットがありません",
     "keybindingsRecording": "キーの組み合わせを押してください...",
     "keybindingsReset": "リセット",
     "keybindingsResetAll": "すべてリセット",
