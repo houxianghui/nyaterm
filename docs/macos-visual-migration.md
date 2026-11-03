@@ -1,6 +1,6 @@
 # GPUI macOS 风格化迁移记录
 
-本文汇总截至 2026-11-03 的 macOS 风格化工作、有效实现、验证结果和踩坑记录。后续继续视觉对齐时先阅读本文；涉及圆角、透明窗口或 Windows 原生边框时，还必须阅读 [GPUI 圆角与独立窗口边框修复指南](gpui-rounded-windows.md)。
+本文汇总截至 2026-11-04 的 macOS 风格化工作、有效实现、验证结果和踩坑记录。后续继续视觉对齐时先阅读本文；涉及圆角、透明窗口或 Windows 原生边框时，还必须阅读 [GPUI 圆角与独立窗口边框修复指南](gpui-rounded-windows.md)。
 
 ## 1. 目标与边界
 
@@ -31,6 +31,8 @@
 | 面板与独立设置窗口 | `e4d2f1769` | 面板圆角和间距、标题栏沉浸、分割线清理、设置卡片与独立窗口无边框圆角 |
 | 设置窗口缩放 | `c0683cfcd` | 用延迟 `PostMessageW(WM_SYSCOMMAND)` 修复真实鼠标无法拖动的问题 |
 | 圆角专项文档 | `e9b904161` | 记录有效 DWM 组合、失败方案、渲染层与验收要求，并在 `AGENTS.md` 建立优先参考入口 |
+| 设置共享布局 | `bd12dbe32` | 删除设置页重复标题区，独立窗口与主窗口内嵌设置页共用紧凑布局 |
+| macOS 交互第一阶段 | `f7593b13b`…`1cb606ba0` | segmented、菜单/焦点可见性、常规与交互页短选项、背景图预览、快捷键筛选与空状态 |
 
 ### 2.1 菜单选中态
 
@@ -70,9 +72,11 @@ fork 使用 **6 / 8 / 10 / 14px**，GPUI 内建尺度是 4 / 6 / 8 / 12px。统�
 
 详细原因和禁止重复的方案见 [圆角专项指南](gpui-rounded-windows.md)。
 
-## 3. 当前已实现、等待最终视觉验收的改动
+## 3. 设置共享布局与第一阶段交互
 
-以下修改已在本地完成 `cargo check` 和 release 构建，并已启动便携版，但**尚未提交，也不写成用户已验收**：
+### 3.1 设置共享布局
+
+`bd12dbe32` 已提交以下共享布局修改：
 
 - 删除左侧栏顶部齿轮和重复的“设置”整块标题区，回收 64px 空白。
 - 删除右侧“常规”“终端”“AI”等页面大标题区，表单内容直接上移。
@@ -84,7 +88,11 @@ fork 使用 **6 / 8 / 10 / 14px**，GPUI 内建尺度是 4 / 6 / 8 / 12px。统�
 - `crates/nyaterm-ui/src/settings.rs`
 - `crates/nyaterm-desktop/src/features/pages/settings/panel.rs`
 
-滚动容器、按 tab 保存的 `ScrollHandle`、响应式 padding、圆角和缩放代码未改变。
+滚动容器、按 tab 保存的 `ScrollHandle`、响应式 padding、圆角和缩放代码未改变。本次便携版已实测常规页滚动位置在切换到外观页再返回后保持不变。
+
+### 3.2 第一阶段交互实现
+
+已提交 `NyaSegmentedControl`、菜单勾选与焦点可见性、常规/交互页 segmented、背景图预览与安全 drop、快捷键“仅自定义”筛选和空状态。实现提交完成不等于 desktop 测试已执行或真实 UI 全部通过；具体限制见第 4 节。
 
 ## 4. 已完成的验证
 
@@ -102,9 +110,33 @@ fork 使用 **6 / 8 / 10 / 14px**，GPUI 内建尺度是 4 / 6 / 8 / 12px。统�
   - 右边缘：816×568 → 876×568。
   - 右下角：816×568 → 876×608。
   - 两次均恢复原尺寸，随后复核上下外圈白线为 0。
-- 标题删减版已启动等待视觉验收，不能提前视为完成。
+- 设置共享布局已包含在本次便携版中，并完成滚动恢复、窄窗口与右下缩放复测。
 
 本机曾拒绝执行 desktop 测试二进制，错误为 `拒绝访问 (os error 5)`。这种情况下只能记录“测试已编译但未执行”，由 CI 补跑，不能声称本地测试通过。
+
+### 第一阶段交互验收（2026-11-04）
+
+本地命令的真实结果：
+
+- `cargo fmt --all -- --check`：通过，无输出。
+- `cargo check --workspace --locked`：通过，2 分 51 秒。
+- `cargo test -p nyaterm-ui segmented --lib`：8 passed，0 failed。
+- `cargo test -p nyaterm-desktop settings_segmented --lib`：编译成功，测试进程从未执行；`拒绝访问 (os error 5)`，exit 101。
+- `cargo test -p nyaterm-desktop keybinding_custom_only --lib`：编译成功，测试进程从未执行；`拒绝访问 (os error 5)`，exit 101。
+- `cargo build --release --target x86_64-pc-windows-msvc -p nyaterm-app --bin nyaterm`：通过，12 分 59 秒。
+- 便携 ZIP 重打成功：`NyaTerm_local-gpui_windows_x64_portable.zip`，54,009,846 字节。
+
+便携版使用独立 `data` 目录，验收输入为真实鼠标和键盘事件，截图为真实屏幕抓取，未使用 `PrintWindow`。实际结果：
+
+- 常规页：点击 Debug、Home 到 Warn、Right 到 Info、End 到 Debug 均有屏幕选中态证据；从 Info 按 Left 仍停在 Info，从 Debug 按 Left 也仍停在 Debug，**Left 未通过**。
+- 交互页：点击 Paste 生效，Home 后 Right 返回 Menu；数值输入仍显示 Min History Length 2、Max History Length 64。
+- 外观页：WindTerm Light/Dark 均真实切换；有效 PNG 出现预览，损坏 PNG 选择后旧预览像素归零。未覆盖“已持久化但文件不存在”的路径场景。
+- 快捷键页：仅自定义筛选为空、搜索与仅自定义组合为空时均显示 `No shortcuts match your filters`；但开启后再次点击 Custom 及使用 Space 都未恢复列表，**筛选往返未通过**。
+- 常规页滚动位置在页面切换后恢复；679×608 窄窗口仍显示导航、搜索、筛选和空状态。
+- 独立设置窗口右下角真实拖动：816×568 → 876×608，随后缩到 679×608 并恢复 816×568；真实屏幕边缘未出现白色直角外框。
+- disabled 的 segmented 点击行为仅由上述 UI 定向测试覆盖；本次四个页面没有可用于单独验收的 disabled segmented 实例。
+
+因此第一阶段不能标记为“全部验收通过”。Left 导航和 Custom 筛选往返需要后续修复与复测，desktop 测试仍需在允许执行测试二进制的环境补跑。
 
 ## 5. 关键坑点与禁止重复的试错
 
@@ -158,8 +190,8 @@ fork 使用 **6 / 8 / 10 / 14px**，GPUI 内建尺度是 4 / 6 / 8 / 12px。统�
 
 ## 7. 后续工作顺序
 
-1. 用户确认标题删减版的实际视觉效果。
-2. 提交该共享布局修改并运行 CI。
-3. 若继续逐屏核对，优先使用真实截图检查所有设置 tab、主窗口各面板、亮暗主题和窄窗口布局。
-4. 圆角或原生窗口问题先查专项指南，不再从 DWM 属性逐项盲试。
-5. 每次视觉修改同时检查导航、滚动、窗口缩放和底部操作区，避免只修外观。
+1. 修复 segmented 的 Left 真实键盘导航，并补充 left 定向测试和常规/交互页复测。
+2. 修复快捷键 Custom 在空状态下的往返切换，分别复测仅搜索、仅自定义及组合筛选。
+3. 在允许执行测试二进制的环境补跑 desktop 定向测试，不能把编译成功当作测试通过。
+4. 补验已持久化但文件不存在的背景图路径；disabled segmented 若无实际页面入口，继续明确其覆盖仅限组件测试。
+5. 圆角或原生窗口问题先查专项指南；后续设置子系统按独立计划推进，不在第一阶段夹带新页面迁移。

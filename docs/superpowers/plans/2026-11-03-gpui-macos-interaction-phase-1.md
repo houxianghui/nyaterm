@@ -39,7 +39,7 @@
 - Consumes: `gpui_kit::component::button::{Toggle, ToggleGroup, ToggleVariant}`，以及 `Disableable` 和 `ToggleVariants`。
 - Produces: `NyaSegmentedControl::new(id).items(...).selected_index(...).disabled(...).on_select(...)`，回调签名为 `Fn(&usize, &mut Window, &mut App)`。
 
-- [ ] **Step 1: 写点击、禁用和键盘失败测试**
+- [x] **Step 1: 写点击、禁用和键盘失败测试**
 
 使用 `TestAppContext` 创建三项控件，断言点击第二项只回调索引 `1`；disabled 点击无回调；聚焦后 `right` 到下一项、`home` 到第一项、`end` 到最后一项。增加空选项和 `selected_index(Some(9))` 不 panic 的渲染测试。
 
@@ -51,12 +51,12 @@ let control = NyaSegmentedControl::new("log-level")
     .on_select(|index, _, _| clicks.borrow_mut().push(*index));
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test -p nyaterm-ui segmented --lib`  
 Expected: 因 `nyaterm_ui::segmented` 尚不存在而失败。
 
-- [ ] **Step 3: 实现单选 segmented 封装**
+- [x] **Step 3: 实现单选 segmented 封装**
 
 字段与 `NyaRadioGroup` 保持一致：`id/items/selected_index/disabled/on_select`。渲染时把每个 item 转成 `Toggle::new(index).label(item).checked(selected_index == Some(index))`，再组成 `ToggleGroup::new(id).segmented().with_variant(ToggleVariant::Outline).disabled(disabled)`。
 
@@ -84,14 +84,14 @@ let group = ToggleGroup::new(self.id)
     });
 ```
 
-- [ ] **Step 4: 导出并运行测试**
+- [x] **Step 4: 导出并运行测试**
 
 在 `lib.rs` 添加 `mod segmented;` 和 `pub use segmented::NyaSegmentedControl;`。
 
 Run: `cargo test -p nyaterm-ui segmented --lib`  
 Expected: 点击、disabled、键盘、空列表和越界测试全部通过。
 
-- [ ] **Step 5: 格式检查并提交**
+- [x] **Step 5: 格式检查并提交**
 
 Run: `cargo fmt -p nyaterm-ui -- --check && cargo check -p nyaterm-ui`
 
@@ -113,17 +113,17 @@ git commit -m "feat(ui): 增加 macOS segmented 单选控件"
 - Consumes: 当前 `ActivityBarZone`、`entry_zone`、标签/会话 hover 状态。
 - Produces: 菜单当前区域带 `icons/check.svg`；设置嵌套行无竖线；键盘聚焦的行操作保持可见。
 
-- [ ] **Step 1: 添加菜单状态与可见性失败测试**
+- [x] **Step 1: 添加菜单状态与可见性失败测试**
 
 测试当前 zone 产生 check icon，其他 zone 不产生；startup restore 嵌套行不再包含 `border_l_1`；标签和会话操作在 focused 时最终 opacity 为 `1.0` 而非 `0.0`。
 
-- [ ] **Step 2: 运行定向测试确认失败**
+- [x] **Step 2: 运行定向测试确认失败**
 
 Run: `cargo test -p nyaterm-desktop activity_bar_menu --lib`  
 Run: `cargo test -p nyaterm-desktop tab_close --lib`  
 Expected: 当前实现缺少 check icon 和 focused 可见分支。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 Activity Bar 保留选中项不可重复移动，但在 label 前添加 check icon。General 删除 `.border_l_1().border_color(...)`，保留 `.pl_3().ml_1()`。标签/会话 opacity 条件改为 `hovered || selected || focused`，不得让必要关闭操作只在鼠标 hover 时出现。
 
@@ -156,16 +156,16 @@ git commit -m "feat(ui): 统一菜单勾选与焦点可见性"
 - Consumes: `NyaSegmentedControl`。
 - Produces: `settings_segmented_control(id, labels, selected_index, disabled, on_select)`，不持有 SelectRegistry。
 
-- [ ] **Step 1: 写选项索引和状态回写失败测试**
+- [x] **Step 1: 写选项索引和状态回写失败测试**
 
 为 `["warn", "info", "debug"]` 断言当前 `info` 的索引为 `1`，未知值返回 `None`。调用现有 `set_diagnostics_level("debug")` 和 `set_diagnostics_retention_days(14)`，断言只改变对应 draft 字段。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test -p nyaterm-desktop settings_segmented --lib`  
 Expected: helper 不存在，测试失败。
 
-- [ ] **Step 3: 添加共享 helper 并迁移常规页**
+- [x] **Step 3: 添加共享 helper 并迁移常规页**
 
 实现：
 
@@ -201,16 +201,16 @@ git commit -m "feat(settings): 常规页短选项改为 segmented"
 **Interfaces:**
 - Consumes: Task 3 的 `settings_segmented_control`、现有 `set_terminal_right_click_action` 和 `NyaNumberInput`。
 
-- [ ] **Step 1: 写右键行为映射失败测试**
+- [x] **Step 1: 写右键行为映射失败测试**
 
 验证 `none/menu/paste` 对应索引 0/1/2，选择 paste 只调用现有右键行为 setter，旧 `interaction_right_click_paste` 兼容映射不被破坏。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test -p nyaterm-desktop interaction_right_click --lib`  
 Expected: 当前下拉实现没有 segmented 映射。
 
-- [ ] **Step 3: 迁移右键行为并保留数值 stepper**
+- [x] **Step 3: 迁移右键行为并保留数值 stepper**
 
 将 terminal right-click 三项改为 segmented。命令建议最小/最大字符继续使用现有 `NyaNumberInput` 的步进按钮、边界 clamp 和 draft setter，不另造数值组件。Tab 双击/中键/右键的其他行为逐项迁移，未知持久化值继续由现有 `NyaSelect` 显示，不能静默改成默认值。
 
@@ -249,16 +249,16 @@ git commit -m "feat(settings): 交互页短行为改为 segmented"
 - Consumes: `app.shell.wallpaper_asset()`、`WallpaperAsset::image()`、`gpui::ExternalPaths`、现有 `select_background_image` 和 `queue_wallpaper_refresh`。
 - Produces: 当前 wallpaper 的只读缩略预览和单文件图片 drop 入口。
 
-- [ ] **Step 1: 写路径和 drop 失败测试**
+- [x] **Step 1: 写路径和 drop 失败测试**
 
 覆盖：无路径无预览；当前 cache 与 draft 路径一致才显示预览；旧路径 cache 不显示；多文件 drop 不修改 draft；目录或非 png/jpg/jpeg/webp 扩展不修改 draft；单个有效图片调用现有选择路径和刷新逻辑。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test -p nyaterm-desktop appearance_wallpaper_drop --lib`  
 Expected: drop 过滤和 preview 一致性 helper 不存在。
 
-- [ ] **Step 3: 实现预览和 drop**
+- [x] **Step 3: 实现预览和 drop**
 
 通过 `with_app` 只读克隆当前 `WallpaperAsset` 图像，并使用 `img(image).object_fit(ObjectFit::Cover)` 渲染固定高度预览；路径与 cache 不一致时显示现有 path row，不显示旧图。drop 容器使用 `can_drop(|drag, _, _| drag.is::<ExternalPaths>())`，只接受一个文件和明确图片扩展，成功后调用 `select_background_image` 与 `queue_wallpaper_refresh`。解码仍由原 wallpaper loader 完成，失败不显示旧图，并保留现有错误提示，不覆盖其他外观 draft 字段。
 
@@ -301,16 +301,16 @@ git commit -m "feat(settings): 背景图增加预览与图片拖放"
 - Consumes: 现有 `keybindings` override map、搜索和原位录制。
 - Produces: `KeybindingPresentationState.custom_only: bool` 与 `toggle_keybinding_custom_only()`。
 
-- [ ] **Step 1: 写筛选状态失败测试**
+- [x] **Step 1: 写筛选状态失败测试**
 
 验证默认 `custom_only == false`，toggle 后只保留 override；搜索与 custom-only 同时为空结果时显示 `settings.keybindingsNoMatches`；录制、冲突和重置路径不被筛选状态清除。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test -p nyaterm-desktop keybinding_custom_only --lib`  
 Expected: `custom_only` 字段不存在。
 
-- [ ] **Step 3: 实现过滤和空状态**
+- [x] **Step 3: 实现过滤和空状态**
 
 在 `KeybindingSettingsState` 与 presentation state 增加 `custom_only`，由 `keybinding_presentation()` 复制。`shortcut_category_group` 在现有搜索过滤后增加 `!custom_only || overrides.contains(shortcut.id)`。当所有分类为空时显示本地化空状态；切换 filter 只通知刷新，不调用 begin/cancel recording。
 
@@ -343,7 +343,7 @@ git commit -m "feat(settings): 快捷键支持仅自定义筛选"
 - Modify: `docs/macos-visual-migration.md`
 - Modify: `docs/superpowers/plans/2026-11-03-gpui-macos-interaction-phase-1.md`
 
-- [ ] **Step 1: 运行本地验证**
+- [x] **Step 1: 运行本地验证**
 
 Run: `cargo fmt --all -- --check`  
 Run: `cargo check --workspace --locked`  
@@ -358,7 +358,7 @@ Run: `cargo build --release --target x86_64-pc-windows-msvc -p nyaterm-app --bin
 
 启动便携版，逐页检查常规、交互、外观、快捷键：点击、左右/Home/End、disabled、搜索与筛选空状态、背景图无效路径、亮暗主题、窄窗口、滚动恢复、独立设置窗口圆角和右下缩放。
 
-- [ ] **Step 3: 更新状态并提交**
+- [x] **Step 3: 更新状态并提交**
 
 只把实际通过的页面标为完成；未执行的测试和未验收项保留明确限制。
 
