@@ -118,8 +118,11 @@ models, services, GPUI types, and helpers from their authoritative modules.
 
 ## UI and Input Rules
 
-Before changing corner radii, child-window frames, transparent window surfaces,
-or Windows DWM rounding, read `docs/gpui-rounded-windows.md`. It records the
+Before continuing macOS visual alignment, read
+`docs/macos-visual-migration.md` for completed milestones, validation status,
+and previously diagnosed pitfalls. Before changing corner radii, child-window
+frames, transparent window surfaces, or Windows DWM rounding, read
+`docs/gpui-rounded-windows.md`. It records the
 validated layer boundaries, required native-style combinations, rejected
 approaches, and interactive-resize verification requirements. Do not repeat
 those rejected DWM experiments or treat `PrintWindow` as visual acceptance.
