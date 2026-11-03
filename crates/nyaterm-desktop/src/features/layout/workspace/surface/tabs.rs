@@ -108,10 +108,12 @@ impl RenderOnce for SessionTabCloseButton {
     #[allow(refining_impl_trait)]
     fn render(self, window: &mut Window, cx: &mut App) -> gpui::Stateful<gpui::Div> {
         let focus = window
-            .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
+            .use_keyed_state(self.id.clone(), cx, |_, cx| {
+                cx.focus_handle().tab_stop(false)
+            })
             .read(cx)
             .clone();
-        let focused = focus.is_focused(window);
+        let focused = focus.contains_focused(window, cx);
         let palette = self.palette;
         let tooltip = if self.locked {
             t!("tabCtx.lockedCloseBlocked")
@@ -120,13 +122,16 @@ impl RenderOnce for SessionTabCloseButton {
         };
         let visible = self.locked || self.selected || focused;
         let on_click = self.on_click;
+        let button_id = SharedString::from(format!("{}-button", self.id));
+        let icon_path = if self.locked {
+            "icons/lock.svg"
+        } else {
+            "icons/window/close.svg"
+        };
 
         div()
             .id(self.id)
             .track_focus(&focus)
-            .tooltip(move |window, cx| {
-                nyaterm_ui::NyaTooltip::new(tooltip.to_string()).build(window, cx)
-            })
             .size(px(18.))
             .flex()
             .items_center()
@@ -144,19 +149,15 @@ impl RenderOnce for SessionTabCloseButton {
                 })
             })
             .child(
-                svg()
-                    .size(px(13.))
-                    .path(if self.locked {
-                        "icons/lock.svg"
-                    } else {
-                        "icons/window/close.svg"
-                    })
-                    .text_color(rgb(palette.text_muted)),
+                nyaterm_ui::NyaIconButton::new(button_id, icon_path)
+                    .icon_size(px(13.))
+                    .size(px(18.))
+                    .tooltip(tooltip.to_string())
+                    .on_click(move |event, window, cx| {
+                        cx.stop_propagation();
+                        on_click(event, window, cx);
+                    }),
             )
-            .on_click(move |event, window, cx| {
-                cx.stop_propagation();
-                on_click(event, window, cx);
-            })
     }
 }
 
@@ -1333,14 +1334,19 @@ impl NyaTermApp {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use gpui::{
         Background, IntoElement, ParentElement as _, Render, RenderOnce as _, Styled as _,
-        TestAppContext, VisualTestContext, div, rgb,
+        TestAppContext, VisualTestContext, div, px, rgb,
     };
 
     use super::{SessionTabCloseButton, tab_drop_insert_after, tab_scroll_x, tab_strip_overflows};
 
-    struct TabCloseFixture;
+    struct TabCloseFixture {
+        activations: Rc<Cell<usize>>,
+    }
 
     impl Render for TabCloseFixture {
         fn render(
@@ -1348,6 +1354,7 @@ mod tests {
             window: &mut gpui::Window,
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
+            let activations = self.activations.clone();
             div().child(
                 SessionTabCloseButton::new(
                     "test-session-tab-close",
@@ -1355,12 +1362,21 @@ mod tests {
                     crate::theme::theme_palette("github-dark"),
                     false,
                     false,
-                    |_, _, _| {},
+                    move |_, _, _| activations.set(activations.get() + 1),
                 )
                 .render(window, cx)
                 .bg(rgb(0xffffff)),
             )
         }
+    }
+
+    fn tab_close_fixture(cx: &mut TestAppContext) -> (&mut VisualTestContext, Rc<Cell<usize>>) {
+        let activations = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view({
+            let activations = activations.clone();
+            move |_, _| TabCloseFixture { activations }
+        });
+        (cx, activations)
     }
 
     fn draw_fixture(cx: &mut VisualTestContext) {
@@ -1393,8 +1409,7 @@ mod tests {
     #[gpui::test]
     fn tab_close_focus_repaints_from_zero_to_full_opacity(cx: &mut TestAppContext) {
         let _cleanup = crate::test_support::TestAppCleanup::new(cx);
-        let (_, cx) = cx.add_window_view(|_, _| TabCloseFixture);
-        let cx: &mut VisualTestContext = cx;
+        let (cx, _) = tab_close_fixture(cx);
         draw_fixture(cx);
         assert_eq!(test_background_alpha(cx), 0.);
 
@@ -1405,6 +1420,28 @@ mod tests {
         });
         draw_fixture(cx);
         assert_eq!(test_background_alpha(cx), 1.);
+    }
+
+    #[gpui::test]
+    fn tab_close_keyboard_focus_paints_ring_and_activates(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (cx, activations) = tab_close_fixture(cx);
+        draw_fixture(cx);
+        cx.update(|window, cx| window.focus_next(cx));
+        draw_fixture(cx);
+
+        cx.update(|window, _| {
+            assert!(
+                window.painted_quads().iter().any(|quad| {
+                    quad.border_widths.top > px(0.).scale(window.scale_factor())
+                        && quad.border_color.a > 0.
+                }),
+                "focused close button must paint a visible focus ring"
+            );
+        });
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("space");
+        assert_eq!(activations.get(), 2);
     }
 
     #[test]

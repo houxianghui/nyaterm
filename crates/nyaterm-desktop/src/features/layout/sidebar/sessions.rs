@@ -696,19 +696,23 @@ fn session_panel_count_label(total: usize, visible: usize, query_active: bool) -
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use gpui::{
         Background, IntoElement, ParentElement as _, Render, RenderOnce as _, Styled as _,
-        TestAppContext, VisualTestContext, div, rgb,
+        TestAppContext, VisualTestContext, div, px, rgb,
     };
     use nyaterm_transport::{SessionInfo, SessionKind};
-    use nyaterm_ui::NyaIconButton;
 
     use super::{
-        ActiveSessionActions, active_session_matches_query, session_panel_count_label,
-        sort_active_sessions,
+        ActiveSessionActions, active_session_matches_query, session_action_svg_button,
+        session_panel_count_label, sort_active_sessions,
     };
 
-    struct SessionActionsFixture;
+    struct SessionActionsFixture {
+        activations: Rc<Cell<usize>>,
+    }
 
     impl Render for SessionActionsFixture {
         fn render(
@@ -716,18 +720,37 @@ mod tests {
             window: &mut gpui::Window,
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
+            let activations = self.activations.clone();
             div().child(
                 ActiveSessionActions::new(
                     "test-active-session-actions",
                     "test-active-session-group",
                     false,
-                    NyaIconButton::new("test-active-session-rename", "icons/session/rename.svg"),
+                    session_action_svg_button(
+                        crate::theme::theme_palette("github-dark"),
+                        "test-active-session-rename",
+                        "icons/session/rename.svg",
+                        "Rename",
+                        true,
+                        move |_, _, _| activations.set(activations.get() + 1),
+                    ),
                     div(),
                 )
                 .render(window, cx)
                 .bg(rgb(0xffffff)),
             )
         }
+    }
+
+    fn session_actions_fixture(
+        cx: &mut TestAppContext,
+    ) -> (&mut VisualTestContext, Rc<Cell<usize>>) {
+        let activations = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view({
+            let activations = activations.clone();
+            move |_, _| SessionActionsFixture { activations }
+        });
+        (cx, activations)
     }
 
     fn draw_fixture(cx: &mut VisualTestContext) {
@@ -760,8 +783,7 @@ mod tests {
     #[gpui::test]
     fn session_actions_match_tab_close_focus_opacity(cx: &mut TestAppContext) {
         let _cleanup = crate::test_support::TestAppCleanup::new(cx);
-        let (_, cx) = cx.add_window_view(|_, _| SessionActionsFixture);
-        let cx: &mut VisualTestContext = cx;
+        let (cx, _) = session_actions_fixture(cx);
         draw_fixture(cx);
         assert_eq!(test_background_alpha(cx), 0.);
 
@@ -772,6 +794,28 @@ mod tests {
         });
         draw_fixture(cx);
         assert_eq!(test_background_alpha(cx), 1.);
+    }
+
+    #[gpui::test]
+    fn session_rename_keyboard_focus_paints_ring_and_activates(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (cx, activations) = session_actions_fixture(cx);
+        draw_fixture(cx);
+        cx.update(|window, cx| window.focus_next(cx));
+        draw_fixture(cx);
+
+        cx.update(|window, _| {
+            assert!(
+                window.painted_quads().iter().any(|quad| {
+                    quad.border_widths.top > px(0.).scale(window.scale_factor())
+                        && quad.border_color.a > 0.
+                }),
+                "focused rename button must paint a visible focus ring"
+            );
+        });
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("space");
+        assert_eq!(activations.get(), 2);
     }
 
     fn session(id: &str, name: &str, kind: SessionKind) -> SessionInfo {

@@ -851,12 +851,15 @@ fn appearance_wallpaper_drop_path(paths: &[PathBuf]) -> Option<&Path> {
     let [path] = paths else {
         return None;
     };
-    (path.is_file()
-        && matches!(
-            path.extension().and_then(|extension| extension.to_str()),
-            Some("png" | "jpg" | "jpeg" | "webp")
-        ))
-    .then_some(path.as_path())
+    let image_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["png", "jpg", "jpeg", "webp"]
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        });
+    (path.is_file() && image_extension).then_some(path.as_path())
 }
 
 #[cfg(test)]
@@ -876,6 +879,8 @@ mod tests {
     use crate::features::pages::settings::panel::SettingsPanel;
     use crate::models::{NavItem, SettingsTab};
     use crate::test_support::TestConfigDir;
+
+    use super::appearance_wallpaper_drop_path;
 
     struct MainHost {
         panel: Entity<SettingsPanel>,
@@ -1079,6 +1084,20 @@ mod tests {
             assert_eq!(app.settings.store_status().message, before_store_message);
             assert!(app.shell.wallpaper_asset().is_none());
         });
+    }
+
+    #[test]
+    fn appearance_wallpaper_drop_accepts_ascii_case_insensitive_extensions() {
+        let temp = TestConfigDir::new("nyaterm-wallpaper-drop-case-insensitive");
+        for extension in ["PNG", "JpG", "JPEG", "WebP"] {
+            let path = temp.path().join(format!("wallpaper.{extension}"));
+            std::fs::write(&path, []).expect("create image fixture");
+            assert_eq!(
+                appearance_wallpaper_drop_path(std::slice::from_ref(&path)),
+                Some(path.as_path()),
+                "extension {extension} should be accepted"
+            );
+        }
     }
 
     #[test]

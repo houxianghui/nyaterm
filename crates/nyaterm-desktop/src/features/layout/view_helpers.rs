@@ -1,7 +1,7 @@
-use gpui::{FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb, svg};
+use gpui::{FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb};
 use nyaterm_transport::SessionKind;
 use nyaterm_ui::NyaNumberInputOptions;
-use nyaterm_ui::{radius_md, radius_sm};
+use nyaterm_ui::radius_sm;
 
 use crate::features::NyaTermApp;
 
@@ -98,7 +98,7 @@ pub(super) fn security_type_chip(
 }
 
 pub(super) fn session_action_svg_button(
-    palette: crate::theme::ThemePalette,
+    _palette: crate::theme::ThemePalette,
     id: impl Into<String>,
     icon_path: &'static str,
     tooltip: impl Into<String>,
@@ -106,45 +106,12 @@ pub(super) fn session_action_svg_button(
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
     // Tauri ActiveSessions action icons: h-7 ghost.
-    let tooltip = tooltip.into();
-    let id = SharedString::from(id.into());
-    let icon_color = if enabled {
-        palette.text_muted
-    } else {
-        palette.text_dimmed
-    };
-    div()
-        .id(id.clone())
-        .group(id.clone())
+    nyaterm_ui::NyaIconButton::new(id.into(), icon_path)
+        .icon_size(px(16.))
         .size(px(28.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(radius_md())
-        .text_color(rgb(icon_color))
-        .when(enabled, |this| {
-            this.cursor_pointer().hover(|this| {
-                this.bg(rgb(palette.surface_elevated))
-                    .text_color(rgb(palette.text))
-            })
-        })
-        .when(!enabled, |this| this.opacity(0.4))
-        .child(
-            svg()
-                .size(px(16.))
-                .flex_none()
-                .path(icon_path)
-                .text_color(rgb(icon_color))
-                .when(enabled, |this| {
-                    this.group_hover(id, move |this| this.text_color(rgb(palette.text)))
-                }),
-        )
-        .tooltip(move |window, cx| nyaterm_ui::NyaTooltip::new(tooltip.clone()).build(window, cx))
-        .on_click(move |event, window, cx| {
-            if enabled {
-                on_click(event, window, cx);
-            }
-        })
+        .disabled(!enabled)
+        .tooltip(tooltip.into())
+        .on_click(on_click)
 }
 
 pub(super) fn format_otp_code_display(code: &str) -> String {

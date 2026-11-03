@@ -6,15 +6,11 @@ use gpui::{Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, 
 use nyaterm_core::TerminalRightClickAction;
 use nyaterm_ui::NyaSelectOption;
 
-use crate::features::{
-    pages::settings::panel::SettingsPanel,
-    shell::{TAB_MOUSE_ACTIONS, TabMouseActionTarget},
-};
+use crate::features::{pages::settings::panel::SettingsPanel, shell::TAB_MOUSE_ACTIONS};
 use crate::theme::ThemePalette;
 
 use super::super::{
-    settings_form_row, settings_form_section, settings_segmented_control,
-    settings_segmented_selected_index, settings_switch,
+    settings_form_row, settings_form_section, settings_segmented_control, settings_switch,
 };
 
 const TERMINAL_RIGHT_CLICK_ACTIONS: [TerminalRightClickAction; 3] = [
@@ -273,7 +269,6 @@ impl SettingsPanel {
                             label: t!("settings.tabDoubleClickAction"),
                             description: None,
                             id: "settings.interaction.tab-double",
-                            target: TabMouseActionTarget::Double,
                             current: &double_action,
                         },
                         cx,
@@ -283,7 +278,6 @@ impl SettingsPanel {
                             label: t!("settings.tabMiddleClickAction"),
                             description: None,
                             id: "settings.interaction.tab-middle",
-                            target: TabMouseActionTarget::Middle,
                             current: &middle_action,
                         },
                         cx,
@@ -293,7 +287,6 @@ impl SettingsPanel {
                             label: t!("settings.tabRightClickAction"),
                             description: Some(t!("settings.tabRightClickActionDesc")),
                             id: "settings.interaction.tab-right",
-                            target: TabMouseActionTarget::Right,
                             current: &right_action,
                         },
                         cx,
@@ -310,48 +303,19 @@ impl SettingsPanel {
             label,
             description,
             id,
-            target,
             current,
         } = presentation;
-        let selected_index = settings_segmented_selected_index(&TAB_MOUSE_ACTIONS, &current);
+        let options = TAB_MOUSE_ACTIONS
+            .iter()
+            .map(|action| NyaSelectOption::new(*action, t!(tab_mouse_action_i18n_key(action))))
+            .collect();
 
-        if selected_index.is_none() {
-            let options = TAB_MOUSE_ACTIONS
-                .iter()
-                .map(|action| NyaSelectOption::new(*action, t!(tab_mouse_action_i18n_key(action))))
-                .collect();
-            return self
-                .settings_select_field(
-                    id,
-                    label,
-                    description.map(SharedString::from),
-                    (options, current.to_string(), false),
-                    cx,
-                )
-                .into_any_element();
-        }
-
-        let palette = self.theme_palette();
-        settings_form_row(
-            palette,
+        self.settings_select_field(
+            id,
             label,
             description.map(SharedString::from),
-            settings_segmented_control(
-                id,
-                TAB_MOUSE_ACTIONS
-                    .iter()
-                    .map(|action| t!(tab_mouse_action_i18n_key(action))),
-                selected_index,
-                false,
-                cx.listener(move |this, index, _, cx| {
-                    let Some(action) = TAB_MOUSE_ACTIONS.get(*index).copied() else {
-                        return;
-                    };
-                    this.with_app(cx, |app, cx| {
-                        app.set_tab_mouse_action(target, action, cx);
-                    });
-                }),
-            ),
+            (options, current.to_string(), false),
+            cx,
         )
         .into_any_element()
     }
@@ -361,7 +325,6 @@ struct TabMouseActionPresentation<'a> {
     label: Cow<'static, str>,
     description: Option<Cow<'static, str>>,
     id: &'static str,
-    target: TabMouseActionTarget,
     current: &'a str,
 }
 
@@ -416,14 +379,33 @@ fn tab_mouse_action_i18n_key(action: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
-    use nyaterm_core::{AppSettingsSummary, KeywordHighlightConfig, TerminalRightClickAction};
+    use std::path::Path;
 
+    use gpui::{
+        AppContext as _, Entity, IntoElement, ParentElement as _, Render, Styled as _,
+        TestAppContext, VisualTestContext, div, px,
+    };
+    use nyaterm_core::{
+        AppRuntime, AppSettingsSummary, KeywordHighlightConfig, RuntimeMode,
+        TerminalRightClickAction,
+    };
+
+    use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
+    use crate::features::pages::settings::panel::SettingsPanel;
     use crate::features::settings::{
         SettingsFeatureFocus, SettingsFeatureInit, SettingsFeatureState,
     };
+    use crate::features::{
+        NyaTermApp,
+        shell::{TAB_MOUSE_ACTIONS, TabMouseActionTarget},
+    };
+    use crate::models::{NavItem, SettingsTab};
+    use crate::test_support::TestConfigDir;
 
-    use super::{terminal_right_click_action, terminal_right_click_selected_index};
+    use super::{
+        TabMouseActionPresentation, terminal_right_click_action,
+        terminal_right_click_selected_index,
+    };
 
     fn settings_state() -> SettingsFeatureState {
         let cx = TestAppContext::single();
@@ -445,6 +427,157 @@ mod tests {
                 keybindings: focus(),
             },
         )
+    }
+
+    struct TabMouseActionsHost {
+        panel: Entity<SettingsPanel>,
+    }
+
+    impl Render for TabMouseActionsHost {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let fields = self.panel.update(cx, |panel, cx| {
+                let double_action = panel
+                    .settings
+                    .summary()
+                    .interaction_tab_double_click_action
+                    .clone();
+                let middle_action = panel
+                    .settings
+                    .summary()
+                    .interaction_tab_middle_click_action
+                    .clone();
+                let right_action = panel
+                    .settings
+                    .summary()
+                    .interaction_tab_right_click_action
+                    .clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(panel.tab_mouse_action_settings_field(
+                        TabMouseActionPresentation {
+                            label: "Double click".into(),
+                            description: None,
+                            id: "settings.interaction.tab-double",
+                            current: &double_action,
+                        },
+                        cx,
+                    ))
+                    .child(panel.tab_mouse_action_settings_field(
+                        TabMouseActionPresentation {
+                            label: "Middle click".into(),
+                            description: None,
+                            id: "settings.interaction.tab-middle",
+                            current: &middle_action,
+                        },
+                        cx,
+                    ))
+                    .child(panel.tab_mouse_action_settings_field(
+                        TabMouseActionPresentation {
+                            label: "Right click".into(),
+                            description: None,
+                            id: "settings.interaction.tab-right",
+                            current: &right_action,
+                        },
+                        cx,
+                    ))
+                    .into_any_element()
+            });
+            div().w(px(720.)).h(px(560.)).child(fields)
+        }
+    }
+
+    fn interaction_app(cx: &mut TestAppContext, root: &Path) -> Entity<NyaTermApp> {
+        let runtime = AppRuntime::from_parts_for_test(
+            RuntimeMode::Portable,
+            root.to_path_buf(),
+            root.join("config"),
+            root.join("logs"),
+            root.join("cache"),
+            None,
+        );
+        let stores = UiStoreHandles {
+            startup_restore: cx.new(|_| StartupRestoreStore::default()),
+            overlays: cx.new(|_| OverlayStore::default()),
+        };
+        let app = cx.new(|cx| NyaTermApp::new(runtime, stores, cx));
+        cx.update_entity(&app, |app, cx| {
+            app.sync_component_theme(cx);
+            app.open_page(NavItem::Settings, cx);
+            app.set_tab_mouse_action(TabMouseActionTarget::Double, TAB_MOUSE_ACTIONS[0], cx);
+            app.set_tab_mouse_action(TabMouseActionTarget::Middle, TAB_MOUSE_ACTIONS[0], cx);
+            app.settings
+                .set_tab_right_click_action("legacy-unknown".to_string());
+            app.shell.set_settings_active_tab(SettingsTab::Interaction);
+            app.flush_settings_panel_snapshots(cx);
+        });
+        app
+    }
+
+    fn draw(vcx: &mut VisualTestContext) {
+        vcx.run_until_parked();
+        vcx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        vcx.run_until_parked();
+    }
+
+    fn choose_select_option_with_keyboard(vcx: &mut VisualTestContext, navigation: &str) {
+        vcx.simulate_keystrokes("enter");
+        draw(vcx);
+        vcx.simulate_keystrokes(navigation);
+        draw(vcx);
+        vcx.simulate_keystrokes("enter");
+        draw(vcx);
+    }
+
+    #[gpui::test]
+    fn tab_mouse_actions_use_keyboard_selects_and_preserve_unknown_values(cx: &mut TestAppContext) {
+        let temp = TestConfigDir::new("nyaterm-tab-mouse-action-selects");
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let app = interaction_app(cx, temp.path());
+        cx.update_entity(&app, |app, _| {
+            assert_eq!(
+                app.settings.summary().interaction_tab_right_click_action,
+                "legacy-unknown"
+            );
+        });
+        let panel = cx.update_entity(&app, |app, _| app.settings_panel.clone());
+        let (_, vcx) = cx.add_window_view(move |_, _| TabMouseActionsHost {
+            panel: panel.clone(),
+        });
+        let vcx: &mut VisualTestContext = vcx;
+        draw(vcx);
+
+        for target in [TabMouseActionTarget::Double, TabMouseActionTarget::Middle] {
+            vcx.update(|window, cx| window.focus_next(cx));
+            choose_select_option_with_keyboard(vcx, "down");
+            vcx.update(|_, cx| {
+                let summary = app.read(cx).settings.summary();
+                let actual = match target {
+                    TabMouseActionTarget::Double => &summary.interaction_tab_double_click_action,
+                    TabMouseActionTarget::Middle => &summary.interaction_tab_middle_click_action,
+                    TabMouseActionTarget::Right => unreachable!(),
+                };
+                assert_eq!(actual, TAB_MOUSE_ACTIONS[1]);
+            });
+        }
+
+        vcx.update(|window, cx| window.focus_next(cx));
+        choose_select_option_with_keyboard(vcx, "home");
+        vcx.update(|_, cx| {
+            assert_eq!(
+                app.read(cx)
+                    .settings
+                    .summary()
+                    .interaction_tab_right_click_action,
+                TAB_MOUSE_ACTIONS[0]
+            );
+        });
     }
 
     #[test]
