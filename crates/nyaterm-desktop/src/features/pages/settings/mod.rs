@@ -5,8 +5,8 @@ use gpui::{
 };
 
 use crate::theme::ThemePalette;
-use nyaterm_ui::NyaSwitch;
 use nyaterm_ui::radius_xl;
+use nyaterm_ui::{NyaSegmentedControl, NyaSwitch};
 
 use super::super::NyaTermApp;
 
@@ -156,6 +156,28 @@ pub(super) fn settings_input_action_control(
         .child(div().flex_none().child(action))
 }
 
+/// Maps a persisted value to its segmented option without inventing a selection.
+pub(super) fn settings_segmented_selected_index<T: PartialEq>(
+    options: &[T],
+    selected: &T,
+) -> Option<usize> {
+    options.iter().position(|option| option == selected)
+}
+
+pub(super) fn settings_segmented_control(
+    id: impl Into<String>,
+    labels: impl IntoIterator<Item = impl Into<SharedString>>,
+    selected_index: Option<usize>,
+    disabled: bool,
+    on_select: impl Fn(&usize, &mut Window, &mut App) + 'static,
+) -> NyaSegmentedControl {
+    NyaSegmentedControl::new(id.into())
+        .items(labels)
+        .selected_index(selected_index)
+        .disabled(disabled)
+        .on_select(on_select)
+}
+
 /// Compact on/off switch control (Tauri SettingSwitch look).
 pub(in crate::features::pages) fn settings_switch(
     palette: ThemePalette,
@@ -181,4 +203,68 @@ pub(super) fn settings_switch_with_enabled(
                 on_click(&ClickEvent::default(), window, cx);
             }
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+    use nyaterm_core::{AppSettingsSummary, KeywordHighlightConfig};
+
+    use crate::features::settings::{
+        SettingsFeatureFocus, SettingsFeatureInit, SettingsFeatureState,
+    };
+
+    use super::settings_segmented_selected_index;
+
+    fn settings_state() -> SettingsFeatureState {
+        let cx = TestAppContext::single();
+        let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let focus = || cx.update(|cx| cx.focus_handle());
+        SettingsFeatureState::new(
+            SettingsFeatureInit {
+                summary: AppSettingsSummary::default(),
+                keyword_config: KeywordHighlightConfig::default(),
+                store_path: String::new(),
+                store_message: String::new(),
+                store_ready: true,
+                ui_font_options: vec!["Inter".to_string()],
+                terminal_font_options: vec!["JetBrains Mono".to_string()],
+            },
+            SettingsFeatureFocus {
+                search_engine: focus(),
+                keyword_highlight: focus(),
+                keybindings: focus(),
+            },
+        )
+    }
+
+    #[test]
+    fn settings_segmented_selected_index_matches_only_known_values() {
+        let levels = ["warn", "info", "debug"];
+        assert_eq!(settings_segmented_selected_index(&levels, &"info"), Some(1));
+        assert_eq!(settings_segmented_selected_index(&levels, &"trace"), None);
+
+        let retention_days = [3, 7, 14, 30];
+        assert_eq!(
+            settings_segmented_selected_index(&retention_days, &14),
+            Some(2)
+        );
+        assert_eq!(
+            settings_segmented_selected_index(&retention_days, &99),
+            None
+        );
+    }
+
+    #[test]
+    fn settings_segmented_diagnostics_updates_only_the_selected_draft_field() {
+        let mut state = settings_state();
+        let mut expected = state.summary().clone();
+        expected.diagnostics_level = "debug".to_string();
+        assert!(state.set_diagnostics_level("debug"));
+        assert_eq!(state.summary(), &expected);
+
+        expected.diagnostics_retention_days = 14;
+        assert!(state.set_diagnostics_retention_days(14));
+        assert_eq!(state.summary(), &expected);
+    }
 }

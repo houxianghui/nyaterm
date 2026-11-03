@@ -7,7 +7,13 @@ use crate::features::pages::settings::panel::SettingsPanel;
 use crate::models::HeaderStatusMode;
 use crate::widgets::small_button;
 
-use super::super::{settings_form_row, settings_form_section, settings_switch};
+use super::super::{
+    settings_form_row, settings_form_section, settings_segmented_control,
+    settings_segmented_selected_index, settings_switch,
+};
+
+const DIAGNOSTICS_LEVELS: [&str; 3] = ["warn", "info", "debug"];
+const DIAGNOSTICS_RETENTION_DAYS: [u32; 4] = [3, 7, 14, 30];
 
 fn startup_restore_nested_row() -> gpui::Div {
     div().pl_3().ml_1()
@@ -154,36 +160,48 @@ impl SettingsPanel {
                         palette,
                         t!("settings.logLevel"),
                         Some(SharedString::from(t!("settings.logLevelDesc"))),
-                        self.settings_select_control(
+                        settings_segmented_control(
                             "settings.general.diagnostics-level",
-                            vec![
-                                NyaSelectOption::new("warn", t!("settings.logLevelWarn")),
-                                NyaSelectOption::new("info", t!("settings.logLevelInfo")),
-                                NyaSelectOption::new("debug", t!("settings.logLevelDebug")),
+                            [
+                                t!("settings.logLevelWarn"),
+                                t!("settings.logLevelInfo"),
+                                t!("settings.logLevelDebug"),
                             ],
-                            diagnostics_level,
+                            settings_segmented_selected_index(
+                                &DIAGNOSTICS_LEVELS,
+                                &diagnostics_level.as_str(),
+                            ),
                             false,
-                            cx,
+                            cx.listener(|this, index, _, cx| {
+                                let level =
+                                    DIAGNOSTICS_LEVELS.get(*index).copied().unwrap_or("info");
+                                this.with_app(cx, |app, cx| {
+                                    app.set_diagnostics_level(level, cx);
+                                });
+                            }),
                         ),
                     ))
                     .child(settings_form_row(
                         palette,
                         t!("settings.logRetention"),
                         Some(SharedString::from(t!("settings.logRetentionDesc"))),
-                        self.settings_select_control(
+                        settings_segmented_control(
                             "settings.general.diagnostics-retention",
-                            [3_u32, 7, 14, 30]
+                            DIAGNOSTICS_RETENTION_DAYS
                                 .into_iter()
-                                .map(|days| {
-                                    NyaSelectOption::new(
-                                        days.to_string(),
-                                        format!("{days} {days_unit}"),
-                                    )
-                                })
-                                .collect(),
-                            retention.to_string(),
+                                .map(|days| format!("{days} {days_unit}")),
+                            settings_segmented_selected_index(
+                                &DIAGNOSTICS_RETENTION_DAYS,
+                                &retention,
+                            ),
                             false,
-                            cx,
+                            cx.listener(|this, index, _, cx| {
+                                let days =
+                                    DIAGNOSTICS_RETENTION_DAYS.get(*index).copied().unwrap_or(7);
+                                this.with_app(cx, |app, cx| {
+                                    app.set_diagnostics_retention_days(days, cx);
+                                });
+                            }),
                         ),
                     ))
                     .child(div().flex().justify_end().child(small_button(
