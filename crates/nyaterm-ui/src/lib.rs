@@ -20,6 +20,7 @@ mod number_input;
 pub mod plot;
 mod popover;
 mod root;
+mod segmented;
 mod selectable_text;
 mod selection;
 mod settings;
@@ -68,6 +69,7 @@ pub use number_input::{
 };
 pub use popover::{NyaPopover, NyaPopoverAlign, NyaPopoverPlacement};
 pub use root::{NyaRoot, NyaWindowHandle, nya_root, set_nya_root_transparent};
+pub use segmented::NyaSegmentedControl;
 pub use selectable_text::NyaSelectableText;
 pub use selection::{
     NyaCheckbox, NyaRadioGroup, NyaSelect, NyaSelectEvent, NyaSelectOption, NyaSelectState,
