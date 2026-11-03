@@ -177,6 +177,7 @@ impl SettingsPresentation {
                 recording_id: None,
                 pending_keys: None,
                 search_draft: String::new(),
+                custom_only: false,
             },
             master_password: MasterPasswordPresentation::default(),
             font_catalog: FontCatalogPresentation::empty(),

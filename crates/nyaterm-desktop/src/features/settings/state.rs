@@ -161,6 +161,7 @@ struct KeybindingSettingsState {
     recording_id: Option<crate::shortcuts::ShortcutId>,
     pending_binding: Option<crate::shortcuts::ShortcutBinding>,
     search_draft: String,
+    custom_only: bool,
     focus: FocusHandle,
 }
 
@@ -183,6 +184,7 @@ pub(in crate::features) struct KeybindingPresentationState {
     pub recording_id: Option<String>,
     pub pending_keys: Option<String>,
     pub search_draft: String,
+    pub custom_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,6 +244,7 @@ impl SettingsFeatureState {
                 recording_id: None,
                 pending_binding: None,
                 search_draft: String::new(),
+                custom_only: false,
                 focus: focus.keybindings,
             },
             prompts: SettingsPromptState::default(),
@@ -1424,6 +1427,7 @@ impl SettingsFeatureState {
                 .as_ref()
                 .map(crate::shortcuts::ShortcutBinding::canonical),
             search_draft: self.keybindings.search_draft.clone(),
+            custom_only: self.keybindings.custom_only,
         }
     }
 
@@ -1473,6 +1477,10 @@ impl SettingsFeatureState {
 
     pub(in crate::features) fn clear_keybinding_search(&mut self) {
         self.keybindings.search_draft.clear();
+    }
+
+    pub(in crate::features) fn toggle_keybinding_custom_only(&mut self) {
+        self.keybindings.custom_only = !self.keybindings.custom_only;
     }
 
     pub(in crate::features) fn ui_font_options(&self) -> &[String] {
@@ -2113,6 +2121,30 @@ mod tests {
         assert_eq!(interaction.recording_id, None);
         assert_eq!(interaction.pending_keys, None);
         assert!(interaction.search_draft.is_empty());
+    }
+
+    #[test]
+    fn keybinding_custom_only_toggles_without_clearing_recording() {
+        let mut state = settings_state();
+        assert!(!state.keybinding_presentation().custom_only);
+
+        state.begin_keybinding_recording(crate::shortcuts::ShortcutId::TerminalCopy);
+        state.set_pending_keybinding(Some(
+            crate::shortcuts::ShortcutBinding::parse("ctrl+shift+c").unwrap(),
+        ));
+        state.set_keybinding_search("copy".to_string());
+        state.toggle_keybinding_custom_only();
+
+        let interaction = state.keybinding_presentation();
+        assert!(interaction.custom_only);
+        assert_eq!(interaction.recording_id.as_deref(), Some("terminal.copy"));
+        assert_eq!(interaction.pending_keys.as_deref(), Some("ctrl+shift+c"));
+        assert_eq!(interaction.search_draft, "copy");
+
+        state.set_keybindings(HashMap::new());
+        assert!(state.keybinding_presentation().custom_only);
+        state.toggle_keybinding_custom_only();
+        assert!(!state.keybinding_presentation().custom_only);
     }
 
     #[test]

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rust_i18n::t;
 
 use gpui::{Context, FontWeight, IntoElement, KeyDownEvent, div, prelude::*, px, rgb};
@@ -19,7 +21,7 @@ impl SettingsPanel {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let palette = self.theme_palette();
-        let overrides = self
+        let override_count = self
             .settings
             .summary()
             .keybindings
@@ -28,14 +30,31 @@ impl SettingsPanel {
             .count();
         let resolved =
             crate::shortcuts::ResolvedKeymap::resolve(&self.settings.summary().keybindings);
-        let search = self.settings.keybinding_presentation().search_draft;
+        let interaction = self.settings.keybinding_presentation();
+        let search = interaction.search_draft;
+        let custom_only = interaction.custom_only;
+        let needle = search.trim().to_ascii_lowercase();
+        let has_matches = SHORTCUT_REGISTRY.iter().any(|shortcut| {
+            shortcut_matches_filters(
+                shortcut,
+                &needle,
+                custom_only,
+                &self.settings.summary().keybindings,
+            )
+        });
         let Some(search_field) = self.existing_text_input("settings.keybindings.search") else {
             debug_assert!(false, "the keybindings search input was never built");
             return div().into_any_element();
         };
         let mut groups = div().flex().flex_col().gap_3();
         for category in SHORTCUT_CATEGORIES {
-            groups = groups.child(self.shortcut_category_group(category, &search, &resolved, cx));
+            groups = groups.child(self.shortcut_category_group(
+                category,
+                &needle,
+                custom_only,
+                &resolved,
+                cx,
+            ));
         }
 
         div()
@@ -63,7 +82,15 @@ impl SettingsPanel {
                                 })),
                         ),
                     )
-                    .when(overrides > 0, |this| {
+                    .child(small_button(
+                        palette,
+                        "keybindings-custom-only",
+                        t!("settings.keybindingsCustom"),
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_keybinding_custom_only(cx);
+                        }),
+                    ))
+                    .when(override_count > 0, |this| {
                         this.child(small_button(
                             palette,
                             "keybindings-reset-all",
@@ -74,39 +101,47 @@ impl SettingsPanel {
                         ))
                     }),
             )
-            .child(groups)
+            .when(has_matches, |this| this.child(groups))
+            .when(!has_matches, |this| {
+                this.child(
+                    div()
+                        .py_4()
+                        .text_size(px(12.))
+                        .text_color(rgb(palette.text_muted))
+                        .child(t!("settings.keybindingsNoMatches")),
+                )
+            })
             .into_any_element()
+    }
+
+    pub(in crate::features) fn toggle_keybinding_custom_only(&mut self, cx: &mut Context<Self>) {
+        self.with_app(cx, |app, _| {
+            app.settings.toggle_keybinding_custom_only();
+        });
     }
 
     pub(in crate::features) fn shortcut_category_group(
         &mut self,
         category: ShortcutCategory,
-        search: &str,
+        needle: &str,
+        custom_only: bool,
         resolved: &crate::shortcuts::ResolvedKeymap,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let palette = self.theme_palette();
-        let needle = search.trim().to_ascii_lowercase();
         let shortcuts = SHORTCUT_REGISTRY
             .iter()
             .filter(|shortcut| shortcut.category == category)
             .filter(|shortcut| {
-                if needle.is_empty() {
-                    return true;
-                }
-                let keys =
-                    shortcut_keys_for(shortcut.id.as_str(), &self.settings.summary().keybindings)
-                        .unwrap_or_else(|| shortcut.default_keys());
-                let display = format_hotkey_for_display(&keys).to_ascii_lowercase();
-                t!(shortcut.label_key)
-                    .to_ascii_lowercase()
-                    .contains(&needle)
-                    || shortcut.id.as_str().to_ascii_lowercase().contains(&needle)
-                    || display.contains(&needle)
-                    || keys.to_ascii_lowercase().contains(&needle)
+                shortcut_matches_filters(
+                    shortcut,
+                    needle,
+                    custom_only,
+                    &self.settings.summary().keybindings,
+                )
             })
             .collect::<Vec<_>>();
-        if !needle.is_empty() && shortcuts.is_empty() {
+        if (!needle.is_empty() || custom_only) && shortcuts.is_empty() {
             return div().into_any_element();
         }
         let mut rows = div().flex().flex_col().gap_1();
@@ -354,5 +389,88 @@ impl SettingsPanel {
                         .child(indexed_hint),
                 )
             })
+    }
+}
+
+fn shortcut_matches_filters(
+    shortcut: &ShortcutDefinition,
+    needle: &str,
+    custom_only: bool,
+    overrides: &HashMap<String, String>,
+) -> bool {
+    if !needle.is_empty() {
+        let keys = shortcut_keys_for(shortcut.id.as_str(), overrides)
+            .unwrap_or_else(|| shortcut.default_keys());
+        let display = format_hotkey_for_display(&keys).to_ascii_lowercase();
+        let matches_search = t!(shortcut.label_key).to_ascii_lowercase().contains(needle)
+            || shortcut.id.as_str().to_ascii_lowercase().contains(needle)
+            || display.contains(needle)
+            || keys.to_ascii_lowercase().contains(needle);
+        if !matches_search {
+            return false;
+        }
+    }
+    !custom_only || overrides.contains_key(shortcut.id.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{SHORTCUT_REGISTRY, shortcut_matches_filters};
+
+    #[test]
+    fn keybinding_custom_only_combines_with_search_and_can_have_no_matches() {
+        let copy = SHORTCUT_REGISTRY
+            .iter()
+            .find(|shortcut| shortcut.id.as_str() == "terminal.copy")
+            .expect("copy shortcut");
+        let paste = SHORTCUT_REGISTRY
+            .iter()
+            .find(|shortcut| shortcut.id.as_str() == "terminal.paste")
+            .expect("paste shortcut");
+        let overrides = HashMap::from([("terminal.copy".to_string(), "ctrl+shift+c".to_string())]);
+
+        assert!(shortcut_matches_filters(copy, "copy", true, &overrides));
+        assert!(!shortcut_matches_filters(copy, "paste", true, &overrides));
+        assert!(!shortcut_matches_filters(paste, "", true, &overrides));
+        assert!(shortcut_matches_filters(paste, "paste", false, &overrides));
+        assert!(
+            !SHORTCUT_REGISTRY
+                .iter()
+                .any(|shortcut| shortcut_matches_filters(
+                    shortcut,
+                    "no-such-shortcut",
+                    true,
+                    &overrides,
+                ))
+        );
+    }
+
+    #[test]
+    fn keybinding_conflict_and_reset_keep_custom_only_filter_data_independent() {
+        let copy = SHORTCUT_REGISTRY
+            .iter()
+            .find(|shortcut| shortcut.id.as_str() == "terminal.copy")
+            .expect("copy shortcut");
+        let paste = SHORTCUT_REGISTRY
+            .iter()
+            .find(|shortcut| shortcut.id.as_str() == "terminal.paste")
+            .expect("paste shortcut");
+        let mut overrides = HashMap::from([
+            ("terminal.copy".to_string(), "ctrl+shift+c".to_string()),
+            ("terminal.paste".to_string(), "ctrl+shift+c".to_string()),
+        ]);
+        let resolved = crate::shortcuts::ResolvedKeymap::resolve(&overrides);
+        assert!(matches!(
+            resolved.diagnostic(paste.id),
+            Some(crate::shortcuts::ShortcutDiagnosticKind::Conflict(id)) if *id == copy.id
+        ));
+        assert!(shortcut_matches_filters(copy, "", true, &overrides));
+        assert!(shortcut_matches_filters(paste, "", true, &overrides));
+
+        overrides.remove(copy.id.as_str());
+        assert!(!shortcut_matches_filters(copy, "", true, &overrides));
+        assert!(shortcut_matches_filters(copy, "", false, &overrides));
     }
 }
