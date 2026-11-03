@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb, rgba,
-    uniform_list,
+    AnyElement, App, Context, FontWeight, IntoElement, RenderOnce, SharedString, Window, div,
+    prelude::*, px, rgb, rgba, uniform_list,
 };
 use nyaterm_core::{RuntimeMode, truncate_preview};
 use nyaterm_transport::SessionInfo;
@@ -24,6 +24,60 @@ const SESSION_PANEL_LOGICAL_ROW_HEIGHT_PX: f32 = 52.;
 struct ActiveSessionPanelRow {
     session: SessionInfo,
     display_name: String,
+}
+
+#[derive(IntoElement)]
+struct ActiveSessionActions {
+    id: SharedString,
+    row_group: SharedString,
+    selected: bool,
+    rename: AnyElement,
+    menu: AnyElement,
+}
+
+impl ActiveSessionActions {
+    fn new(
+        id: impl Into<SharedString>,
+        row_group: impl Into<SharedString>,
+        selected: bool,
+        rename: impl IntoElement,
+        menu: impl IntoElement,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            row_group: row_group.into(),
+            selected,
+            rename: rename.into_any_element(),
+            menu: menu.into_any_element(),
+        }
+    }
+}
+
+impl RenderOnce for ActiveSessionActions {
+    // Concrete style access lets tests observe the painted alpha with a test background.
+    #[allow(refining_impl_trait)]
+    fn render(self, window: &mut Window, cx: &mut App) -> gpui::Stateful<gpui::Div> {
+        let focus = window
+            .use_keyed_state(self.id.clone(), cx, |_, cx| {
+                cx.focus_handle().tab_stop(false)
+            })
+            .read(cx)
+            .clone();
+        let focused = focus.contains_focused(window, cx);
+        let visible = self.selected || focused;
+
+        div()
+            .id(self.id)
+            .track_focus(&focus)
+            .flex()
+            .items_center()
+            .gap_0()
+            .flex_none()
+            .opacity(if visible { 1. } else { 0. })
+            .group_hover(self.row_group, |style| style.opacity(1.))
+            .child(self.rename)
+            .child(self.menu)
+    }
 }
 
 pub(in crate::features) struct ActiveSessionsPanelModel {
@@ -583,30 +637,26 @@ impl NyaTermApp {
                                     .child(id_preview),
                             ),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_0()
-                            .flex_none()
-                            .opacity(0.)
-                            .group_hover(row_group, |style| style.opacity(1.))
-                            .child(session_action_svg_button(
-                                palette,
-                                format!("active-session-rename-{rename_session_id}"),
-                                "icons/session/rename.svg",
-                                t!("tabCtx.rename").to_string(),
-                                !is_busy,
-                                cx.listener(move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    if this.session.session_is_busy(&rename_session_id) {
-                                        return;
-                                    }
-                                    this.open_rename_session(rename_session_id.clone(), window, cx);
-                                }),
-                            ))
-                            .child(menu),
-                    ),
+                    .child(ActiveSessionActions::new(
+                        format!("active-session-actions-{}", session.id),
+                        row_group,
+                        is_active,
+                        session_action_svg_button(
+                            palette,
+                            format!("active-session-rename-{rename_session_id}"),
+                            "icons/session/rename.svg",
+                            t!("tabCtx.rename").to_string(),
+                            !is_busy,
+                            cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                if this.session.session_is_busy(&rename_session_id) {
+                                    return;
+                                }
+                                this.open_rename_session(rename_session_id.clone(), window, cx);
+                            }),
+                        ),
+                        menu,
+                    )),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select_session(session_id.clone(), cx);
@@ -646,9 +696,83 @@ fn session_panel_count_label(total: usize, visible: usize, query_active: bool) -
 
 #[cfg(test)]
 mod tests {
+    use gpui::{
+        Background, IntoElement, ParentElement as _, Render, RenderOnce as _, Styled as _,
+        TestAppContext, VisualTestContext, div, rgb,
+    };
     use nyaterm_transport::{SessionInfo, SessionKind};
+    use nyaterm_ui::NyaIconButton;
 
-    use super::{active_session_matches_query, session_panel_count_label, sort_active_sessions};
+    use super::{
+        ActiveSessionActions, active_session_matches_query, session_panel_count_label,
+        sort_active_sessions,
+    };
+
+    struct SessionActionsFixture;
+
+    impl Render for SessionActionsFixture {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div().child(
+                ActiveSessionActions::new(
+                    "test-active-session-actions",
+                    "test-active-session-group",
+                    false,
+                    NyaIconButton::new("test-active-session-rename", "icons/session/rename.svg"),
+                    div(),
+                )
+                .render(window, cx)
+                .bg(rgb(0xffffff)),
+            )
+        }
+    }
+
+    fn draw_fixture(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn test_background_alpha(cx: &mut VisualTestContext) -> f32 {
+        cx.update(|window, _| {
+            let opaque = Background::from(rgb(0xffffff));
+            window
+                .painted_quads()
+                .into_iter()
+                .find_map(|quad| {
+                    if quad.background == opaque {
+                        Some(1.)
+                    } else if quad.background == opaque.opacity(0.) {
+                        Some(0.)
+                    } else {
+                        None
+                    }
+                })
+                .expect("test background should be painted")
+        })
+    }
+
+    #[gpui::test]
+    fn session_actions_match_tab_close_focus_opacity(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (_, cx) = cx.add_window_view(|_, _| SessionActionsFixture);
+        let cx: &mut VisualTestContext = cx;
+        draw_fixture(cx);
+        assert_eq!(test_background_alpha(cx), 0.);
+
+        cx.update(|window, cx| {
+            assert!(window.focused(cx).is_none());
+            window.focus_next(cx);
+            assert!(window.focused(cx).is_some());
+        });
+        draw_fixture(cx);
+        assert_eq!(test_background_alpha(cx), 1.);
+    }
 
     fn session(id: &str, name: &str, kind: SessionKind) -> SessionInfo {
         SessionInfo {

@@ -53,6 +53,13 @@ fn activity_bar_menu_rows(is_entry: bool) -> &'static [ActivityBarMenuRow] {
     }
 }
 
+fn activity_bar_menu_zone_check_icon(
+    zone: ActivityBarZone,
+    entry_zone: Option<ActivityBarZone>,
+) -> Option<&'static str> {
+    (Some(zone) == entry_zone).then_some("icons/check.svg")
+}
+
 fn activity_bar_menu_height(is_entry: bool) -> f32 {
     activity_bar_menu_rows(is_entry)
         .iter()
@@ -157,6 +164,10 @@ impl NyaTermApp {
                             this.cursor_pointer()
                                 .hover(|this| this.bg(rgb(palette.hover)))
                         })
+                        .when_some(
+                            activity_bar_menu_zone_check_icon(zone, entry_zone),
+                            |this, icon_path| this.child(svg().size(px(14.)).path(icon_path)),
+                        )
                         .child(t!(zone.i18n_key()))
                         .when(!selected, |this| {
                             this.on_click(cx.listener(move |this, _, _, cx| {
@@ -838,6 +849,19 @@ mod tests {
         assert_eq!(super::activity_bar_menu_height(true), 114.);
         assert_eq!(super::activity_bar_menu_height(false), 151.);
         assert_eq!(super::activity_bar_submenu_height(4), 130.);
+    }
+
+    #[test]
+    fn activity_bar_menu_marks_only_the_current_zone_with_a_check_icon() {
+        for entry_zone in ActivityBarZone::all() {
+            for zone in ActivityBarZone::all() {
+                let expected = (zone == entry_zone).then_some("icons/check.svg");
+                assert_eq!(
+                    super::activity_bar_menu_zone_check_icon(zone, Some(entry_zone)),
+                    expected
+                );
+            }
+        }
     }
 
     #[test]

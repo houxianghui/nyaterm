@@ -5,8 +5,9 @@ use super::tab_motion::{TabMotionElement, TabStripViewportElement};
 use crate::features::shell::session_tabs::{SessionStripTab, SessionStripTabId};
 
 use gpui::{
-    Anchor, ClickEvent, Context, FontWeight, IntoElement, MouseButton, ScrollDelta,
-    ScrollWheelEvent, SharedString, div, point, prelude::*, px, rgb, rgba, svg,
+    Anchor, App, ClickEvent, Context, FontWeight, IntoElement, MouseButton, RenderOnce,
+    ScrollDelta, ScrollWheelEvent, SharedString, Window, div, point, prelude::*, px, rgb, rgba,
+    svg,
 };
 use nyaterm_core::truncate_preview;
 use nyaterm_ui::{
@@ -68,6 +69,95 @@ fn tab_strip_overflows(
 struct SessionTabStrip {
     app: gpui::WeakEntity<NyaTermApp>,
     group: Option<String>,
+}
+
+type SessionTabCloseHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+#[derive(IntoElement)]
+struct SessionTabCloseButton {
+    id: SharedString,
+    tab_group: SharedString,
+    palette: crate::theme::ThemePalette,
+    selected: bool,
+    locked: bool,
+    on_click: SessionTabCloseHandler,
+}
+
+impl SessionTabCloseButton {
+    fn new(
+        id: impl Into<SharedString>,
+        tab_group: impl Into<SharedString>,
+        palette: crate::theme::ThemePalette,
+        selected: bool,
+        locked: bool,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            tab_group: tab_group.into(),
+            palette,
+            selected,
+            locked,
+            on_click: Box::new(on_click),
+        }
+    }
+}
+
+impl RenderOnce for SessionTabCloseButton {
+    // Concrete style access lets tests observe the painted alpha with a test background.
+    #[allow(refining_impl_trait)]
+    fn render(self, window: &mut Window, cx: &mut App) -> gpui::Stateful<gpui::Div> {
+        let focus = window
+            .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        let focused = focus.is_focused(window);
+        let palette = self.palette;
+        let tooltip = if self.locked {
+            t!("tabCtx.lockedCloseBlocked")
+        } else {
+            t!("common.close")
+        };
+        let visible = self.locked || self.selected || focused;
+        let on_click = self.on_click;
+
+        div()
+            .id(self.id)
+            .track_focus(&focus)
+            .tooltip(move |window, cx| {
+                nyaterm_ui::NyaTooltip::new(tooltip.to_string()).build(window, cx)
+            })
+            .size(px(18.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(radius_sm())
+            .text_size(px(10.))
+            .text_color(rgb(palette.text_muted))
+            .opacity(if visible { 1. } else { 0. })
+            .group_hover(self.tab_group, |style| style.opacity(1.))
+            .hover(|this| {
+                this.bg(rgb(palette.border)).text_color(if self.locked {
+                    rgb(palette.warning)
+                } else {
+                    rgb(palette.danger)
+                })
+            })
+            .child(
+                svg()
+                    .size(px(13.))
+                    .path(if self.locked {
+                        "icons/lock.svg"
+                    } else {
+                        "icons/window/close.svg"
+                    })
+                    .text_color(rgb(palette.text_muted)),
+            )
+            .on_click(move |event, window, cx| {
+                cx.stop_propagation();
+                on_click(event, window, cx);
+            })
+    }
 }
 
 impl gpui::Render for SessionTabStrip {
@@ -752,56 +842,20 @@ impl NyaTermApp {
             .when(has_unread && !is_active, |this| {
                 this.child(div().size(px(7.)).rounded_full().bg(rgb(palette.success)))
             })
-            .child(
-                div()
-                    .id(SharedString::from(format!(
-                        "session-tab-close-{close_session_id}"
-                    )))
-                    .tooltip(move |window, cx| {
-                        let label = if is_locked {
-                            t!("tabCtx.lockedCloseBlocked")
-                        } else {
-                            t!("common.close")
-                        };
-                        nyaterm_ui::NyaTooltip::new(label.to_string()).build(window, cx)
-                    })
-                    .size(px(18.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(radius_sm())
-                    .text_size(px(10.))
-                    .text_color(rgb(palette.text_muted))
-                    .when(!is_active && !is_locked, |this| {
-                        this.opacity(0.)
-                            .group_hover(tab_group_name.clone(), |style| style.opacity(1.))
-                    })
-                    .hover(|this| {
-                        this.bg(rgb(palette.border)).text_color(if is_locked {
-                            rgb(palette.warning)
-                        } else {
-                            rgb(palette.danger)
-                        })
-                    })
-                    .child(
-                        svg()
-                            .size(px(13.))
-                            .path(if is_locked {
-                                "icons/lock.svg"
-                            } else {
-                                "icons/window/close.svg"
-                            })
-                            .text_color(rgb(palette.text_muted)),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        if is_locked {
-                            this.notify_locked_tab_close_blocked(cx);
-                        } else {
-                            this.close_session(close_session_id.clone(), cx);
-                        }
-                    })),
-            )
+            .child(SessionTabCloseButton::new(
+                format!("session-tab-close-{close_session_id}"),
+                tab_group_name.clone(),
+                palette,
+                is_active,
+                is_locked,
+                cx.listener(move |this, _, _, cx| {
+                    if is_locked {
+                        this.notify_locked_tab_close_blocked(cx);
+                    } else {
+                        this.close_session(close_session_id.clone(), cx);
+                    }
+                }),
+            ))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.handle_session_tab_click(session_id.clone(), event, window, cx);
             }))
@@ -1279,7 +1333,79 @@ impl NyaTermApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{tab_drop_insert_after, tab_scroll_x, tab_strip_overflows};
+    use gpui::{
+        Background, IntoElement, ParentElement as _, Render, RenderOnce as _, Styled as _,
+        TestAppContext, VisualTestContext, div, rgb,
+    };
+
+    use super::{SessionTabCloseButton, tab_drop_insert_after, tab_scroll_x, tab_strip_overflows};
+
+    struct TabCloseFixture;
+
+    impl Render for TabCloseFixture {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div().child(
+                SessionTabCloseButton::new(
+                    "test-session-tab-close",
+                    "test-session-tab-group",
+                    crate::theme::theme_palette("github-dark"),
+                    false,
+                    false,
+                    |_, _, _| {},
+                )
+                .render(window, cx)
+                .bg(rgb(0xffffff)),
+            )
+        }
+    }
+
+    fn draw_fixture(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn test_background_alpha(cx: &mut VisualTestContext) -> f32 {
+        cx.update(|window, _| {
+            let opaque = Background::from(rgb(0xffffff));
+            window
+                .painted_quads()
+                .into_iter()
+                .find_map(|quad| {
+                    if quad.background == opaque {
+                        Some(1.)
+                    } else if quad.background == opaque.opacity(0.) {
+                        Some(0.)
+                    } else {
+                        None
+                    }
+                })
+                .expect("test background should be painted")
+        })
+    }
+
+    #[gpui::test]
+    fn tab_close_focus_repaints_from_zero_to_full_opacity(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TabCloseFixture);
+        let cx: &mut VisualTestContext = cx;
+        draw_fixture(cx);
+        assert_eq!(test_background_alpha(cx), 0.);
+
+        cx.update(|window, cx| {
+            assert!(window.focused(cx).is_none());
+            window.focus_next(cx);
+            assert!(window.focused(cx).is_some());
+        });
+        draw_fixture(cx);
+        assert_eq!(test_background_alpha(cx), 1.);
+    }
 
     #[test]
     fn tab_drop_uses_source_and_target_order_for_insertion_side() {

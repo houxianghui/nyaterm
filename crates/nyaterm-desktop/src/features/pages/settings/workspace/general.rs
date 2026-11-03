@@ -1,6 +1,6 @@
 use rust_i18n::t;
 
-use gpui::{Context, IntoElement, SharedString, div, prelude::*, rgb};
+use gpui::{Context, IntoElement, SharedString, div, prelude::*};
 use nyaterm_ui::NyaSelectOption;
 
 use crate::features::pages::settings::panel::SettingsPanel;
@@ -8,6 +8,10 @@ use crate::models::HeaderStatusMode;
 use crate::widgets::small_button;
 
 use super::super::{settings_form_row, settings_form_section, settings_switch};
+
+fn startup_restore_nested_row() -> gpui::Div {
+    div().pl_3().ml_1()
+}
 
 impl SettingsPanel {
     pub(in crate::features) fn general_settings_section(
@@ -95,28 +99,21 @@ impl SettingsPanel {
                         ),
                     ))
                     .when(self.settings.summary().startup_restore, |this| {
-                        this.child(
-                            div()
-                                .pl_3()
-                                .ml_1()
-                                .border_l_1()
-                                .border_color(rgb(palette.border))
-                                .child(settings_form_row(
-                                    palette,
-                                    t!("settings.startupRestoreWindowLayout"),
-                                    Some(SharedString::from(t!(
-                                        "settings.startupRestoreWindowLayoutDesc"
-                                    ))),
-                                    settings_switch(
-                                        palette,
-                                        "general-startup-restore-window-layout",
-                                        self.settings.summary().startup_restore_window_layout,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.toggle_startup_restore_window_layout(cx);
-                                        }),
-                                    ),
-                                )),
-                        )
+                        this.child(startup_restore_nested_row().child(settings_form_row(
+                            palette,
+                            t!("settings.startupRestoreWindowLayout"),
+                            Some(SharedString::from(t!(
+                                "settings.startupRestoreWindowLayoutDesc"
+                            ))),
+                            settings_switch(
+                                palette,
+                                "general-startup-restore-window-layout",
+                                self.settings.summary().startup_restore_window_layout,
+                                cx.listener(|this, _, _, cx| {
+                                    this.toggle_startup_restore_window_layout(cx);
+                                }),
+                            ),
+                        )))
                     })
                     .child(settings_form_row(
                         palette,
@@ -211,5 +208,46 @@ impl SettingsPanel {
                         ),
                     )),
             ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{
+        Background, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
+        VisualTestContext, div, px, rgb,
+    };
+
+    struct NestedRowFixture;
+
+    impl Render for NestedRowFixture {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div().child(
+                super::startup_restore_nested_row()
+                    .size(px(40.))
+                    .bg(rgb(0xffffff)),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn startup_restore_nested_row_paints_without_a_vertical_border(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (_, cx) = cx.add_window_view(|_, _| NestedRowFixture);
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            _ = window.draw(cx);
+            let quad = window
+                .painted_quads()
+                .into_iter()
+                .find(|quad| quad.background == Background::from(rgb(0xffffff)))
+                .expect("test background should be painted");
+            assert_eq!(quad.border_widths.left, px(0.).scale(window.scale_factor()));
+        });
     }
 }
