@@ -121,9 +121,8 @@ models, services, GPUI types, and helpers from their authoritative modules.
 Before changing corner radii, child-window frames, transparent window surfaces,
 or Windows DWM rounding, read `docs/gpui-rounded-windows.md`. It records the
 validated layer boundaries, required native-style combinations, rejected
-approaches, and the remaining interactive-resize verification limitation. Do
-not repeat those rejected DWM experiments or treat `PrintWindow` as visual
-acceptance.
+approaches, and interactive-resize verification requirements. Do not repeat
+those rejected DWM experiments or treat `PrintWindow` as visual acceptance.
 
 Ordinary forms, prompts, searches, menus, selects, switches, and dialogs should
 use the wrappers exposed by `nyaterm-ui`. That crate owns the

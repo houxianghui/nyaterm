@@ -93,15 +93,18 @@ unsafe extern "system" fn settings_subclass(
     use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowRect, IsZoomed, SendMessageW, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDOWN,
+        GetWindowRect, IsZoomed, PostMessageW, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDOWN,
         WM_SYSCOMMAND,
     };
 
     if message == WM_NCLBUTTONDOWN
         && let Some(command) = resize_sys_command(wparam as u32)
     {
+        // Let the button-down return before entering the modal resize loop.
+        // A synchronous send here re-enters the window proc and prevents real
+        // mouse dragging even though a posted NCLBUTTONDOWN appears to work.
         unsafe {
-            SendMessageW(hwnd, WM_SYSCOMMAND, command, lparam);
+            PostMessageW(hwnd, WM_SYSCOMMAND, command, lparam);
         }
         return 0;
     }

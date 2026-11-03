@@ -51,14 +51,14 @@
 `WS_THICKFRAME` 同时承担普通窗口的边缘缩放能力。直接删除它虽然能消除白框，但会使原来的边缘拖动失效，因此 `native_frame.rs` 还包含设置窗口局部 subclass：
 
 1. `WM_NCHITTEST` 在窗口外缘返回八方向 `HTLEFT` 至 `HTBOTTOMRIGHT`。
-2. `WM_NCLBUTTONDOWN` 将这些 hit code 按 Windows 的连续编号映射到对应 `SC_SIZE + WMSZ_*`。
+2. `WM_NCLBUTTONDOWN` 将这些 hit code 按 Windows 的连续编号映射到对应 `SC_SIZE + WMSZ_*`，并用 `PostMessageW` 延迟投递；必须让当前按下消息返回后再进入系统 modal resize loop，不能在 subclass 内同步 `SendMessageW` 重入。
 3. 其他消息继续调用 `DefSubclassProc`，交回 GPUI。
 4. `WM_NCDESTROY` 移除 subclass。
 5. 最大化状态不接管自定义 resize；按钮、客户区、右键和双击不得被转换成缩放命令。
 
 命中宽度按窗口 DPI 计算，屏幕坐标按有符号 16 位高低字解析，支持负坐标显示器。纯函数测试覆盖八方向、内部、外侧和 `SC_SIZE` 映射。
 
-**验证限制：** 本轮自动右边缘拖动脚本仍未观察到窗口尺寸变化，不能写成“交互缩放已验证通过”。后续修改此文件时，必须补做真实人工拖动或可靠的端到端输入验证；`cargo check`、hit-code 单元测试和视觉截图都不能替代这项验收。
+**已验证的缩放修复：** 初版在 subclass 内同步 `SendMessageW(WM_SYSCOMMAND)`，直接投递 `WM_NCLBUTTONDOWN` 时似乎可用，但真实鼠标按下路径不能启动拖动。改为 `PostMessageW` 后，使用相同真实鼠标输入测得：右边缘从 816×568 扩到 876×568，右下角从 816×568 扩到 876×608；两次均恢复原尺寸，随后截图复核上下外圈白线仍为 0。后续修改此文件仍必须重做真实输入验收；`cargo check`、hit-code 单元测试和视觉截图不能替代这项验收。
 
 ## 4. 已排除或产生副作用的方案
 
