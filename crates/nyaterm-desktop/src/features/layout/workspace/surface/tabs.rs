@@ -108,12 +108,10 @@ impl RenderOnce for SessionTabCloseButton {
     #[allow(refining_impl_trait)]
     fn render(self, window: &mut Window, cx: &mut App) -> gpui::Stateful<gpui::Div> {
         let focus = window
-            .use_keyed_state(self.id.clone(), cx, |_, cx| {
-                cx.focus_handle().tab_stop(false)
-            })
+            .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
             .read(cx)
             .clone();
-        let focused = focus.contains_focused(window, cx);
+        let focused = focus.is_focused(window);
         let palette = self.palette;
         let tooltip = if self.locked {
             t!("tabCtx.lockedCloseBlocked")
@@ -122,21 +120,24 @@ impl RenderOnce for SessionTabCloseButton {
         };
         let visible = self.locked || self.selected || focused;
         let on_click = self.on_click;
-        let button_id = SharedString::from(format!("{}-button", self.id));
-        let icon_path = if self.locked {
-            "icons/lock.svg"
-        } else {
-            "icons/window/close.svg"
-        };
 
         div()
             .id(self.id)
             .track_focus(&focus)
+            .tooltip(move |window, cx| {
+                nyaterm_ui::NyaTooltip::new(tooltip.to_string()).build(window, cx)
+            })
             .size(px(18.))
             .flex()
             .items_center()
             .justify_center()
             .rounded(radius_sm())
+            .border_1()
+            .border_color(if focused {
+                rgb(palette.focus_ring)
+            } else {
+                rgba(0x00000000)
+            })
             .text_size(px(10.))
             .text_color(rgb(palette.text_muted))
             .opacity(if visible { 1. } else { 0. })
@@ -149,15 +150,19 @@ impl RenderOnce for SessionTabCloseButton {
                 })
             })
             .child(
-                nyaterm_ui::NyaIconButton::new(button_id, icon_path)
-                    .icon_size(px(13.))
-                    .size(px(18.))
-                    .tooltip(tooltip.to_string())
-                    .on_click(move |event, window, cx| {
-                        cx.stop_propagation();
-                        on_click(event, window, cx);
-                    }),
+                svg()
+                    .size(px(13.))
+                    .path(if self.locked {
+                        "icons/lock.svg"
+                    } else {
+                        "icons/window/close.svg"
+                    })
+                    .text_color(rgb(palette.text_muted)),
             )
+            .on_click(move |event, window, cx| {
+                cx.stop_propagation();
+                on_click(event, window, cx);
+            })
     }
 }
 
@@ -1338,8 +1343,8 @@ mod tests {
     use std::rc::Rc;
 
     use gpui::{
-        Background, IntoElement, ParentElement as _, Render, RenderOnce as _, Styled as _,
-        TestAppContext, VisualTestContext, div, px, rgb,
+        Background, IntoElement, Modifiers, ParentElement as _, Render, RenderOnce as _,
+        Styled as _, TestAppContext, VisualTestContext, div, point, px, rgb,
     };
 
     use super::{SessionTabCloseButton, tab_drop_insert_after, tab_scroll_x, tab_strip_overflows};
@@ -1442,6 +1447,20 @@ mod tests {
         cx.simulate_keystrokes("enter");
         cx.simulate_keystrokes("space");
         assert_eq!(activations.get(), 2);
+
+        cx.simulate_click(point(px(9.), px(9.)), Modifiers::default());
+        draw_fixture(cx);
+        assert_eq!(activations.get(), 3);
+        let hover = rgb(crate::theme::theme_palette("github-dark").border);
+        cx.update(|window, _| {
+            assert!(
+                window
+                    .painted_quads()
+                    .iter()
+                    .any(|quad| quad.background == Background::from(hover)),
+                "hover must keep the palette border background"
+            );
+        });
     }
 
     #[test]

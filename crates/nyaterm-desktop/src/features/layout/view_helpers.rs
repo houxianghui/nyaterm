@@ -1,7 +1,7 @@
-use gpui::{FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb};
+use gpui::{FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb, rgba, svg};
 use nyaterm_transport::SessionKind;
 use nyaterm_ui::NyaNumberInputOptions;
-use nyaterm_ui::radius_sm;
+use nyaterm_ui::{radius_md, radius_sm};
 
 use crate::features::NyaTermApp;
 
@@ -97,21 +97,100 @@ pub(super) fn security_type_chip(
         })
 }
 
+type SessionActionClickHandler = Box<dyn Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App)>;
+
+#[derive(IntoElement)]
+pub(super) struct SessionActionSvgButton {
+    palette: crate::theme::ThemePalette,
+    id: SharedString,
+    icon_path: &'static str,
+    tooltip: String,
+    enabled: bool,
+    on_click: SessionActionClickHandler,
+}
+
 pub(super) fn session_action_svg_button(
-    _palette: crate::theme::ThemePalette,
+    palette: crate::theme::ThemePalette,
     id: impl Into<String>,
     icon_path: &'static str,
     tooltip: impl Into<String>,
     enabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> impl IntoElement {
-    // Tauri ActiveSessions action icons: h-7 ghost.
-    nyaterm_ui::NyaIconButton::new(id.into(), icon_path)
-        .icon_size(px(16.))
-        .size(px(28.))
-        .disabled(!enabled)
-        .tooltip(tooltip.into())
-        .on_click(on_click)
+) -> SessionActionSvgButton {
+    SessionActionSvgButton {
+        palette,
+        id: SharedString::from(id.into()),
+        icon_path,
+        tooltip: tooltip.into(),
+        enabled,
+        on_click: Box::new(on_click),
+    }
+}
+
+impl gpui::RenderOnce for SessionActionSvgButton {
+    #[allow(refining_impl_trait)]
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> gpui::Stateful<gpui::Div> {
+        // Tauri ActiveSessions action icons: h-7 ghost.
+        let focus = window
+            .use_keyed_state(self.id.clone(), cx, |_, cx| {
+                cx.focus_handle().tab_stop(self.enabled)
+            })
+            .read(cx)
+            .clone();
+        let focused = focus.is_focused(window);
+        let palette = self.palette;
+        let id = self.id;
+        let enabled = self.enabled;
+        let icon_color = if enabled {
+            palette.text_muted
+        } else {
+            palette.text_dimmed
+        };
+        let tooltip = self.tooltip;
+        let on_click = self.on_click;
+
+        div()
+            .id(id.clone())
+            .group(id.clone())
+            .track_focus(&focus)
+            .size(px(28.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(radius_md())
+            .border_1()
+            .border_color(if focused {
+                rgb(palette.focus_ring)
+            } else {
+                rgba(0x00000000)
+            })
+            .text_color(rgb(icon_color))
+            .when(enabled, |this| {
+                this.cursor_pointer().hover(|this| {
+                    this.bg(rgb(palette.surface_elevated))
+                        .text_color(rgb(palette.text))
+                })
+            })
+            .when(!enabled, |this| this.opacity(0.4))
+            .child(
+                svg()
+                    .size(px(16.))
+                    .flex_none()
+                    .path(self.icon_path)
+                    .text_color(rgb(icon_color))
+                    .when(enabled, |this| {
+                        this.group_hover(id, move |this| this.text_color(rgb(palette.text)))
+                    }),
+            )
+            .tooltip(move |window, cx| {
+                nyaterm_ui::NyaTooltip::new(tooltip.clone()).build(window, cx)
+            })
+            .on_click(move |event, window, cx| {
+                if enabled {
+                    on_click(event, window, cx);
+                }
+            })
+    }
 }
 
 pub(super) fn format_otp_code_display(code: &str) -> String {

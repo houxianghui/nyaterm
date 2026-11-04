@@ -700,8 +700,8 @@ mod tests {
     use std::rc::Rc;
 
     use gpui::{
-        Background, IntoElement, ParentElement as _, Render, RenderOnce as _, Styled as _,
-        TestAppContext, VisualTestContext, div, px, rgb,
+        Background, IntoElement, Modifiers, ParentElement as _, Render, RenderOnce as _,
+        Styled as _, TestAppContext, VisualTestContext, div, point, px, rgb,
     };
     use nyaterm_transport::{SessionInfo, SessionKind};
 
@@ -816,6 +816,54 @@ mod tests {
         cx.simulate_keystrokes("enter");
         cx.simulate_keystrokes("space");
         assert_eq!(activations.get(), 2);
+
+        cx.simulate_click(point(px(14.), px(14.)), Modifiers::default());
+        draw_fixture(cx);
+        assert_eq!(activations.get(), 3);
+        let hover = rgb(crate::theme::theme_palette("github-dark").surface_elevated);
+        cx.update(|window, _| {
+            assert!(
+                window
+                    .painted_quads()
+                    .iter()
+                    .any(|quad| quad.background == Background::from(hover)),
+                "hover must keep the palette surface_elevated background"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn session_action_disabled_preserves_palette_text_and_opacity(cx: &mut TestAppContext) {
+        struct DisabledSessionActionFixture;
+
+        impl Render for DisabledSessionActionFixture {
+            fn render(
+                &mut self,
+                window: &mut gpui::Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                let palette = crate::theme::theme_palette("github-dark");
+                let mut disabled = session_action_svg_button(
+                    palette,
+                    "test-disabled-session-action",
+                    "icons/session/rename.svg",
+                    "Rename",
+                    false,
+                    |_, _, _| {},
+                )
+                .render(window, cx);
+                assert_eq!(disabled.style().opacity, Some(0.4));
+                assert_eq!(
+                    disabled.text_style().color,
+                    Some(rgb(palette.text_dimmed).into())
+                );
+                div().child(disabled)
+            }
+        }
+
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (_, cx) = cx.add_window_view(|_, _| DisabledSessionActionFixture);
+        draw_fixture(cx);
     }
 
     fn session(id: &str, name: &str, kind: SessionKind) -> SessionInfo {

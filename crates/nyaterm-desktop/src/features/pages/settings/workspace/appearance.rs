@@ -1089,6 +1089,7 @@ mod tests {
     #[test]
     fn appearance_wallpaper_drop_accepts_ascii_case_insensitive_extensions() {
         let temp = TestConfigDir::new("nyaterm-wallpaper-drop-case-insensitive");
+        std::fs::create_dir_all(temp.path()).expect("create test directory");
         for extension in ["PNG", "JpG", "JPEG", "WebP"] {
             let path = temp.path().join(format!("wallpaper.{extension}"));
             std::fs::write(&path, []).expect("create image fixture");
