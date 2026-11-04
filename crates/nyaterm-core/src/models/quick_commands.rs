@@ -265,10 +265,10 @@ impl QuickCommandsConfig {
     }
 
     pub fn can_move_category(&self, source_id: &str, target_id: &str) -> bool {
-        !(source_id == target_id
-            || !self.categories.iter().any(|item| item.id == source_id)
-            || !self.categories.iter().any(|item| item.id == target_id)
-            || self.category_is_descendant(target_id, source_id))
+        source_id != target_id
+            && self.categories.iter().any(|item| item.id == source_id)
+            && self.categories.iter().any(|item| item.id == target_id)
+            && !self.category_is_descendant(target_id, source_id)
     }
 
     /// `insertion_index` counts siblings after excluding the source; an index

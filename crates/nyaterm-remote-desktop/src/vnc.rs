@@ -1090,10 +1090,10 @@ fn handle_control(
                 queue.push_control(VncRuntimeEvent::ServerKeyRequest(request));
             }
         }
-        VncControlMessage::ServerKeyAuthenticated(request) if request.session_id == session_id => {
-            if queue.trust.authenticated(&request) {
-                queue.push_control(VncRuntimeEvent::ServerKeyAuthenticated(request));
-            }
+        VncControlMessage::ServerKeyAuthenticated(request)
+            if request.session_id == session_id && queue.trust.authenticated(&request) =>
+        {
+            queue.push_control(VncRuntimeEvent::ServerKeyAuthenticated(request));
         }
         VncControlMessage::DesktopReset {
             session_id: event_session,

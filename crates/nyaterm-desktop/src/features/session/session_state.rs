@@ -473,10 +473,10 @@ impl NyaTermApp {
     ) {
         let tab_root = self.tab_root_for_session(&session_id);
         self.select_session(tab_root.clone(), cx);
-        if !self
+        if self
             .session
             .active_id()
-            .is_some_and(|active| self.tab_root_for_session(active) == tab_root)
+            .is_none_or(|active| self.tab_root_for_session(active) != tab_root)
         {
             return;
         }

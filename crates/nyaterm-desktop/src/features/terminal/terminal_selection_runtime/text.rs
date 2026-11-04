@@ -155,11 +155,11 @@ impl NyaTermApp {
         feedback: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self
+        if self
             .terminal
             .selection
             .selection
-            .is_some_and(|selection| !selection.is_empty())
+            .is_none_or(|selection| selection.is_empty())
         {
             return false;
         }

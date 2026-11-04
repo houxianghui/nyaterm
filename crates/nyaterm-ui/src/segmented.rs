@@ -8,6 +8,7 @@ use gpui_base::{Toggle, ToggleGroup, h_flex};
 use gpui_kit::component::ActiveTheme;
 
 type NyaIndexSelectHandler = Box<dyn Fn(&usize, &mut Window, &mut App)>;
+type NyaSharedIndexSelectHandler = Rc<dyn Fn(&usize, &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct NyaSegmentedControl {
@@ -64,8 +65,7 @@ impl RenderOnce for NyaSegmentedControl {
                     .clone()
             })
             .collect::<Vec<FocusHandle>>();
-        let on_select: Option<Rc<dyn Fn(&usize, &mut Window, &mut App)>> =
-            self.on_select.map(Rc::from);
+        let on_select: Option<NyaSharedIndexSelectHandler> = self.on_select.map(Rc::from);
         let keyboard_on_select = on_select.clone();
         let rounding = cx.theme().radius;
         let border = cx.theme().border;

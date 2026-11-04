@@ -742,29 +742,25 @@ pub fn parse_stats_output(output: &str) -> anyhow::Result<ParsedRemoteStats> {
                 };
             }
 
-            "NETDEV" if cols.len() >= 5 => {
-                if cols[1] != "-" {
-                    let rx_bytes = parse_u64_field(cols[3], "NETDEV rx bytes")?;
-                    let tx_bytes = parse_u64_field(cols[4], "NETDEV tx bytes")?;
-                    networks.insert(cols[1].to_string(), NetworkCounters { rx_bytes, tx_bytes });
-                    stats.networks.push(NetworkInfo {
-                        nic: cols[1].to_string(),
-                        state: cols[2].to_string(),
-                        rx_bytes_per_sec: 0.0,
-                        tx_bytes_per_sec: 0.0,
-                    });
-                }
+            "NETDEV" if cols.len() >= 5 && cols[1] != "-" => {
+                let rx_bytes = parse_u64_field(cols[3], "NETDEV rx bytes")?;
+                let tx_bytes = parse_u64_field(cols[4], "NETDEV tx bytes")?;
+                networks.insert(cols[1].to_string(), NetworkCounters { rx_bytes, tx_bytes });
+                stats.networks.push(NetworkInfo {
+                    nic: cols[1].to_string(),
+                    state: cols[2].to_string(),
+                    rx_bytes_per_sec: 0.0,
+                    tx_bytes_per_sec: 0.0,
+                });
             }
 
-            "NETWORK" if cols.len() >= 5 => {
-                if cols[1] != "-" {
-                    stats.networks.push(NetworkInfo {
-                        nic: cols[1].to_string(),
-                        state: cols[2].to_string(),
-                        rx_bytes_per_sec: cols[3].parse().unwrap_or(0.0),
-                        tx_bytes_per_sec: cols[4].parse().unwrap_or(0.0),
-                    });
-                }
+            "NETWORK" if cols.len() >= 5 && cols[1] != "-" => {
+                stats.networks.push(NetworkInfo {
+                    nic: cols[1].to_string(),
+                    state: cols[2].to_string(),
+                    rx_bytes_per_sec: cols[3].parse().unwrap_or(0.0),
+                    tx_bytes_per_sec: cols[4].parse().unwrap_or(0.0),
+                });
             }
 
             "DISK" if cols.len() >= 6 && cols[1] != "-" => {

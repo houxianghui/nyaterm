@@ -605,10 +605,8 @@ fn parse_iterm2_body(body: &[u8]) -> Option<GraphicsEvent> {
         let key = kv.next().unwrap_or("");
         let value = kv.next().unwrap_or("");
         match key {
-            "File" | "name" => {
-                if !value.is_empty() {
-                    name = Some(value.to_string());
-                }
+            "File" | "name" if !value.is_empty() => {
+                name = Some(value.to_string());
             }
             "width" => width_cells = parse_cell_extent(value),
             "height" => height_cells = parse_cell_extent(value),

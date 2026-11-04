@@ -231,10 +231,10 @@ impl NyaTermApp {
         cx.spawn(async move |this, cx| {
             let result = await_blocking_job(task).await.and_then(|result| result);
             let _ = this.update(cx, |this, cx| {
-                if !this
+                if this
                     .session
                     .prompt_active_keyboard_interactive()
-                    .is_some_and(|state| state.id == prompt_id)
+                    .is_none_or(|state| state.id != prompt_id)
                 {
                     return;
                 }

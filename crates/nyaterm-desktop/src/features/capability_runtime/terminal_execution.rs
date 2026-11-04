@@ -235,10 +235,10 @@ impl TerminalExecutionState {
         mut status: TerminalExecutionStatus,
     ) -> Option<TerminalExecutionCompletion> {
         let mut event = None;
-        if !self
+        if self
             .tasks
             .get(session_id)
-            .is_some_and(|task| task.capture_marker_id == id)
+            .is_none_or(|task| task.capture_marker_id != id)
         {
             return None;
         }

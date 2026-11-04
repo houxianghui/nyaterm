@@ -393,10 +393,11 @@ impl NyaTermApp {
                 cx.stop_propagation();
                 self.clear_connection_search(restore_focus, window, cx);
             }
-            "up" | "down" if !self.connection_state.list_search_is_empty() => {
-                if self.step_connection_keyboard_active(keystroke.key == "down", cx) {
-                    cx.stop_propagation();
-                }
+            "up" | "down"
+                if !self.connection_state.list_search_is_empty()
+                    && self.step_connection_keyboard_active(keystroke.key == "down", cx) =>
+            {
+                cx.stop_propagation();
             }
             "enter"
                 if !self.connection_state.list_search_is_empty()

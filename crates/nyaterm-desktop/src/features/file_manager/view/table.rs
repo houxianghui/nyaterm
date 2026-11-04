@@ -504,9 +504,9 @@ impl FileManagerWorkspace {
         let writable = entry.is_directory()
             && !entry.is_symlink()
             && !state.disconnected
-            && !entry
+            && entry
                 .permissions
-                .is_some_and(|permissions| permissions & 0o222 == 0);
+                .is_none_or(|permissions| permissions & 0o222 != 0);
         row = row
             .can_drop(move |drag, _, _| drag.downcast_ref::<FileManagerDragPayload>().is_some())
             .drag_over::<FileManagerDragPayload>(move |style, _, _, _| style.bg(rgb(palette.hover)))

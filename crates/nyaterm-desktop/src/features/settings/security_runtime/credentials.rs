@@ -220,10 +220,8 @@ impl NyaTermApp {
         // The boxes own the text; the editor owns the keys that close or save
         // it, which the boxes leave unconsumed.
         match keystroke.key.as_str() {
-            "escape" => {
-                if !self.security.editor_busy() {
-                    self.close_security_credential_editor(cx);
-                }
+            "escape" if !self.security.editor_busy() => {
+                self.close_security_credential_editor(cx);
             }
             "enter" => {
                 self.save_security_credential_editor(window, cx);

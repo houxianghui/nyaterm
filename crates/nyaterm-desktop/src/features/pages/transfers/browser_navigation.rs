@@ -35,10 +35,10 @@ impl NyaTermApp {
 
     pub(in crate::features) fn cache_transfer_browser_session(&mut self, session_id: &str) {
         if session_id.trim().is_empty()
-            || !self
+            || self
                 .session
                 .file_browser_backend_support_for_session(session_id)
-                .is_some()
+                .is_none()
         {
             return;
         }

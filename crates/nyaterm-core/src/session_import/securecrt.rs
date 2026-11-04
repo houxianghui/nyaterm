@@ -51,21 +51,17 @@ fn parse_securecrt_content(content: &str) -> AppResult<Vec<ImportedSession>> {
                     frame.fields.insert(name, String::new());
                 }
             }
-            Event::Text(e) => {
-                if current_field.is_some() {
-                    let decoded = reader.decoder().decode(e.as_ref()).map_err(|err| {
-                        AppError::Config(format!("Invalid SecureCRT XML text: {err}"))
-                    })?;
-                    current_value.push_str(&decoded);
-                }
+            Event::Text(e) if current_field.is_some() => {
+                let decoded = reader.decoder().decode(e.as_ref()).map_err(|err| {
+                    AppError::Config(format!("Invalid SecureCRT XML text: {err}"))
+                })?;
+                current_value.push_str(&decoded);
             }
-            Event::CData(e) => {
-                if current_field.is_some() {
-                    let decoded = reader.decoder().decode(e.as_ref()).map_err(|err| {
-                        AppError::Config(format!("Invalid SecureCRT XML CDATA: {err}"))
-                    })?;
-                    current_value.push_str(&decoded);
-                }
+            Event::CData(e) if current_field.is_some() => {
+                let decoded = reader.decoder().decode(e.as_ref()).map_err(|err| {
+                    AppError::Config(format!("Invalid SecureCRT XML CDATA: {err}"))
+                })?;
+                current_value.push_str(&decoded);
             }
             Event::End(e) if is_securecrt_value_tag(e.name().as_ref()) => {
                 if let (Some(frame), Some(name)) = (stack.last_mut(), current_field.take()) {

@@ -26,11 +26,11 @@ fn drain(manager: &SessionManager, id: &str) -> bool {
     let mut cwd = false;
     for event in manager.drain_events(128).unwrap().events {
         match event {
-            SessionEvent::Output { data, .. } => {
+            SessionEvent::Output { data, .. }
                 // This test uses only a controlled rc file; no terminal data is logged.
-                if data.windows(4).any(|bytes| bytes == b"\x1b[6n") {
-                    let _ = manager.write_raw(id, b"\x1b[1;1R");
-                }
+                if data.windows(4).any(|bytes| bytes == b"\x1b[6n") =>
+            {
+                let _ = manager.write_raw(id, b"\x1b[1;1R");
             }
             SessionEvent::CwdChanged { .. } => cwd = true,
             SessionEvent::CleanupFailed { .. } => panic!("session cleanup failed"),

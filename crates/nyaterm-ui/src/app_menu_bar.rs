@@ -330,7 +330,7 @@ impl NyaAppMenuEntry {
     }
 
     fn handle_hover(&mut self, hovered: &bool, window: &mut Window, cx: &mut Context<Self>) {
-        if !*hovered || !self.bar.read(cx).selected_index.is_some() {
+        if !*hovered || self.bar.read(cx).selected_index.is_none() {
             return;
         }
         if !self.is_selected(cx) {
