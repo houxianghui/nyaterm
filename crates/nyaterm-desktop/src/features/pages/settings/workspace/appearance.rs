@@ -269,7 +269,7 @@ impl SettingsPanel {
         cx: &mut Context<Self>,
     ) -> Option<Arc<gpui::RenderImage>> {
         let current_path = self.settings.summary().background_image_path.clone();
-        self.with_app(cx, |app, _| {
+        self.with_app_read(cx, |app| {
             current_path
                 .as_deref()
                 .filter(|path| app.shell.wallpaper_is_requested(path))
@@ -864,7 +864,9 @@ fn appearance_wallpaper_drop_path(paths: &[PathBuf]) -> Option<&Path> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::path::{Path, PathBuf};
+    use std::rc::Rc;
     use std::sync::Arc;
 
     use gpui::{
@@ -882,22 +884,9 @@ mod tests {
 
     use super::appearance_wallpaper_drop_path;
 
-    struct MainHost {
-        panel: Entity<SettingsPanel>,
-    }
-
-    impl Render for MainHost {
-        fn render(
-            &mut self,
-            _window: &mut gpui::Window,
-            _cx: &mut gpui::Context<Self>,
-        ) -> impl IntoElement {
-            div().size_full().child(self.panel.clone())
-        }
-    }
-
     struct WallpaperHost {
         panel: Entity<SettingsPanel>,
+        paints: Rc<Cell<usize>>,
     }
 
     impl Render for WallpaperHost {
@@ -906,6 +895,7 @@ mod tests {
             _window: &mut gpui::Window,
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
+            self.paints.set(self.paints.get() + 1);
             div()
                 .w(px(720.))
                 .h(px(560.))
@@ -940,31 +930,26 @@ mod tests {
         app
     }
 
-    fn main_panel_window<'a>(
-        cx: &'a mut TestAppContext,
-        app: &Entity<NyaTermApp>,
-    ) -> (Entity<SettingsPanel>, &'a mut VisualTestContext) {
-        let panel = cx.update_entity(app, |app, _| app.settings_panel.clone());
-        let host_panel = panel.clone();
-        let (_, vcx) = cx.add_window_view(move |_, _| MainHost {
-            panel: host_panel.clone(),
-        });
-        let vcx: &mut VisualTestContext = vcx;
-        vcx.run_until_parked();
-        vcx.update(|window, cx| {
-            _ = window.draw(cx);
-        });
-        vcx.run_until_parked();
-        (panel, vcx)
-    }
-
     fn wallpaper_window<'a>(
         cx: &'a mut TestAppContext,
         app: &Entity<NyaTermApp>,
-    ) -> &'a mut VisualTestContext {
+    ) -> (
+        Entity<SettingsPanel>,
+        Rc<Cell<usize>>,
+        &'a mut VisualTestContext,
+    ) {
         let panel = cx.update_entity(app, |app, _| app.settings_panel.clone());
-        let (_, vcx) = cx.add_window_view(move |_, _| WallpaperHost {
-            panel: panel.clone(),
+        let paints = Rc::new(Cell::new(0));
+        let (_, vcx) = cx.add_window_view({
+            let panel = panel.clone();
+            let paints = paints.clone();
+            move |_, cx| {
+                cx.observe(&panel, |_, _, cx| cx.notify()).detach();
+                WallpaperHost {
+                    panel: panel.clone(),
+                    paints: paints.clone(),
+                }
+            }
         });
         let vcx: &mut VisualTestContext = vcx;
         vcx.run_until_parked();
@@ -972,7 +957,7 @@ mod tests {
             _ = window.draw(cx);
         });
         vcx.run_until_parked();
-        vcx
+        (panel, paints, vcx)
     }
 
     fn external_paths(paths: impl IntoIterator<Item = PathBuf>) -> ExternalPaths {
@@ -980,13 +965,17 @@ mod tests {
     }
 
     fn dispatch_wallpaper_drop(vcx: &mut VisualTestContext, paths: ExternalPaths) {
-        let bounds = vcx
+        let position = vcx
             .debug_bounds("appearance-wallpaper-drop")
-            .expect("wallpaper drop target bounds");
-        let position = point(
-            bounds.origin.x + bounds.size.width / 2.,
-            bounds.origin.y + bounds.size.height / 2.,
-        );
+            .map(|bounds| {
+                point(
+                    bounds.origin.x + bounds.size.width / 2.,
+                    bounds.origin.y + bounds.size.height / 2.,
+                )
+            })
+            // Release builds omit debug selectors. The real section is mounted
+            // in a 720x560 host, whose center is inside the drop container.
+            .unwrap_or_else(|| point(px(360.), px(280.)));
         vcx.update(|window, cx| {
             _ = window.dispatch_event(
                 PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }),
@@ -1006,6 +995,21 @@ mod tests {
         )]))
     }
 
+    fn assert_wallpaper_preview_visible(
+        vcx: &mut VisualTestContext,
+        panel: &Entity<SettingsPanel>,
+        expected: bool,
+    ) {
+        let actual = vcx
+            .update(|_, cx| panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx)));
+        assert_eq!(actual.is_some(), expected);
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            vcx.debug_bounds("appearance-wallpaper-preview").is_some(),
+            expected
+        );
+    }
+
     #[test]
     fn appearance_wallpaper_drop_preview_uses_only_current_cached_asset() {
         let temp = TestConfigDir::new("nyaterm-wallpaper-preview-state");
@@ -1014,9 +1018,8 @@ mod tests {
         let app = app(&mut cx, temp.path());
         let panel = cx.update_entity(&app, |app, _| app.settings_panel.clone());
 
-        let no_path_preview = cx.update_entity(&app, |_, cx| {
-            panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx))
-        });
+        let no_path_preview =
+            cx.update(|cx| panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx)));
         assert!(no_path_preview.is_none());
 
         let current = temp.path().join("current.png").display().to_string();
@@ -1030,9 +1033,8 @@ mod tests {
             );
             app.flush_settings_panel_snapshots(cx);
         });
-        let current_preview = cx.update_entity(&app, |_, cx| {
-            panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx))
-        });
+        let current_preview =
+            cx.update(|cx| panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx)));
         assert!(Arc::ptr_eq(
             &current_preview.expect("current wallpaper preview"),
             &cached_image
@@ -1043,10 +1045,11 @@ mod tests {
                 .select_background_image(temp.path().join("next.png").display().to_string());
             app.flush_settings_panel_snapshots(cx);
         });
-        let stale_preview = cx.update_entity(&app, |app, cx| {
+        cx.update_entity(&app, |app, _| {
             assert!(app.shell.wallpaper_asset().is_some());
-            panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx))
         });
+        let stale_preview =
+            cx.update(|cx| panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx)));
         assert!(stale_preview.is_none());
     }
 
@@ -1064,7 +1067,7 @@ mod tests {
         let mut cx = TestAppContext::single();
         let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
         let app = app(&mut cx, temp.path());
-        let vcx = wallpaper_window(&mut cx, &app);
+        let (_panel, _paints, vcx) = wallpaper_window(&mut cx, &app);
         let before = vcx.update(|_, cx| app.read(cx).settings.summary().clone());
         let before_store_message =
             vcx.update(|_, cx| app.read(cx).settings.store_status().message.to_string());
@@ -1112,7 +1115,7 @@ mod tests {
         let mut cx = TestAppContext::single();
         let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
         let app = app(&mut cx, temp.path());
-        let vcx = wallpaper_window(&mut cx, &app);
+        let (_panel, _paints, vcx) = wallpaper_window(&mut cx, &app);
         let before = vcx.update(|_, cx| app.read(cx).settings.summary().clone());
 
         dispatch_wallpaper_drop(vcx, external_paths([path.clone()]));
@@ -1129,13 +1132,72 @@ mod tests {
             assert!(app.shell.wallpaper_asset().is_none());
             assert_eq!(
                 app.settings.store_status().message,
-                "appearance settings changes staged"
+                "Settings draft changed; apply to persist."
             );
         });
         vcx.run_until_parked();
         vcx.update(|_, cx| {
             assert!(app.read(cx).shell.wallpaper_asset().is_some());
         });
+    }
+
+    #[test]
+    fn appearance_wallpaper_preview_read_does_not_repaint_panel() {
+        let temp = TestConfigDir::new("nyaterm-wallpaper-preview-read-only");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx, temp.path());
+        let (panel, _paints, vcx) = wallpaper_window(&mut cx, &app);
+        let current = temp.path().join("current.png").display().to_string();
+        let cached_image = image();
+        vcx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.settings.select_background_image(current.clone());
+                assert!(app.shell.request_wallpaper(Some(current.clone())));
+                assert!(
+                    app.shell
+                        .cache_wallpaper(current, cached_image.clone(), 1, 1)
+                );
+                app.flush_settings_panel_snapshots(cx);
+            });
+        });
+        vcx.run_until_parked();
+        vcx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        vcx.run_until_parked();
+        let summary_before_read = vcx.update(|_, cx| {
+            Arc::clone(
+                &panel
+                    .read(cx)
+                    .snapshot()
+                    .expect("settings snapshot")
+                    .settings
+                    .summary,
+            )
+        });
+
+        let preview = vcx
+            .update(|_, cx| panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx)));
+        assert!(Arc::ptr_eq(
+            &preview.expect("cached preview"),
+            &cached_image
+        ));
+        vcx.run_until_parked();
+        let summary_after_read = vcx.update(|_, cx| {
+            Arc::clone(
+                &panel
+                    .read(cx)
+                    .snapshot()
+                    .expect("settings snapshot")
+                    .settings
+                    .summary,
+            )
+        });
+        assert!(
+            Arc::ptr_eq(&summary_before_read, &summary_after_read),
+            "a read-only preview must not schedule a SettingsPanel refresh"
+        );
     }
 
     #[test]
@@ -1149,8 +1211,8 @@ mod tests {
         let mut cx = TestAppContext::single();
         let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
         let app = app(&mut cx, temp.path());
-        let (panel, vcx) = main_panel_window(&mut cx, &app);
-        assert!(vcx.debug_bounds("appearance-wallpaper-preview").is_none());
+        let (panel, paints, vcx) = wallpaper_window(&mut cx, &app);
+        assert_wallpaper_preview_visible(vcx, &panel, false);
 
         vcx.update(|window, cx| {
             app.update(cx, |app, cx| {
@@ -1160,8 +1222,8 @@ mod tests {
             });
             _ = window.draw(cx);
         });
-        assert!(vcx.debug_bounds("appearance-wallpaper-preview").is_none());
-        let paints_before_cache = vcx.update(|_, cx| panel.read(cx).paint_count());
+        assert_wallpaper_preview_visible(vcx, &panel, false);
+        let paints_before_cache = paints.get();
 
         vcx.run_until_parked();
 
@@ -1169,8 +1231,8 @@ mod tests {
             assert!(app.read(cx).shell.wallpaper_asset().is_some());
             let preview = panel.update(cx, |panel, cx| panel.appearance_wallpaper_preview(cx));
             assert!(preview.is_some());
-            assert!(panel.read(cx).paint_count() > paints_before_cache);
+            assert!(paints.get() > paints_before_cache);
         });
-        assert!(vcx.debug_bounds("appearance-wallpaper-preview").is_some());
+        assert_wallpaper_preview_visible(vcx, &panel, true);
     }
 }

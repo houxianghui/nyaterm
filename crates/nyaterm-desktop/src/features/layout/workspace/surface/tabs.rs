@@ -1353,6 +1353,7 @@ mod tests {
 
     struct TabCloseFixture {
         activations: Rc<Cell<usize>>,
+        opacity: Rc<Cell<f32>>,
     }
 
     impl Render for TabCloseFixture {
@@ -1362,28 +1363,34 @@ mod tests {
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
             let activations = self.activations.clone();
-            div().child(
-                SessionTabCloseButton::new(
-                    "test-session-tab-close",
-                    "test-session-tab-group",
-                    crate::theme::theme_palette("github-dark"),
-                    false,
-                    false,
-                    move |_, _, _| activations.set(activations.get() + 1),
-                )
-                .render(window, cx)
-                .bg(rgb(0xffffff)),
+            let mut button = SessionTabCloseButton::new(
+                "test-session-tab-close",
+                "test-session-tab-group",
+                crate::theme::theme_palette("github-dark"),
+                false,
+                false,
+                move |_, _, _| activations.set(activations.get() + 1),
             )
+            .render(window, cx);
+            self.opacity.set(button.style().opacity.unwrap_or(1.));
+            div().child(button.bg(rgb(0xffffff)))
         }
     }
 
-    fn tab_close_fixture(cx: &mut TestAppContext) -> (&mut VisualTestContext, Rc<Cell<usize>>) {
+    fn tab_close_fixture(
+        cx: &mut TestAppContext,
+    ) -> (&mut VisualTestContext, Rc<Cell<usize>>, Rc<Cell<f32>>) {
         let activations = Rc::new(Cell::new(0));
+        let opacity = Rc::new(Cell::new(0.));
         let (_, cx) = cx.add_window_view({
             let activations = activations.clone();
-            move |_, _| TabCloseFixture { activations }
+            let opacity = opacity.clone();
+            move |_, _| TabCloseFixture {
+                activations,
+                opacity,
+            }
         });
-        (cx, activations)
+        (cx, activations, opacity)
     }
 
     fn draw_fixture(cx: &mut VisualTestContext) {
@@ -1404,31 +1411,12 @@ mod tests {
         cx.simulate_event(KeyUpEvent { keystroke });
     }
 
-    fn test_background_alpha(cx: &mut VisualTestContext) -> f32 {
-        cx.update(|window, _| {
-            let opaque = Background::from(rgb(0xffffff));
-            window
-                .painted_quads()
-                .into_iter()
-                .find_map(|quad| {
-                    if quad.background == opaque {
-                        Some(1.)
-                    } else if quad.background == opaque.opacity(0.) {
-                        Some(0.)
-                    } else {
-                        None
-                    }
-                })
-                .expect("test background should be painted")
-        })
-    }
-
     #[gpui::test]
     fn tab_close_focus_repaints_from_zero_to_full_opacity(cx: &mut TestAppContext) {
         let _cleanup = crate::test_support::TestAppCleanup::new(cx);
-        let (cx, _) = tab_close_fixture(cx);
+        let (cx, _, opacity) = tab_close_fixture(cx);
         draw_fixture(cx);
-        assert_eq!(test_background_alpha(cx), 0.);
+        assert_eq!(opacity.get(), 0.);
 
         cx.update(|window, cx| {
             assert!(window.focused(cx).is_none());
@@ -1436,13 +1424,13 @@ mod tests {
             assert!(window.focused(cx).is_some());
         });
         draw_fixture(cx);
-        assert_eq!(test_background_alpha(cx), 1.);
+        assert_eq!(opacity.get(), 1.);
     }
 
     #[gpui::test]
     fn tab_close_keyboard_focus_paints_ring_and_activates(cx: &mut TestAppContext) {
         let _cleanup = crate::test_support::TestAppCleanup::new(cx);
-        let (cx, activations) = tab_close_fixture(cx);
+        let (cx, activations, _) = tab_close_fixture(cx);
         draw_fixture(cx);
         cx.update(|window, cx| window.focus_next(cx));
         draw_fixture(cx);

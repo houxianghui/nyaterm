@@ -686,6 +686,19 @@ impl SettingsPanel {
         cx.notify();
     }
 
+    /// Read app state without scheduling a settings-panel refresh. This is
+    /// appropriate for render-time projections such as image previews.
+    pub(in crate::features::pages::settings) fn with_app_read<R: Default>(
+        &self,
+        cx: &Context<Self>,
+        f: impl FnOnce(&NyaTermApp) -> R,
+    ) -> R {
+        self.app
+            .upgrade()
+            .map(|app| f(app.read(cx)))
+            .unwrap_or_default()
+    }
+
     pub(in crate::features::pages::settings) fn with_app<R: Default>(
         &self,
         cx: &mut Context<Self>,
