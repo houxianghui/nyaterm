@@ -700,9 +700,9 @@ mod tests {
     use std::rc::Rc;
 
     use gpui::{
-        Background, FocusHandle, InteractiveElement as _, IntoElement, Modifiers,
-        ParentElement as _, Render, RenderOnce as _, Styled as _, TestAppContext,
-        VisualTestContext, div, point, px, rgb,
+        Background, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, KeyUpEvent,
+        Keystroke, Modifiers, ParentElement as _, Render, RenderOnce as _, Styled as _,
+        TestAppContext, VisualTestContext, div, point, px, rgb,
     };
     use nyaterm_transport::{SessionInfo, SessionKind};
 
@@ -762,6 +762,16 @@ mod tests {
         cx.run_until_parked();
     }
 
+    fn press_key(cx: &mut VisualTestContext, key: &str) {
+        let keystroke = Keystroke::parse(key).expect("valid test keystroke");
+        cx.simulate_event(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(KeyUpEvent { keystroke });
+    }
+
     fn test_background_alpha(cx: &mut VisualTestContext) -> f32 {
         cx.update(|window, _| {
             let opaque = Background::from(rgb(0xffffff));
@@ -814,8 +824,8 @@ mod tests {
                 "focused rename button must paint a visible focus ring"
             );
         });
-        cx.simulate_keystrokes("enter");
-        cx.simulate_keystrokes("space");
+        press_key(cx, "enter");
+        press_key(cx, "space");
         assert_eq!(activations.get(), 2);
 
         cx.simulate_click(point(px(14.), px(14.)), Modifiers::default());
@@ -903,8 +913,8 @@ mod tests {
             let activations = activations.clone();
             move |_, cx| DynamicSessionActionFixture {
                 enabled: true,
-                leading_focus: cx.focus_handle(),
-                trailing_focus: cx.focus_handle(),
+                leading_focus: cx.focus_handle().tab_stop(true),
+                trailing_focus: cx.focus_handle().tab_stop(true),
                 activations,
             }
         });
@@ -921,7 +931,7 @@ mod tests {
             assert!(!trailing.is_focused(window));
         });
         draw_fixture(cx);
-        cx.simulate_keystrokes("enter");
+        press_key(cx, "enter");
         assert_eq!(activations.get(), 1);
 
         cx.update(|_, cx| {
@@ -939,7 +949,7 @@ mod tests {
             assert!(trailing.is_focused(window));
         });
         draw_fixture(cx);
-        cx.simulate_keystrokes("enter");
+        press_key(cx, "enter");
         assert_eq!(activations.get(), 1);
 
         cx.update(|_, cx| {
@@ -959,7 +969,7 @@ mod tests {
             assert!(!trailing.is_focused(window));
         });
         draw_fixture(cx);
-        cx.simulate_keystrokes("space");
+        press_key(cx, "space");
         assert_eq!(activations.get(), 2);
     }
 

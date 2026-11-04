@@ -1344,8 +1344,9 @@ mod tests {
     use std::rc::Rc;
 
     use gpui::{
-        Background, IntoElement, Modifiers, ParentElement as _, Render, RenderOnce as _,
-        Styled as _, TestAppContext, VisualTestContext, div, point, px, rgb,
+        Background, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+        ParentElement as _, Render, RenderOnce as _, Styled as _, TestAppContext,
+        VisualTestContext, div, point, px, rgb,
     };
 
     use super::{SessionTabCloseButton, tab_drop_insert_after, tab_scroll_x, tab_strip_overflows};
@@ -1391,6 +1392,16 @@ mod tests {
             _ = window.draw(cx);
         });
         cx.run_until_parked();
+    }
+
+    fn press_key(cx: &mut VisualTestContext, key: &str) {
+        let keystroke = Keystroke::parse(key).expect("valid test keystroke");
+        cx.simulate_event(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(KeyUpEvent { keystroke });
     }
 
     fn test_background_alpha(cx: &mut VisualTestContext) -> f32 {
@@ -1445,8 +1456,8 @@ mod tests {
                 "focused close button must paint a visible focus ring"
             );
         });
-        cx.simulate_keystrokes("enter");
-        cx.simulate_keystrokes("space");
+        press_key(cx, "enter");
+        press_key(cx, "space");
         assert_eq!(activations.get(), 2);
 
         cx.simulate_click(point(px(9.), px(9.)), Modifiers::default());
