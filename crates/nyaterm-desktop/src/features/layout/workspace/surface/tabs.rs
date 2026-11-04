@@ -110,7 +110,8 @@ impl RenderOnce for SessionTabCloseButton {
         let focus = window
             .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
             .read(cx)
-            .clone();
+            .clone()
+            .tab_stop(true);
         let focused = focus.is_focused(window);
         let palette = self.palette;
         let tooltip = if self.locked {

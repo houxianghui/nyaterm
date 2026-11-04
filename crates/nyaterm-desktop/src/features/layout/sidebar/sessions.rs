@@ -920,6 +920,7 @@ mod tests {
             assert!(!leading.is_focused(window));
             assert!(!trailing.is_focused(window));
         });
+        draw_fixture(cx);
         cx.simulate_keystrokes("enter");
         assert_eq!(activations.get(), 1);
 
@@ -937,6 +938,7 @@ mod tests {
             window.focus_next(cx);
             assert!(trailing.is_focused(window));
         });
+        draw_fixture(cx);
         cx.simulate_keystrokes("enter");
         assert_eq!(activations.get(), 1);
 
@@ -956,6 +958,7 @@ mod tests {
             assert!(!leading.is_focused(window));
             assert!(!trailing.is_focused(window));
         });
+        draw_fixture(cx);
         cx.simulate_keystrokes("space");
         assert_eq!(activations.get(), 2);
     }
