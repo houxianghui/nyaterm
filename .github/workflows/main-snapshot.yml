@@ -146,6 +146,13 @@ jobs:
           NYATERM_VERSION: ${{ needs.prepare.outputs.version }}
           TARGET: ${{ matrix.target }}
         run: python scripts/release/package_native.py "${TARGET}"
+      - name: Verify Windows version information
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          pwsh scripts/ci/verify-version.ps1
+          -ExePath target/native-package/NyaTerm-portable/NyaTerm.exe
+          -ExpectedCompany rangerhou -ExpectedProduct NyaTerm
       - name: Verify native package
         shell: bash
         env:
