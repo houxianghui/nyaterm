@@ -700,8 +700,9 @@ mod tests {
     use std::rc::Rc;
 
     use gpui::{
-        Background, IntoElement, Modifiers, ParentElement as _, Render, RenderOnce as _,
-        Styled as _, TestAppContext, VisualTestContext, div, point, px, rgb,
+        Background, FocusHandle, InteractiveElement as _, IntoElement, Modifiers,
+        ParentElement as _, Render, RenderOnce as _, Styled as _, TestAppContext,
+        VisualTestContext, div, point, px, rgb,
     };
     use nyaterm_transport::{SessionInfo, SessionKind};
 
@@ -864,6 +865,99 @@ mod tests {
         let _cleanup = crate::test_support::TestAppCleanup::new(cx);
         let (_, cx) = cx.add_window_view(|_, _| DisabledSessionActionFixture);
         draw_fixture(cx);
+    }
+
+    struct DynamicSessionActionFixture {
+        enabled: bool,
+        leading_focus: FocusHandle,
+        trailing_focus: FocusHandle,
+        activations: Rc<Cell<usize>>,
+    }
+
+    impl Render for DynamicSessionActionFixture {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let activations = self.activations.clone();
+            div()
+                .child(div().track_focus(&self.leading_focus))
+                .child(session_action_svg_button(
+                    crate::theme::theme_palette("github-dark"),
+                    "test-dynamic-session-action",
+                    "icons/session/rename.svg",
+                    "Rename",
+                    self.enabled,
+                    move |_, _, _| activations.set(activations.get() + 1),
+                ))
+                .child(div().track_focus(&self.trailing_focus))
+        }
+    }
+
+    #[gpui::test]
+    fn session_action_updates_tab_stop_across_enabled_transitions(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let activations = Rc::new(Cell::new(0));
+        let (host, cx) = cx.add_window_view({
+            let activations = activations.clone();
+            move |_, cx| DynamicSessionActionFixture {
+                enabled: true,
+                leading_focus: cx.focus_handle(),
+                trailing_focus: cx.focus_handle(),
+                activations,
+            }
+        });
+        let cx: &mut VisualTestContext = cx;
+        draw_fixture(cx);
+
+        cx.update(|window, cx| {
+            let leading = host.read(cx).leading_focus.clone();
+            let trailing = host.read(cx).trailing_focus.clone();
+            window.focus(&leading, cx);
+            window.focus_next(cx);
+            assert!(window.focused(cx).is_some());
+            assert!(!leading.is_focused(window));
+            assert!(!trailing.is_focused(window));
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(activations.get(), 1);
+
+        cx.update(|_, cx| {
+            host.update(cx, |host, cx| {
+                host.enabled = false;
+                cx.notify();
+            });
+        });
+        draw_fixture(cx);
+        cx.update(|window, cx| {
+            let leading = host.read(cx).leading_focus.clone();
+            let trailing = host.read(cx).trailing_focus.clone();
+            window.focus(&leading, cx);
+            window.focus_next(cx);
+            assert!(trailing.is_focused(window));
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(activations.get(), 1);
+
+        cx.update(|_, cx| {
+            host.update(cx, |host, cx| {
+                host.enabled = true;
+                cx.notify();
+            });
+        });
+        draw_fixture(cx);
+        cx.update(|window, cx| {
+            let leading = host.read(cx).leading_focus.clone();
+            let trailing = host.read(cx).trailing_focus.clone();
+            window.focus(&leading, cx);
+            window.focus_next(cx);
+            assert!(window.focused(cx).is_some());
+            assert!(!leading.is_focused(window));
+            assert!(!trailing.is_focused(window));
+        });
+        cx.simulate_keystrokes("space");
+        assert_eq!(activations.get(), 2);
     }
 
     fn session(id: &str, name: &str, kind: SessionKind) -> SessionInfo {

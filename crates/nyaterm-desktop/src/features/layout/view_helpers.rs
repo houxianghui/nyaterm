@@ -132,11 +132,10 @@ impl gpui::RenderOnce for SessionActionSvgButton {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> gpui::Stateful<gpui::Div> {
         // Tauri ActiveSessions action icons: h-7 ghost.
         let focus = window
-            .use_keyed_state(self.id.clone(), cx, |_, cx| {
-                cx.focus_handle().tab_stop(self.enabled)
-            })
+            .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
             .read(cx)
-            .clone();
+            .clone()
+            .tab_stop(self.enabled);
         let focused = focus.is_focused(window);
         let palette = self.palette;
         let id = self.id;
