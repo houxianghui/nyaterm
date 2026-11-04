@@ -45,3 +45,4 @@ font-kit = ["gpui_platform/font-kit"]
 
 [build-dependencies]
 embed-resource = "3.0"
+serde_json.workspace = true

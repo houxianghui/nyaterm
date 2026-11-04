@@ -1,0 +1,9 @@
+{
+  "$comment": "NyaTerm 项目身份档案。CompanyName 与 ProductName 跨版本固定；修改身份字段必须经用户明确确认。",
+  "companyName": "rangerhou",
+  "productName": "NyaTerm",
+  "fileDescription": "NyaTerm",
+  "legalCopyrightTemplate": "Copyright (C) {companyName} {year}",
+  "stringFileInfoLanguage": "040904b0",
+  "translation": [1033, 1200]
+}

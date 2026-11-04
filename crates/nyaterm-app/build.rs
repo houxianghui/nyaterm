@@ -20,6 +20,32 @@ fn compile_windows_resources() {
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("Cargo OUT_DIR"));
     let resource = out_dir.join("nyaterm.rc");
     let version = std::env::var("CARGO_PKG_VERSION").expect("Cargo package version");
+    let identity_path = manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("workspace root")
+        .join(".product-identity.json");
+    println!("cargo:rerun-if-changed={}", identity_path.display());
+    let identity: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&identity_path).expect("read product identity"),
+    )
+    .expect("parse product identity");
+    let company = identity["companyName"].as_str().expect("companyName");
+    let product = identity["productName"].as_str().expect("productName");
+    let description = identity["fileDescription"]
+        .as_str()
+        .expect("fileDescription");
+    let language = identity["stringFileInfoLanguage"]
+        .as_str()
+        .expect("stringFileInfoLanguage");
+    let translation = identity["translation"].as_array().expect("translation");
+    let language_id = format!("{:04x}", translation[0].as_u64().expect("language id"));
+    let codepage = translation[1].as_u64().expect("codepage");
+    let copyright = identity["legalCopyrightTemplate"]
+        .as_str()
+        .expect("legalCopyrightTemplate")
+        .replace("{companyName}", company)
+        .replace("{year}", "2026");
     // Cargo has already validated SemVer. Match package_native.py: the final
     // numeric prerelease identifier becomes the fourth WORD; otherwise use 0.
     let without_build = version.split('+').next().expect("SemVer version");
@@ -69,10 +95,12 @@ FILESUBTYPE 0
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
-        BLOCK "040904b0"
+        BLOCK "{language}"
         BEGIN
-            VALUE "FileDescription", "NyaTerm\0"
-            VALUE "ProductName", "NyaTerm\0"
+            VALUE "CompanyName", "{company}\0"
+            VALUE "FileDescription", "{description}\0"
+            VALUE "ProductName", "{product}\0"
+            VALUE "LegalCopyright", "{copyright}\0"
             VALUE "FileVersion", "{dotted}\0"
             VALUE "ProductVersion", "{version}\0"
             VALUE "InternalName", "nyaterm\0"
@@ -81,7 +109,7 @@ BEGIN
     END
     BLOCK "VarFileInfo"
     BEGIN
-        VALUE "Translation", 0x0409, 1200
+        VALUE "Translation", 0x{language_id}, {codepage}
     END
 END
 "#
