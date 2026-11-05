@@ -24,19 +24,38 @@ class WindowsResourcesTests(unittest.TestCase):
             ["rustc", "-vV"], text=True,
         ).splitlines() if line.startswith("host: "))
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            shutil.copy2(ROOT / "crates/nyaterm-app/build.rs", root / "build.rs")
+            # `build.rs` resolves the identity from the grandparent of its manifest
+            # directory. That is right for the real crate but not reproducible from a
+            # temp fixture at every path length, so the copy names the identity path
+            # outright; everything else stays the shipped script.
+            scratch = Path(directory).resolve()
+            root = scratch / "fixture"
+            root.mkdir()
+            identity = scratch / ".product-identity.json"
+            shutil.copy2(ROOT / ".product-identity.json", identity)
+            build_script = (ROOT / "crates/nyaterm-app/build.rs").read_text()
+            anchor = 'let identity_path = manifest_dir\n'
+            self.assertIn(anchor, build_script)
+            identity_literal = str(identity).replace("\\", "\\\\")
+            build_script = build_script.replace(
+                anchor + '        .parent()\n        .and_then(std::path::Path::parent)\n'
+                '        .expect("workspace root")\n        .join(".product-identity.json");',
+                f'let identity_path = std::path::PathBuf::from("{identity_literal}");',
+            )
+            self.assertIn(str(identity).replace("\\", "\\\\"), build_script)
+            (root / "build.rs").write_text(build_script)
             icons = root / "resources/icons"
             icons.mkdir(parents=True)
             shutil.copy2(ROOT / "crates/nyaterm-app/resources/icons/icon.ico", icons)
             (root / "src").mkdir()
             (root / "src/main.rs").write_text('#![windows_subsystem = "windows"]\nfn main() {}\n')
-            env = {**os.environ, "CARGO_TARGET_DIR": str(root / "target")}
+            env = {**os.environ, "CARGO_TARGET_DIR": str(scratch / "target")}
 
             def build(version: str) -> subprocess.CompletedProcess[str]:
                 (root / "Cargo.toml").write_text(
                     '[package]\nname = "nyaterm-resource-test"\nedition = "2024"\n'
-                    f'version = "{version}"\n[build-dependencies]\nembed-resource = "3.0"\n',
+                    f'version = "{version}"\n[build-dependencies]\nembed-resource = "3.0"\n'
+                    'serde_json = { version = "1", features = ["raw_value"] }\n',
                 )
                 return subprocess.run(
                     ["cargo", "build", "--offline", "--target", host],
@@ -53,7 +72,7 @@ class WindowsResourcesTests(unittest.TestCase):
                 with self.subTest(version=version):
                     result = build(version)
                     self.assertEqual(result.returncode, 0, result.stdout)
-                    binary = root / "target" / host / "debug/nyaterm-resource-test.exe"
+                    binary = Path(env["CARGO_TARGET_DIR"]) / host / "debug/nyaterm-resource-test.exe"
                     verify_native_package.verify_windows_application_binary(binary.read_bytes(), binary.name)
                     verify_native_package.verify_windows_application_version(binary, version)
                     metadata = verify_native_package.windows_version_info(binary)
