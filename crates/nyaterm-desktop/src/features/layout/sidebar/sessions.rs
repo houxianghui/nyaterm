@@ -1,0 +1,1032 @@
+use rust_i18n::t;
+
+use std::sync::Arc;
+use std::time::Instant;
+
+use gpui::{
+    AnyElement, App, Context, FontWeight, IntoElement, RenderOnce, SharedString, Window, div,
+    prelude::*, px, rgb, rgba, uniform_list,
+};
+use nyaterm_core::{RuntimeMode, truncate_preview};
+use nyaterm_transport::SessionInfo;
+use nyaterm_ui::{NyaDropdownMenu, NyaMenuItem, NyaScrollable, radius_md, radius_sm};
+
+use crate::features::formatting::{session_kind_label, status_label};
+use crate::features::perf::record_gpui_perf_sample;
+use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
+use crate::widgets::{capability_line, empty_panel, small_button, status_pill};
+
+use super::super::view_helpers::session_action_svg_button;
+
+const SESSION_PANEL_LOGICAL_ROW_HEIGHT_PX: f32 = 52.;
+
+#[derive(Clone)]
+struct ActiveSessionPanelRow {
+    session: SessionInfo,
+    display_name: String,
+}
+
+#[derive(IntoElement)]
+struct ActiveSessionActions {
+    id: SharedString,
+    row_group: SharedString,
+    selected: bool,
+    rename: AnyElement,
+    menu: AnyElement,
+}
+
+impl ActiveSessionActions {
+    fn new(
+        id: impl Into<SharedString>,
+        row_group: impl Into<SharedString>,
+        selected: bool,
+        rename: impl IntoElement,
+        menu: impl IntoElement,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            row_group: row_group.into(),
+            selected,
+            rename: rename.into_any_element(),
+            menu: menu.into_any_element(),
+        }
+    }
+}
+
+impl RenderOnce for ActiveSessionActions {
+    // Concrete style access lets tests observe the painted alpha with a test background.
+    #[allow(refining_impl_trait)]
+    fn render(self, window: &mut Window, cx: &mut App) -> gpui::Stateful<gpui::Div> {
+        let focus = window
+            .use_keyed_state(self.id.clone(), cx, |_, cx| {
+                cx.focus_handle().tab_stop(false)
+            })
+            .read(cx)
+            .clone();
+        let focused = focus.contains_focused(window, cx);
+        let visible = self.selected || focused;
+
+        div()
+            .id(self.id)
+            .track_focus(&focus)
+            .flex()
+            .items_center()
+            .gap_0()
+            .flex_none()
+            .opacity(if visible { 1. } else { 0. })
+            .group_hover(self.row_group, |style| style.opacity(1.))
+            .child(self.rename)
+            .child(self.menu)
+    }
+}
+
+pub(in crate::features) struct ActiveSessionsPanelModel {
+    total_count: usize,
+    rows: Arc<Vec<ActiveSessionPanelRow>>,
+    query_active: bool,
+}
+
+impl ActiveSessionsPanelModel {
+    pub(in crate::features) fn count_label(&self) -> String {
+        session_panel_count_label(self.total_count, self.rows.len(), self.query_active)
+    }
+}
+
+impl NyaTermApp {
+    pub(in crate::features) fn sorted_active_sessions(&self) -> Vec<SessionInfo> {
+        let mut sessions = self.session.ordered_sessions();
+        sort_active_sessions(&mut sessions);
+        sessions
+    }
+
+    pub(in crate::features) fn active_sessions_panel_model(&self) -> ActiveSessionsPanelModel {
+        let started_at = Instant::now();
+        let sessions = self.sorted_active_sessions();
+        let total_count = sessions.len();
+        let query = self.session.active_search_draft().trim().to_lowercase();
+        let query_active = !query.is_empty();
+        let rows = sessions
+            .into_iter()
+            .filter_map(|session| {
+                let display_name = self.session.display_name_by_info(&session);
+                active_session_matches_query(&session, &display_name, &query).then_some(
+                    ActiveSessionPanelRow {
+                        session,
+                        display_name,
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let model = ActiveSessionsPanelModel {
+            total_count,
+            rows: Arc::new(rows),
+            query_active,
+        };
+        record_gpui_perf_sample(
+            "active_sessions_model",
+            started_at.elapsed(),
+            self.gpui_perf_context(model.rows.len(), None),
+        );
+        model
+    }
+
+    pub(in crate::features) fn active_sessions_panel(
+        &mut self,
+        model: ActiveSessionsPanelModel,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let ActiveSessionsPanelModel {
+            total_count,
+            rows,
+            query_active: _,
+        } = model;
+        let palette = self.theme_palette();
+        let list_scroll = self.session.active_list_scroll().clone();
+        // Built before the panel, which reads `self` throughout: creating the
+        // box needs it mutably.
+        let search_draft = self.session.active_search_draft().to_string();
+        let search_input = self
+            .search_input_box(
+                "sessions.filter",
+                &search_draft,
+                TextInputSetup::placeholder(t!("activeSessions.searchPlaceholder")),
+                cx,
+            )
+            .into_any_element();
+        let list: AnyElement = if total_count == 0 {
+            div()
+                .id(SharedString::from("active-sessions-list"))
+                .flex_1()
+                .min_h_0()
+                .child(crate::widgets::empty_panel_with_icon(
+                    t!("panel.noActiveSessions"),
+                    palette,
+                    "icons/sessions.svg",
+                ))
+                .into_any_element()
+        } else if rows.is_empty() {
+            div()
+                .id(SharedString::from("active-sessions-list"))
+                .flex_1()
+                .min_h_0()
+                .child(crate::widgets::empty_panel_with_icon(
+                    t!("activeSessions.noMatches"),
+                    palette,
+                    "icons/sessions.svg",
+                ))
+                .into_any_element()
+        } else {
+            uniform_list(
+                "active-sessions-list",
+                rows.len(),
+                cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                    let mut items = Vec::with_capacity(range.len());
+                    for index in range {
+                        let Some(row) = rows.get(index).cloned() else {
+                            continue;
+                        };
+                        items.push(
+                            div()
+                                .h(px(SESSION_PANEL_LOGICAL_ROW_HEIGHT_PX))
+                                .px_2()
+                                .pb_1()
+                                .flex_none()
+                                .child(this.active_session_row(row.session, row.display_name, cx)),
+                        );
+                    }
+                    items
+                }),
+            )
+            .flex_1()
+            .min_h_0()
+            .track_scroll(&list_scroll)
+            .into_any_element()
+        };
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .bg(self.shell_transparent_color(palette.surface))
+            .child(
+                div()
+                    .h(px(40.))
+                    .flex_none()
+                    .px_2()
+                    .bg(self.shell_transparent_color(palette.section_header))
+                    .flex()
+                    .items_center()
+                    .child(div().min_w_0().flex_1().child(search_input)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .py_2()
+                    .child(list)
+                    .vertical_scrollbar(&list_scroll),
+            )
+    }
+
+    pub(in crate::features) fn left_workspace_summary(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let palette = self.theme_palette();
+        let sessions = self.session.ordered_sessions();
+        let session_count = sessions.len();
+        let query = self
+            .session
+            .active_search_draft()
+            .trim()
+            .to_ascii_lowercase();
+        // Built before the panel, which reads `self` throughout: creating the
+        // box needs it mutably.
+        let search_draft = self.session.active_search_draft().to_string();
+        let sessions_search_input = self
+            .search_input_box(
+                "sessions.filter",
+                &search_draft,
+                TextInputSetup::placeholder("Search sessions"),
+                cx,
+            )
+            .into_any_element();
+        let mut active_session_rows = div().mt_3().flex().flex_col().gap_2();
+        let mut visible_count = 0usize;
+        if sessions.is_empty() {
+            active_session_rows = active_session_rows.child(empty_panel(
+                "No active runtime sessions.",
+                self.theme_palette(),
+            ));
+        } else {
+            for session in sessions {
+                let display_name = self.session.display_name_by_info(&session);
+                let haystack = format!(
+                    "{} {} {} {}",
+                    display_name,
+                    session.name,
+                    session_kind_label(session.kind),
+                    session.id
+                )
+                .to_ascii_lowercase();
+                if !query.is_empty() && !haystack.contains(&query) {
+                    continue;
+                }
+                visible_count += 1;
+                active_session_rows =
+                    active_session_rows.child(self.active_session_row(session, display_name, cx));
+            }
+            if visible_count == 0 {
+                active_session_rows = active_session_rows.child(empty_panel(
+                    "No matching active sessions.",
+                    self.theme_palette(),
+                ));
+            }
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .rounded(radius_md())
+                    .border_1()
+                    .border_color(rgb(palette.border))
+                    .bg(rgb(palette.input))
+                    .p_3()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight(700.))
+                            .text_color(rgb(palette.text_muted))
+                            .child("WORKSPACE"),
+                    )
+                    .child(capability_line(
+                        palette,
+                        "Active Sessions",
+                        session_count.to_string(),
+                    ))
+                    .child(capability_line(
+                        palette,
+                        "Profiles",
+                        self.connection_state.connections().len().to_string(),
+                    ))
+                    .child(capability_line(
+                        palette,
+                        "Quick Commands",
+                        self.commands.quick_commands().len().to_string(),
+                    ))
+                    .child(capability_line(
+                        palette,
+                        "Tunnels",
+                        self.tunnel_state.tunnels().len().to_string(),
+                    )),
+            )
+            .child(
+                div()
+                    .rounded(radius_md())
+                    .border_1()
+                    .border_color(rgb(palette.border))
+                    .bg(rgb(palette.input))
+                    .p_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight(800.))
+                                    .text_color(rgb(palette.text_muted))
+                                    .child("ACTIVE SESSIONS"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(if query.is_empty() {
+                                        rgb(palette.text_muted)
+                                    } else {
+                                        rgb(palette.success)
+                                    })
+                                    .child(if query.is_empty() {
+                                        session_count.to_string()
+                                    } else {
+                                        format!("{visible_count}/{session_count}")
+                                    }),
+                            ),
+                    )
+                    .child(div().mt_3().child(sessions_search_input))
+                    .child(active_session_rows),
+            )
+            .child(
+                div()
+                    .rounded(radius_md())
+                    .border_1()
+                    .border_color(rgb(palette.border))
+                    .bg(rgb(palette.input))
+                    .p_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight(700.))
+                                    .text_color(rgb(palette.text_muted))
+                                    .child("START"),
+                            )
+                            .child(status_pill(
+                                status_label(self.shell.status()),
+                                rgb(palette.link),
+                                rgb(palette.hover),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .mt_3()
+                            .flex()
+                            .gap_2()
+                            .child(small_button(
+                                palette,
+                                "left-start-local",
+                                "Local",
+                                cx.listener(|this, _, window, cx| {
+                                    this.start_local_session(window, cx);
+                                }),
+                            ))
+                            .child(small_button(
+                                palette,
+                                "left-probe",
+                                "Probe",
+                                cx.listener(|this, _, _, cx| {
+                                    this.send_probe_command(cx);
+                                }),
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .rounded(radius_md())
+                    .border_1()
+                    .border_color(rgb(palette.border))
+                    .bg(rgb(palette.input))
+                    .p_3()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.text_muted))
+                            .child("Runtime"),
+                    )
+                    .child(div().mt_1().text_sm().child(match self.runtime.mode() {
+                        RuntimeMode::Portable => "Portable",
+                        RuntimeMode::Installed => "Installed",
+                    }))
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_xs()
+                            .text_color(rgb(palette.text_muted))
+                            .child(self.runtime.config_dir().display().to_string()),
+                    ),
+            )
+            .child(
+                div()
+                    .rounded(radius_md())
+                    .border_1()
+                    .border_color(rgb(palette.hover))
+                    .bg(rgb(palette.input))
+                    .p_3()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.text_muted))
+                            .child("Config Store"),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_sm()
+                            .text_color(if self.settings.store_status().ready {
+                                rgb(palette.success)
+                            } else {
+                                rgb(palette.danger)
+                            })
+                            .child(self.settings.store_status().message.to_string()),
+                    )
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_xs()
+                            .text_color(rgb(palette.text_muted))
+                            .child(self.settings.store_status().path.to_string()),
+                    ),
+            )
+    }
+
+    pub(in crate::features) fn active_session_row(
+        &mut self,
+        session: SessionInfo,
+        display_name: String,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let palette = self.theme_palette();
+        let session_id = session.id.clone();
+        let row_group = SharedString::from(format!("active-session-group-{}", session.id));
+        let rename_session_id = session.id.clone();
+        let reconnect_session_id = session.id.clone();
+        let disconnect_session_id = session.id.clone();
+        let custom_color = self.session.tab_color(&session.id);
+        let is_active = self.session.active_id() == Some(session.id.as_str());
+        let is_disconnected = self.session.is_disconnected(&session.id);
+        let has_unread = self.terminal.session_has_unread(&session.id);
+        let busy_action = self.session.busy_action(&session.id).map(str::to_string);
+        let is_busy = busy_action.is_some();
+        let can_reconnect = !is_busy
+            && !self
+                .session
+                .start_reconnect_is_pending(reconnect_session_id.as_str());
+        let can_disconnect = !is_busy && !is_disconnected;
+        let reconnect_label = if busy_action.as_deref() == Some("reconnect") {
+            t!("tabCtx.reconnecting").to_string()
+        } else {
+            t!("tabCtx.reconnect").to_string()
+        };
+        let disconnect_label = if busy_action.as_deref() == Some("disconnect") {
+            t!("tabCtx.disconnecting").to_string()
+        } else {
+            t!("tabCtx.disconnect").to_string()
+        };
+        let menu = NyaDropdownMenu::new(format!("active-session-more-{}", session.id))
+            .icon("icons/session/more.svg")
+            .icon_size(px(14.))
+            .tooltip(t!("common.more"))
+            .disabled(is_busy)
+            .min_width(px(160.))
+            .items([
+                NyaMenuItem::action(reconnect_label)
+                    .icon("icons/session/reconnect.svg")
+                    .disabled(!can_reconnect)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if this.session.session_is_busy(&reconnect_session_id)
+                            || this
+                                .session
+                                .start_reconnect_is_pending(&reconnect_session_id)
+                        {
+                            cx.notify();
+                            return;
+                        }
+                        this.select_session(reconnect_session_id.clone(), cx);
+                        this.reconnect_session(reconnect_session_id.clone(), window, cx);
+                    })),
+                NyaMenuItem::action(disconnect_label)
+                    .icon("icons/session/disconnect.svg")
+                    .disabled(!can_disconnect)
+                    .danger()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.session.session_is_busy(&disconnect_session_id)
+                            || this.session.is_disconnected(&disconnect_session_id)
+                        {
+                            cx.notify();
+                            return;
+                        }
+                        this.disconnect_session(disconnect_session_id.clone(), cx);
+                    })),
+            ])
+            .on_trigger(|_, _, cx| cx.stop_propagation());
+        let accent = if let Some(custom_color) = custom_color {
+            rgb(custom_color)
+        } else if is_disconnected {
+            rgb(palette.text_dimmed)
+        } else if is_active {
+            rgb(palette.success)
+        } else if has_unread {
+            rgb(palette.warning)
+        } else {
+            rgb(0x22c55e)
+        };
+        let row_bg = if let Some(custom_color) = custom_color {
+            rgba((custom_color << 8) | if is_active { 0x22 } else { 0x12 })
+        } else if is_active {
+            // Finder-style inset selection: solid panel colour inside the
+            // rounded row rather than a full-bleed highlight.
+            rgb(palette.surface_elevated)
+        } else {
+            rgba(0x00000000)
+        };
+        let hover_bg = if let Some(custom_color) = custom_color {
+            rgba((custom_color << 8) | if is_active { 0x30 } else { 0x20 })
+        } else {
+            rgb(palette.hover)
+        };
+        // Tauri ActiveSessions: full display name + type badge + full mono session id.
+        let kind = session_kind_label(session.kind).to_ascii_uppercase();
+        let full_id = session.id.clone();
+        let id_preview = truncate_preview(&full_id, 42);
+        let title = truncate_preview(&display_name, 32);
+
+        div()
+            .id(SharedString::from(format!(
+                "active-session-row-{session_id}"
+            )))
+            .group(row_group.clone())
+            .relative()
+            .h(px(48.))
+            .rounded(radius_md())
+            .px_2()
+            .bg(row_bg)
+            .when(is_disconnected, |this| this.opacity(0.5))
+            .when(is_busy, |this| this.opacity(0.72))
+            .cursor_pointer()
+            .hover(move |this| this.bg(hover_bg))
+            .child(
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().size(px(8.)).rounded_full().bg(accent).flex_none())
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .flex_1()
+                                            .text_xs()
+                                            .font_weight(FontWeight(600.))
+                                            .text_color(rgb(palette.text))
+                                            .overflow_hidden()
+                                            .child(title),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_1()
+                                            .py(px(1.))
+                                            .rounded(radius_sm())
+                                            .bg(rgb(palette.hover))
+                                            .text_size(px(10.))
+                                            .font_weight(FontWeight(700.))
+                                            .text_color(rgb(palette.text_dimmed))
+                                            .child(kind),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .font_family(crate::features::shell::gpui_code_font_family())
+                                    .text_size(px(10.))
+                                    .text_color(rgb(palette.text_dimmed))
+                                    .overflow_hidden()
+                                    .child(id_preview),
+                            ),
+                    )
+                    .child(ActiveSessionActions::new(
+                        format!("active-session-actions-{}", session.id),
+                        row_group,
+                        is_active,
+                        session_action_svg_button(
+                            palette,
+                            format!("active-session-rename-{rename_session_id}"),
+                            "icons/session/rename.svg",
+                            t!("tabCtx.rename").to_string(),
+                            !is_busy,
+                            cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                if this.session.session_is_busy(&rename_session_id) {
+                                    return;
+                                }
+                                this.open_rename_session(rename_session_id.clone(), window, cx);
+                            }),
+                        ),
+                        menu,
+                    )),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.select_session(session_id.clone(), cx);
+            }))
+    }
+}
+
+fn sort_active_sessions(sessions: &mut [SessionInfo]) {
+    sessions.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| session_kind_label(left.kind).cmp(session_kind_label(right.kind)))
+    });
+}
+
+fn active_session_matches_query(session: &SessionInfo, display_name: &str, query: &str) -> bool {
+    query.is_empty()
+        || format!(
+            "{} {} {} {}",
+            display_name,
+            session.name,
+            session_kind_label(session.kind),
+            session.id
+        )
+        .to_lowercase()
+        .contains(query)
+}
+
+fn session_panel_count_label(total: usize, visible: usize, query_active: bool) -> String {
+    if query_active {
+        format!("{visible}/{total}")
+    } else {
+        total.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui::{
+        Background, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, KeyUpEvent,
+        Keystroke, Modifiers, ParentElement as _, Render, RenderOnce as _, Styled as _,
+        TestAppContext, VisualTestContext, div, point, px, rgb,
+    };
+    use nyaterm_transport::{SessionInfo, SessionKind};
+
+    use super::{
+        ActiveSessionActions, active_session_matches_query, session_action_svg_button,
+        session_panel_count_label, sort_active_sessions,
+    };
+
+    struct SessionActionsFixture {
+        activations: Rc<Cell<usize>>,
+    }
+
+    impl Render for SessionActionsFixture {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let activations = self.activations.clone();
+            div().child(
+                ActiveSessionActions::new(
+                    "test-active-session-actions",
+                    "test-active-session-group",
+                    false,
+                    session_action_svg_button(
+                        crate::theme::theme_palette("github-dark"),
+                        "test-active-session-rename",
+                        "icons/session/rename.svg",
+                        "Rename",
+                        true,
+                        move |_, _, _| activations.set(activations.get() + 1),
+                    ),
+                    div(),
+                )
+                .render(window, cx)
+                .bg(rgb(0xffffff)),
+            )
+        }
+    }
+
+    fn session_actions_fixture(
+        cx: &mut TestAppContext,
+    ) -> (&mut VisualTestContext, Rc<Cell<usize>>) {
+        let activations = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view({
+            let activations = activations.clone();
+            move |_, _| SessionActionsFixture { activations }
+        });
+        (cx, activations)
+    }
+
+    fn draw_fixture(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn press_key(cx: &mut VisualTestContext, key: &str) {
+        let keystroke = Keystroke::parse(key).expect("valid test keystroke");
+        cx.simulate_event(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(KeyUpEvent { keystroke });
+    }
+
+    fn test_background_alpha(cx: &mut VisualTestContext) -> f32 {
+        cx.update(|window, _| {
+            let opaque = Background::from(rgb(0xffffff));
+            window
+                .painted_quads()
+                .into_iter()
+                .find_map(|quad| {
+                    if quad.background == opaque {
+                        Some(1.)
+                    } else if quad.background == opaque.opacity(0.) {
+                        Some(0.)
+                    } else {
+                        None
+                    }
+                })
+                .expect("test background should be painted")
+        })
+    }
+
+    #[gpui::test]
+    fn session_actions_match_tab_close_focus_opacity(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (cx, _) = session_actions_fixture(cx);
+        draw_fixture(cx);
+        assert_eq!(test_background_alpha(cx), 0.);
+
+        cx.update(|window, cx| {
+            assert!(window.focused(cx).is_none());
+            window.focus_next(cx);
+            assert!(window.focused(cx).is_some());
+        });
+        draw_fixture(cx);
+        assert_eq!(test_background_alpha(cx), 1.);
+    }
+
+    #[gpui::test]
+    fn session_rename_keyboard_focus_paints_ring_and_activates(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (cx, activations) = session_actions_fixture(cx);
+        draw_fixture(cx);
+        cx.update(|window, cx| window.focus_next(cx));
+        draw_fixture(cx);
+
+        cx.update(|window, _| {
+            assert!(
+                window.painted_quads().iter().any(|quad| {
+                    quad.border_widths.top > px(0.).scale(window.scale_factor())
+                        && quad.border_color.a > 0.
+                }),
+                "focused rename button must paint a visible focus ring"
+            );
+        });
+        press_key(cx, "enter");
+        press_key(cx, "space");
+        assert_eq!(activations.get(), 2);
+
+        cx.simulate_click(point(px(14.), px(14.)), Modifiers::default());
+        draw_fixture(cx);
+        assert_eq!(activations.get(), 3);
+        let hover = rgb(crate::theme::theme_palette("github-dark").surface_elevated);
+        cx.update(|window, _| {
+            assert!(
+                window
+                    .painted_quads()
+                    .iter()
+                    .any(|quad| quad.background == Background::from(hover)),
+                "hover must keep the palette surface_elevated background"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn session_action_disabled_preserves_palette_text_and_opacity(cx: &mut TestAppContext) {
+        struct DisabledSessionActionFixture;
+
+        impl Render for DisabledSessionActionFixture {
+            fn render(
+                &mut self,
+                window: &mut gpui::Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                let palette = crate::theme::theme_palette("github-dark");
+                let mut disabled = session_action_svg_button(
+                    palette,
+                    "test-disabled-session-action",
+                    "icons/session/rename.svg",
+                    "Rename",
+                    false,
+                    |_, _, _| {},
+                )
+                .render(window, cx);
+                assert_eq!(disabled.style().opacity, Some(0.4));
+                assert_eq!(
+                    disabled.text_style().color,
+                    Some(rgb(palette.text_dimmed).into())
+                );
+                div().child(disabled)
+            }
+        }
+
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (_, cx) = cx.add_window_view(|_, _| DisabledSessionActionFixture);
+        draw_fixture(cx);
+    }
+
+    struct DynamicSessionActionFixture {
+        enabled: bool,
+        leading_focus: FocusHandle,
+        trailing_focus: FocusHandle,
+        activations: Rc<Cell<usize>>,
+    }
+
+    impl Render for DynamicSessionActionFixture {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let activations = self.activations.clone();
+            div()
+                .child(div().track_focus(&self.leading_focus))
+                .child(session_action_svg_button(
+                    crate::theme::theme_palette("github-dark"),
+                    "test-dynamic-session-action",
+                    "icons/session/rename.svg",
+                    "Rename",
+                    self.enabled,
+                    move |_, _, _| activations.set(activations.get() + 1),
+                ))
+                .child(div().track_focus(&self.trailing_focus))
+        }
+    }
+
+    #[gpui::test]
+    fn session_action_updates_tab_stop_across_enabled_transitions(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let activations = Rc::new(Cell::new(0));
+        let (host, cx) = cx.add_window_view({
+            let activations = activations.clone();
+            move |_, cx| DynamicSessionActionFixture {
+                enabled: true,
+                leading_focus: cx.focus_handle().tab_stop(true),
+                trailing_focus: cx.focus_handle().tab_stop(true),
+                activations,
+            }
+        });
+        let cx: &mut VisualTestContext = cx;
+        draw_fixture(cx);
+
+        cx.update(|window, cx| {
+            let leading = host.read(cx).leading_focus.clone();
+            let trailing = host.read(cx).trailing_focus.clone();
+            window.focus(&leading, cx);
+            window.focus_next(cx);
+            assert!(window.focused(cx).is_some());
+            assert!(!leading.is_focused(window));
+            assert!(!trailing.is_focused(window));
+        });
+        draw_fixture(cx);
+        press_key(cx, "enter");
+        assert_eq!(activations.get(), 1);
+
+        cx.update(|_, cx| {
+            host.update(cx, |host, cx| {
+                host.enabled = false;
+                cx.notify();
+            });
+        });
+        draw_fixture(cx);
+        cx.update(|window, cx| {
+            let leading = host.read(cx).leading_focus.clone();
+            let trailing = host.read(cx).trailing_focus.clone();
+            window.focus(&leading, cx);
+            window.focus_next(cx);
+            assert!(trailing.is_focused(window));
+        });
+        draw_fixture(cx);
+        press_key(cx, "enter");
+        assert_eq!(activations.get(), 1);
+
+        cx.update(|_, cx| {
+            host.update(cx, |host, cx| {
+                host.enabled = true;
+                cx.notify();
+            });
+        });
+        draw_fixture(cx);
+        cx.update(|window, cx| {
+            let leading = host.read(cx).leading_focus.clone();
+            let trailing = host.read(cx).trailing_focus.clone();
+            window.focus(&leading, cx);
+            window.focus_next(cx);
+            assert!(window.focused(cx).is_some());
+            assert!(!leading.is_focused(window));
+            assert!(!trailing.is_focused(window));
+        });
+        draw_fixture(cx);
+        press_key(cx, "space");
+        assert_eq!(activations.get(), 2);
+    }
+
+    fn session(id: &str, name: &str, kind: SessionKind) -> SessionInfo {
+        SessionInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind,
+            working_dir: None,
+            cols: 80,
+            rows: 24,
+        }
+    }
+
+    #[test]
+    fn active_session_model_sort_is_case_insensitive_and_stable_by_kind() {
+        let mut sessions = vec![
+            session("serial", "alpha", SessionKind::Serial),
+            session("ssh", "Alpha", SessionKind::Ssh),
+            session("beta", "beta", SessionKind::LocalPty),
+        ];
+
+        sort_active_sessions(&mut sessions);
+
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["serial", "ssh", "beta"]
+        );
+    }
+
+    #[test]
+    fn active_session_query_matches_dynamic_display_name_case_insensitively() {
+        let session = session("session-1", "original", SessionKind::Ssh);
+
+        assert!(active_session_matches_query(
+            &session,
+            "Production Shell",
+            "production"
+        ));
+        assert!(active_session_matches_query(
+            &session,
+            "Production Shell",
+            "SESSION-1".to_lowercase().as_str()
+        ));
+        assert!(!active_session_matches_query(
+            &session,
+            "Production Shell",
+            "missing"
+        ));
+    }
+
+    #[test]
+    fn active_session_count_label_tracks_filtered_and_unfiltered_counts() {
+        assert_eq!(session_panel_count_label(100, 12, false), "100");
+        assert_eq!(session_panel_count_label(100, 12, true), "12/100");
+    }
+}
