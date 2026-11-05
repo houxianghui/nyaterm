@@ -599,6 +599,15 @@ impl SettingsPanel {
         self.paint_count
     }
 
+    /// The select entity for `id`, as tests drive it through the real control.
+    #[cfg(test)]
+    pub(in crate::features) fn select_entity_state(
+        &self,
+        id: &str,
+    ) -> Option<Entity<nyaterm_ui::NyaSelectState>> {
+        self.selects.field(&id.into())
+    }
+
     pub(in crate::features) fn set_snapshot(
         &mut self,
         snapshot: SettingsSnapshot,

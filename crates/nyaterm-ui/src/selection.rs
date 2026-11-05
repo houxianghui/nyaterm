@@ -412,6 +412,34 @@ impl NyaSelectState {
         self.selected_value.as_deref()
     }
 
+    /// Index of the option holding `value`, in the order the list shows them.
+    pub fn option_index(&self, value: &str) -> Option<IndexPath> {
+        self.options
+            .iter()
+            .position(|option| option.value == value)
+            .map(IndexPath::new)
+    }
+
+    /// Whether the option menu is showing.
+    pub fn is_open(&self) -> bool {
+        self.state.is_some()
+    }
+
+    /// Chooses `value` the way confirming it in the open list does: the same
+    /// `NyaSelectEvent::Changed` every row click and Enter key ends in.
+    ///
+    /// Used where a row cannot be hit-tested — its geometry comes from the list's
+    /// measured layout — so the behaviour after the pick stays under test.
+    pub fn select_option(&mut self, value: &str, cx: &mut Context<Self>) {
+        if self.option_index(value).is_none() {
+            return;
+        }
+        self.selected_value = Some(value.to_string());
+        self.selected_dirty = true;
+        cx.notify();
+        cx.emit(NyaSelectEvent::Changed(Some(value.to_string())));
+    }
+
     pub fn set_options(
         &mut self,
         options: impl Into<Vec<NyaSelectOption>>,

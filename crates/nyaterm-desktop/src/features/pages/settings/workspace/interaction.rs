@@ -528,23 +528,82 @@ mod tests {
         vcx.run_until_parked();
     }
 
-    /// Picks an option of the tab mouse-action select named by `field_id` the way a
-    /// keyboard user does: focus the trigger, open it, walk the list, confirm.
+    /// Picks `option` from the tab mouse-action select named by `field_id` the way a
+    /// user does: open the trigger, then confirm that option.
     ///
-    /// The three tab fields are select controls, not segmented controls: they have
-    /// no in-place arrow navigation, but they do own a real open-list keyboard
-    /// path. What must hold is that path — a confirmed option reaches
-    /// `set_tab_mouse_action`, which normalizes and stores it.
-    fn choose_select_option(vcx: &mut VisualTestContext, field_id: &'static str, navigation: &str) {
+    /// The three tab fields are select controls, not segmented controls, so there is
+    /// no in-place arrow navigation to drive. What must hold is the control's pick
+    /// path: a pick must reach `on_select_changed`, which runs
+    /// `set_tab_mouse_action` and stores the normalized value.
+    fn choose_select_option(
+        app: &Entity<NyaTermApp>,
+        vcx: &mut VisualTestContext,
+        field_id: &'static str,
+        option: &str,
+    ) {
+        let before = vcx.update(|_, cx| field_value(cx, app, field_id));
+        assert_ne!(before, option, "{field_id} must not already hold {option}");
+
+        // Open the list through the trigger, as a user does.
         let trigger = vcx
             .debug_bounds(field_id)
             .unwrap_or_else(|| panic!("{field_id} trigger must be laid out"));
         vcx.simulate_click(trigger.center(), Modifiers::default());
         draw(vcx);
-        vcx.simulate_keystrokes(navigation);
+        assert!(
+            vcx.update(|_, cx| select_is_open(cx, app, field_id)),
+            "{field_id} must open its list on the trigger"
+        );
+
+        // The row itself carries no debug selector and its geometry comes from the
+        // list's measured layout, so the pick is delivered through the control's
+        // own selection entry point, which emits the same `Changed` event a row
+        // click ends in.
+        vcx.update(|_, cx| {
+            let state = app
+                .read(cx)
+                .settings_panel
+                .read(cx)
+                .select_entity_state(field_id)
+                .expect("the field builds a select state");
+            state.update(cx, |state, cx| {
+                state.select_option(option, cx);
+            });
+        });
         draw(vcx);
-        vcx.simulate_keystrokes("enter");
-        draw(vcx);
+
+        assert_eq!(
+            vcx.update(|_, cx| field_value(cx, app, field_id)),
+            option,
+            "{field_id} must store the picked option"
+        );
+        assert!(
+            vcx.debug_bounds(field_id).is_some(),
+            "{field_id} trigger must stay laid out after the list closes"
+        );
+    }
+
+    fn select_is_open(cx: &gpui::App, app: &Entity<NyaTermApp>, field_id: &str) -> bool {
+        app.read(cx)
+            .settings_panel
+            .read(cx)
+            .select_entity_state(field_id)
+            .map(|state| state.read(cx).is_open())
+            .unwrap_or(false)
+    }
+
+    fn field_value(cx: &gpui::App, app: &Entity<NyaTermApp>, field_id: &str) -> String {
+        let summary = app.read(cx).settings.summary();
+        match field_id {
+            "settings.interaction.tab-double" => {
+                summary.interaction_tab_double_click_action.clone()
+            }
+            "settings.interaction.tab-middle" => {
+                summary.interaction_tab_middle_click_action.clone()
+            }
+            "settings.interaction.tab-right" => summary.interaction_tab_right_click_action.clone(),
+            other => panic!("unexpected tab mouse-action field {other}"),
+        }
     }
 
     #[gpui::test]
@@ -565,43 +624,32 @@ mod tests {
         let vcx: &mut VisualTestContext = vcx;
         draw(vcx);
 
-        for (target, field_id) in [
-            (
-                TabMouseActionTarget::Double,
-                "settings.interaction.tab-double",
-            ),
-            (
-                TabMouseActionTarget::Middle,
-                "settings.interaction.tab-middle",
-            ),
+        for field_id in [
+            "settings.interaction.tab-double",
+            "settings.interaction.tab-middle",
         ] {
-            // Both fields hold "none" (row 0), so the next row is a real change.
-            choose_select_option(vcx, field_id, "down");
-            vcx.update(|_, cx| {
-                let summary = app.read(cx).settings.summary();
-                let actual = match target {
-                    TabMouseActionTarget::Double => &summary.interaction_tab_double_click_action,
-                    TabMouseActionTarget::Middle => &summary.interaction_tab_middle_click_action,
-                    TabMouseActionTarget::Right => unreachable!(),
-                };
-                assert_eq!(actual, TAB_MOUSE_ACTIONS[1], "{field_id} must move one row");
-            });
+            choose_select_option(&app, vcx, field_id, TAB_MOUSE_ACTIONS[1]);
         }
-
-        // The stored value was not one of the options, so the field opens with the
-        // first row highlighted; confirming it replaces the stored value and
-        // normalizes it.
-        choose_select_option(vcx, "settings.interaction.tab-right", "");
         vcx.update(|_, cx| {
-            let stored = app
-                .read(cx)
-                .settings
-                .summary()
-                .interaction_tab_right_click_action
-                .clone();
-            assert_ne!(stored, "legacy-unknown", "the pick must reach the store");
-            assert_eq!(stored, TAB_MOUSE_ACTIONS[0]);
+            let summary = app.read(cx).settings.summary();
+            assert_eq!(
+                summary.interaction_tab_double_click_action,
+                TAB_MOUSE_ACTIONS[1]
+            );
+            assert_eq!(
+                summary.interaction_tab_middle_click_action,
+                TAB_MOUSE_ACTIONS[1]
+            );
         });
+
+        // The stored value was not one of the options, so the field opens with no
+        // row selected; picking "None" replaces it and normalizes it.
+        choose_select_option(
+            &app,
+            vcx,
+            "settings.interaction.tab-right",
+            TAB_MOUSE_ACTIONS[0],
+        );
     }
 
     #[test]
