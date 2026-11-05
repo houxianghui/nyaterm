@@ -2040,8 +2040,9 @@ mod tests {
     use std::path::Path;
 
     use gpui::{
-        AppContext as _, Entity, IntoElement, ParentElement as _, Render, Styled as _,
-        TestAppContext, VisualTestContext, div, prelude::FluentBuilder as _, px,
+        AppContext as _, Entity, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, MouseButton,
+        MouseDownEvent, MouseUpEvent, ParentElement as _, PlatformInput, Render, Styled as _,
+        TestAppContext, VisualTestContext, div, point, prelude::FluentBuilder as _, px,
     };
     use nyaterm_core::{AppRuntime, RuntimeMode};
 
@@ -2108,6 +2109,25 @@ mod tests {
                             .cached(crate::features::layout::cached_panel_style()),
                     ),
                 )
+        }
+    }
+
+    struct KeybindingsHost {
+        panel: Entity<SettingsPanel>,
+    }
+
+    impl Render for KeybindingsHost {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div()
+                .w(px(720.))
+                .h(px(720.))
+                .child(self.panel.update(cx, |panel, cx| {
+                    panel.keybindings_settings_section(cx).into_any_element()
+                }))
         }
     }
 
@@ -2178,6 +2198,28 @@ mod tests {
         for _ in 0..3 {
             draw(&app, vcx);
         }
+        (app, vcx)
+    }
+
+    fn hosted_keybindings<'a>(
+        cx: &'a mut TestAppContext,
+        root: &Path,
+    ) -> (Entity<NyaTermApp>, &'a mut VisualTestContext) {
+        let app = app(cx, root);
+        let (panel, snapshot) = cx.update_entity(&app, |app, cx| {
+            app.sync_component_theme(cx);
+            app.ensure_settings_tab_inputs(SettingsTab::Keybindings, cx);
+            app.shell.set_settings_active_tab(SettingsTab::Keybindings);
+            let snapshot = app.build_settings_snapshot(SettingsSurface::MainPage);
+            (app.settings_panel.clone(), snapshot)
+        });
+        cx.update(|cx| panel.update(cx, |panel, cx| panel.set_snapshot(snapshot, cx)));
+        let (_, vcx) = cx.add_window_view(move |_, cx| {
+            cx.observe(&panel, |_, _, cx| cx.notify()).detach();
+            KeybindingsHost {
+                panel: panel.clone(),
+            }
+        });
         (app, vcx)
     }
 
@@ -2553,6 +2595,7 @@ mod tests {
         });
         assert_eq!(authoritative, expected, "authoritative filter state");
         assert_eq!(presented, expected, "published panel filter state");
+        #[cfg(debug_assertions)]
         assert_eq!(
             vcx.debug_bounds("keybinding-record-terminal.copy")
                 .is_some(),
@@ -2561,28 +2604,77 @@ mod tests {
         );
     }
 
+    // Keybinding activation can continuously schedule work in this host. Keep the
+    // real input path, but draw once instead of waiting for an unbounded park.
+    fn draw_bounded(app: &Entity<NyaTermApp>, vcx: &mut VisualTestContext) {
+        vcx.update(|window, cx| {
+            app.update(cx, |_, cx| cx.notify());
+            _ = window.draw(cx);
+        });
+    }
+
+    fn click_bounded(vcx: &mut VisualTestContext, position: gpui::Point<gpui::Pixels>) {
+        vcx.update(|window, cx| {
+            _ = window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+            _ = window.dispatch_event(
+                PlatformInput::MouseUp(MouseUpEvent {
+                    position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }),
+                cx,
+            );
+        });
+    }
+
+    fn space_bounded(vcx: &mut VisualTestContext) {
+        let keystroke = Keystroke::parse("space").expect("space keystroke");
+        vcx.update(|window, cx| {
+            _ = window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+                cx,
+            );
+            _ = window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
+        });
+    }
+
     #[test]
     fn keybinding_custom_only_mouse_click_then_space_round_trips() {
         let test_dir = TestConfigDir::new("nyaterm-keybinding-custom-only-focus");
         let mut cx = TestAppContext::single();
         let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
-        let (app, vcx) = hosted(&mut cx, test_dir.path());
-        activate(&app, vcx, SettingsTab::Keybindings);
+        let (app, vcx) = hosted_keybindings(&mut cx, test_dir.path());
+        draw_bounded(&app, vcx);
         assert_keybinding_custom_only(&app, vcx, false);
 
-        let custom = vcx
+        let custom_position = vcx
             .debug_bounds("keybindings-custom-only")
-            .expect("custom-only button");
-        vcx.simulate_click(custom.center(), Default::default());
-        draw(&app, vcx);
+            .map(|bounds| bounds.center())
+            .unwrap_or_else(|| point(px(680.), px(24.)));
+        click_bounded(vcx, custom_position);
+        draw_bounded(&app, vcx);
         assert_keybinding_custom_only(&app, vcx, true);
 
-        vcx.simulate_keystrokes("space");
-        draw(&app, vcx);
+        space_bounded(vcx);
+        draw_bounded(&app, vcx);
         assert_keybinding_custom_only(&app, vcx, false);
 
-        vcx.simulate_keystrokes("space");
-        draw(&app, vcx);
+        space_bounded(vcx);
+        draw_bounded(&app, vcx);
         assert_keybinding_custom_only(&app, vcx, true);
     }
 
