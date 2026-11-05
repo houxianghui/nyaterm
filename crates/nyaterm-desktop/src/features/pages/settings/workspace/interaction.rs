@@ -512,7 +512,9 @@ mod tests {
             app.set_tab_mouse_action(TabMouseActionTarget::Middle, TAB_MOUSE_ACTIONS[0], cx);
             app.settings
                 .set_tab_right_click_action("legacy-unknown".to_string());
-            app.shell.set_settings_active_tab(SettingsTab::Interaction);
+            // Render looks fields up rather than creating them, so the host has to
+            // activate the tab the way the tab strip does and build its inputs.
+            app.focus_settings_tab(SettingsTab::Interaction, cx);
             app.flush_settings_panel_snapshots(cx);
         });
         app

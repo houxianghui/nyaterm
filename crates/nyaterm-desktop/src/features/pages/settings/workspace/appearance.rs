@@ -924,7 +924,9 @@ mod tests {
         cx.update_entity(&app, |app, cx| {
             app.sync_component_theme(cx);
             app.open_page(NavItem::Settings, cx);
-            app.shell.set_settings_active_tab(SettingsTab::Appearance);
+            // Render looks fields up rather than creating them, so the host has to
+            // activate the tab the way the tab strip does and build its inputs.
+            app.focus_settings_tab(SettingsTab::Appearance, cx);
             app.flush_settings_panel_snapshots(cx);
         });
         app

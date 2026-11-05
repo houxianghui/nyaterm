@@ -1,6 +1,7 @@
 use gpui::{
-    AnyElement, App, ClickEvent, FontWeight, Hsla, IntoElement, ParentElement as _, Pixels,
-    RenderOnce, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _,
+    AnyElement, App, ClickEvent, FontWeight, Hsla, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, RenderOnce, SharedString, Styled as _, Window, div,
+    prelude::FluentBuilder as _,
 };
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{Disableable, Icon, Selectable, Sizable};
@@ -191,6 +192,7 @@ impl RenderOnce for NyaButton {
                 .read(cx)
                 .clone()
         });
+        let debug_selector = self.id.to_string();
         let mut button = Button::new(self.id).loading(self.loading);
         if icon_only {
             // An empty label would create a second content slot and offset the icon.
@@ -269,7 +271,12 @@ impl RenderOnce for NyaButton {
         if let Some(color) = self.text_color {
             button = button.text_color(color);
         }
-        button.disabled(self.disabled).render(window, cx)
+        // The id keys this button's focus state; expose it as a debug selector too,
+        // so tests can find the control the way production names it.
+        button
+            .debug_selector(move || debug_selector)
+            .disabled(self.disabled)
+            .render(window, cx)
     }
 }
 

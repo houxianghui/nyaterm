@@ -757,8 +757,12 @@ pub(in crate::features) fn number_input_box_from_state(
     palette: crate::theme::ThemePalette,
     field: Entity<NyaNumberInputState>,
 ) -> impl IntoElement {
+    let debug_selector = id.to_string();
     div()
         .id(id)
+        // `Div::id` only keys element state; tests locate a field by the same
+        // stable id through `debug_selector`, which is a no-op outside debug builds.
+        .debug_selector(move || debug_selector)
         // The form or toolbar owns the width, just as for text inputs and selects.
         .w_full()
         .h(px(NYA_FORM_CONTROL_HEIGHT_PX))
