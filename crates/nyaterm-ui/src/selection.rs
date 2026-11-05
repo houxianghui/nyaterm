@@ -625,6 +625,7 @@ pub struct NyaSelect {
     appearance: bool,
     placeholder_content: Option<AnyElement>,
     on_open: Option<NyaSelectOpenHandler>,
+    debug_selector: Option<SharedString>,
 }
 
 impl NyaSelect {
@@ -634,7 +635,15 @@ impl NyaSelect {
             appearance: true,
             placeholder_content: None,
             on_open: None,
+            debug_selector: None,
         }
+    }
+
+    /// Names this control for `debug_bounds` lookups, using the field id production
+    /// already keys it by. A no-op outside debug builds.
+    pub fn debug_selector(mut self, selector: impl Into<SharedString>) -> Self {
+        self.debug_selector = Some(selector.into());
+        self
     }
 
     pub fn appearance(mut self, appearance: bool) -> Self {
@@ -661,6 +670,7 @@ impl RenderOnce for NyaSelect {
             appearance,
             placeholder_content,
             on_open,
+            debug_selector,
         } = self;
         let (state, placeholder, search_placeholder, disabled) = state.update(cx, |state, cx| {
             let component = state.ensure_component(window, cx);
@@ -714,6 +724,11 @@ impl RenderOnce for NyaSelect {
         div()
             .relative()
             .size_full()
+            // The owning field's id names this control in production; tests reach
+            // the trigger's measured bounds through the same name.
+            .when_some(debug_selector, |this, selector| {
+                this.debug_selector(move || selector.to_string())
+            })
             .when_some(on_open, |this, handler| {
                 this.on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     handler(window, cx);

@@ -737,12 +737,13 @@ impl SettingsPanel {
     {
         let id = id.into();
         let select = self.select_entity(id.clone(), options, selected_value, disabled, cx);
+        let debug_selector = id.to_string();
 
         div()
             .id(id)
             .w_full()
             .h(px(NYA_FORM_CONTROL_HEIGHT_PX))
-            .child(NyaSelect::new(&select))
+            .child(NyaSelect::new(&select).debug_selector(debug_selector))
     }
 
     pub(in crate::features::pages::settings) fn font_select_option_catalog(
@@ -781,12 +782,13 @@ impl SettingsPanel {
     {
         let id = id.into();
         let select = self.select_entity(id.clone(), options, selected_value, disabled, cx);
+        let debug_selector = id.to_string();
 
         div()
             .id(id)
             .w_full()
             .h(px(NYA_FORM_CONTROL_HEIGHT_PX))
-            .child(NyaSelect::new(&select))
+            .child(NyaSelect::new(&select).debug_selector(debug_selector))
     }
 
     pub(in crate::features::pages::settings) fn font_select_control<I>(

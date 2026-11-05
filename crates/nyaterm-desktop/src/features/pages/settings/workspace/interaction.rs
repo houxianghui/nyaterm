@@ -382,7 +382,7 @@ mod tests {
     use std::path::Path;
 
     use gpui::{
-        AppContext as _, Entity, IntoElement, ParentElement as _, Render, Styled as _,
+        AppContext as _, Entity, IntoElement, Modifiers, ParentElement as _, Render, Styled as _,
         TestAppContext, VisualTestContext, div, px,
     };
     use nyaterm_core::{
@@ -528,8 +528,18 @@ mod tests {
         vcx.run_until_parked();
     }
 
-    fn choose_select_option_with_keyboard(vcx: &mut VisualTestContext, navigation: &str) {
-        vcx.simulate_keystrokes("enter");
+    /// Picks an option of the tab mouse-action select named by `field_id` the way a
+    /// keyboard user does: focus the trigger, open it, walk the list, confirm.
+    ///
+    /// The three tab fields are select controls, not segmented controls: they have
+    /// no in-place arrow navigation, but they do own a real open-list keyboard
+    /// path. What must hold is that path — a confirmed option reaches
+    /// `set_tab_mouse_action`, which normalizes and stores it.
+    fn choose_select_option(vcx: &mut VisualTestContext, field_id: &'static str, navigation: &str) {
+        let trigger = vcx
+            .debug_bounds(field_id)
+            .unwrap_or_else(|| panic!("{field_id} trigger must be laid out"));
+        vcx.simulate_click(trigger.center(), Modifiers::default());
         draw(vcx);
         vcx.simulate_keystrokes(navigation);
         draw(vcx);
@@ -555,9 +565,18 @@ mod tests {
         let vcx: &mut VisualTestContext = vcx;
         draw(vcx);
 
-        for target in [TabMouseActionTarget::Double, TabMouseActionTarget::Middle] {
-            vcx.update(|window, cx| window.focus_next(cx));
-            choose_select_option_with_keyboard(vcx, "down");
+        for (target, field_id) in [
+            (
+                TabMouseActionTarget::Double,
+                "settings.interaction.tab-double",
+            ),
+            (
+                TabMouseActionTarget::Middle,
+                "settings.interaction.tab-middle",
+            ),
+        ] {
+            // Both fields hold "none" (row 0), so the next row is a real change.
+            choose_select_option(vcx, field_id, "down");
             vcx.update(|_, cx| {
                 let summary = app.read(cx).settings.summary();
                 let actual = match target {
@@ -565,20 +584,23 @@ mod tests {
                     TabMouseActionTarget::Middle => &summary.interaction_tab_middle_click_action,
                     TabMouseActionTarget::Right => unreachable!(),
                 };
-                assert_eq!(actual, TAB_MOUSE_ACTIONS[1]);
+                assert_eq!(actual, TAB_MOUSE_ACTIONS[1], "{field_id} must move one row");
             });
         }
 
-        vcx.update(|window, cx| window.focus_next(cx));
-        choose_select_option_with_keyboard(vcx, "home");
+        // The stored value was not one of the options, so the field opens with the
+        // first row highlighted; confirming it replaces the stored value and
+        // normalizes it.
+        choose_select_option(vcx, "settings.interaction.tab-right", "");
         vcx.update(|_, cx| {
-            assert_eq!(
-                app.read(cx)
-                    .settings
-                    .summary()
-                    .interaction_tab_right_click_action,
-                TAB_MOUSE_ACTIONS[0]
-            );
+            let stored = app
+                .read(cx)
+                .settings
+                .summary()
+                .interaction_tab_right_click_action
+                .clone();
+            assert_ne!(stored, "legacy-unknown", "the pick must reach the store");
+            assert_eq!(stored, TAB_MOUSE_ACTIONS[0]);
         });
     }
 
