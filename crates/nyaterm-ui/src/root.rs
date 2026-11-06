@@ -91,8 +91,9 @@ mod tests {
     };
 
     use crate::{
-        NyaDialogFooter, NyaDialogWindowExt as _, NyaInputEvent, NyaInputShell, NyaInputState,
-        NyaNumberInput, NyaNumberInputOptions, NyaNumberInputState, NyaSearchInput, nya_root,
+        NyaConfirmDialog, NyaDialogFooter, NyaDialogWindowExt as _, NyaInputEvent, NyaInputShell,
+        NyaInputState, NyaNumberInput, NyaNumberInputOptions, NyaNumberInputState, NyaSearchInput,
+        nya_root,
     };
 
     struct RootContentFixture;
@@ -1027,6 +1028,114 @@ mod tests {
             assert!(
                 !window.has_active_nya_dialog(cx),
                 "the close button should dismiss the dialog"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn confirm_dialog_opens_with_focus_on_cancel(cx: &mut TestAppContext) {
+        use std::cell::Cell;
+
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| RootContentFixture);
+            nya_root(content, window, cx)
+        });
+        let cancelled = Rc::new(Cell::new(0));
+        let cancelled_in_dialog = cancelled.clone();
+        let confirmed = Rc::new(Cell::new(0));
+        let confirmed_in_dialog = confirmed.clone();
+        cx.update(|window, cx| {
+            window.open_nya_dialog(cx, move |dialog, _, _| {
+                let cancelled = cancelled_in_dialog.clone();
+                let confirmed = confirmed_in_dialog.clone();
+                NyaConfirmDialog::new(
+                    dialog.title("Quit").width(384.),
+                    NyaDialogFooter::new("Cancel", "Quit").danger(),
+                )
+                .content(div().child("Quit?"))
+                .on_confirm(move |_, _, _| {
+                    confirmed.set(confirmed.get() + 1);
+                    true
+                })
+                .on_cancel(move |_, _, _| {
+                    cancelled.set(cancelled.get() + 1);
+                    true
+                })
+                .into_dialog()
+            });
+        });
+        // The pinned GPUI test harness has no platform frame loop, so run
+        // the next-frame callback explicitly after the dialog's first draw.
+        draw(cx);
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
+        draw(cx);
+
+        cx.update(|window, cx| assert!(window.focused(cx).is_some()));
+
+        // Exercise the raw key path rather than the action-only keystroke
+        // helper so Dialog binding precedence is covered too.
+        let key = gpui::Keystroke::parse("enter").unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke: key });
+        cx.run_until_parked();
+        draw(cx);
+        assert_eq!(
+            confirmed.get(),
+            0,
+            "Enter must not confirm the danger action"
+        );
+        assert_eq!(cancelled.get(), 1, "Enter on Cancel must cancel");
+        cx.update(|window, cx| assert!(!window.has_active_nya_dialog(cx)));
+    }
+
+    #[gpui::test]
+    fn confirm_form_focuses_its_first_input(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let field = cx.new(|cx| NyaInputState::new(cx, ""));
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| RootContentFixture);
+            nya_root(content, window, cx)
+        });
+        let input = field.clone();
+        cx.update(|window, cx| {
+            window.open_nya_dialog(cx, move |dialog, _, _| {
+                NyaConfirmDialog::new(dialog.title("Form"), NyaDialogFooter::new("Cancel", "Save"))
+                    .content(NyaInputShell::new("confirm-first-input", &input))
+                    .into_dialog()
+            });
+        });
+        // Same frame-simulation requirement as the cancel-focus test above.
+        draw(cx);
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
+        draw(cx);
+
+        let focus_after_tab = cx.update(|window, cx| {
+            let input_focus = field.read(cx).component_focus_handle(cx);
+            assert_eq!(
+                window.focused(cx),
+                Some(input_focus.clone()),
+                "the first real form control receives focus"
+            );
+            window.focus_next(cx);
+            let focus_after_tab = window.focused(cx);
+            assert_ne!(focus_after_tab, Some(input_focus));
+            focus_after_tab
+        });
+        draw(cx);
+        cx.update(|window, cx| {
+            assert_eq!(
+                window.focused(cx),
+                focus_after_tab,
+                "a later redraw must not steal focus back to the first input"
             );
         });
     }

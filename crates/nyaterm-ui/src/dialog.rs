@@ -10,11 +10,12 @@ use gpui::{
 use gpui_kit::component::{
     Disableable as _, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
-    dialog::{Dialog, DialogAction, DialogButtonProps, DialogClose, DialogFooter},
+    dialog::{Cancel, Confirm, Dialog, DialogAction, DialogButtonProps, DialogClose, DialogFooter},
 };
 
 pub struct NyaDialog {
     inner: Dialog,
+    focus_first_control: bool,
 }
 
 /// A weak identity: the component stack's builder owns the dialog's lifetime.
@@ -28,6 +29,11 @@ pub struct NyaDialogHandle {
 struct DialogIdentities(HashMap<WindowId, Vec<Weak<()>>>);
 
 impl Global for DialogIdentities {}
+
+const CANCEL_BUTTON_CONTEXT: &str = "NyaDialogCancelButton";
+const ACTION_BUTTON_CONTEXT: &str = "NyaDialogActionButton";
+struct DialogButtonBindings;
+impl Global for DialogButtonBindings {}
 
 impl NyaDialogHandle {
     pub fn is_active(&self) -> bool {
@@ -53,7 +59,16 @@ impl NyaDialogHandle {
 
 impl NyaDialog {
     fn from_component(inner: Dialog) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            focus_first_control: false,
+        }
+    }
+
+    /// Focus the first Tab stop inside the dialog once it opens.
+    pub fn focus_first_control(mut self, focus: bool) -> Self {
+        self.focus_first_control = focus;
+        self
     }
 
     pub fn title(mut self, title: impl IntoElement) -> Self {
@@ -166,7 +181,7 @@ pub struct NyaConfirmDialog {
 impl NyaConfirmDialog {
     pub fn new(dialog: NyaDialog, footer: NyaDialogFooter) -> Self {
         Self {
-            dialog: dialog.confirm(footer),
+            dialog: dialog.confirm(footer).focus_first_control(true),
         }
     }
 
@@ -268,12 +283,14 @@ impl NyaDialogFooter {
             .outline()
             .label(self.cancel_label)
             .disabled(self.disabled)
+            .key_context(CANCEL_BUTTON_CONTEXT)
             .debug_selector(|| "nya-dialog-cancel-button".to_string());
         let action = Button::new("nya-dialog-action")
             .label(self.action_label)
             .with_variant(action_variant)
             .loading(self.loading)
             .disabled(self.disabled || self.action_disabled)
+            .key_context(ACTION_BUTTON_CONTEXT)
             .debug_selector(|| "nya-dialog-action-button".to_string());
 
         DialogFooter::new()
@@ -347,9 +364,38 @@ impl NyaDialogWindowExt for Window {
             .entry(handle.window)
             .or_default()
             .push(handle.marker.clone());
+        if !cx.has_global::<DialogButtonBindings>() {
+            cx.set_global(DialogButtonBindings);
+            // Dialog's own `enter -> Confirm` binding runs before GPUI can
+            // synthesize a button click on KeyUp. More specific button
+            // contexts keep Enter/Space on the focused footer control.
+            cx.bind_keys([
+                gpui::KeyBinding::new("enter", Cancel, Some(CANCEL_BUTTON_CONTEXT)),
+                gpui::KeyBinding::new("space", Cancel, Some(CANCEL_BUTTON_CONTEXT)),
+                gpui::KeyBinding::new(
+                    "enter",
+                    Confirm { secondary: false },
+                    Some(ACTION_BUTTON_CONTEXT),
+                ),
+                gpui::KeyBinding::new(
+                    "space",
+                    Confirm { secondary: false },
+                    Some(ACTION_BUTTON_CONTEXT),
+                ),
+            ]);
+        }
+        // The component stack reruns this builder on every frame the dialog is
+        // visible, so schedule the opt-in focus move exactly once per opening.
+        // On the first build the dialog's Tab stops are not laid out yet; the
+        // next-frame callback uses the first completed rendered frame instead.
+        let focus_guard = Rc::new(std::cell::Cell::new(false));
         self.open_dialog(cx, move |dialog, window, cx| {
             let _lifetime = &marker;
-            build(NyaDialog::from_component(dialog), window, cx)
+            let built = build(NyaDialog::from_component(dialog), window, cx);
+            if built.focus_first_control && !focus_guard.replace(true) {
+                window.on_next_frame(|window, cx| window.focus_next(cx));
+            }
+            built
                 .into_component()
                 .shadow(gpui_base::Theme::global(cx).tokens.shadow.lg)
         });
