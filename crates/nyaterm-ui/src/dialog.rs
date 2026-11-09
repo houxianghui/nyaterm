@@ -1,10 +1,11 @@
 use std::{
+    cell::{Cell, RefCell},
     collections::HashMap,
     rc::{Rc, Weak},
 };
 
 use gpui::{
-    App, ClickEvent, Global, InteractiveElement as _, IntoElement, ParentElement as _,
+    App, ClickEvent, FocusHandle, Global, InteractiveElement as _, IntoElement, ParentElement as _,
     SharedString, Styled as _, Window, WindowId, div, px,
 };
 use gpui_kit::component::{
@@ -16,6 +17,8 @@ use gpui_kit::component::{
 pub struct NyaDialog {
     inner: Dialog,
     focus_first_control: bool,
+    shell_focus: Option<FocusHandle>,
+    pointer_confirm: Rc<Cell<bool>>,
 }
 
 /// A weak identity: the component stack's builder owns the dialog's lifetime.
@@ -58,10 +61,12 @@ impl NyaDialogHandle {
 }
 
 impl NyaDialog {
-    fn from_component(inner: Dialog) -> Self {
+    fn from_component(inner: Dialog, shell_focus: Option<FocusHandle>) -> Self {
         Self {
             inner,
             focus_first_control: false,
+            shell_focus,
+            pointer_confirm: Rc::new(Cell::new(false)),
         }
     }
 
@@ -115,7 +120,7 @@ impl NyaDialog {
         self.inner = self
             .inner
             .button_props(footer.button_props())
-            .footer(footer.into_footer());
+            .footer(footer.into_footer(self.pointer_confirm.clone()));
         self
     }
 
@@ -174,14 +179,18 @@ impl NyaDialog {
     }
 }
 
+type NyaConfirmHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static>;
+
 pub struct NyaConfirmDialog {
     dialog: NyaDialog,
+    on_confirm: Option<NyaConfirmHandler>,
 }
 
 impl NyaConfirmDialog {
     pub fn new(dialog: NyaDialog, footer: NyaDialogFooter) -> Self {
         Self {
             dialog: dialog.confirm(footer).focus_first_control(true),
+            on_confirm: None,
         }
     }
 
@@ -194,7 +203,7 @@ impl NyaConfirmDialog {
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static,
     ) -> Self {
-        self.dialog = self.dialog.on_ok(handler);
+        self.on_confirm = Some(Box::new(handler));
         self
     }
 
@@ -207,7 +216,23 @@ impl NyaConfirmDialog {
     }
 
     pub fn into_dialog(self) -> NyaDialog {
-        self.dialog
+        let shell_focus = self.dialog.shell_focus.clone();
+        let pointer_confirm = self.dialog.pointer_confirm.clone();
+        let on_confirm = self.on_confirm;
+        self.dialog.on_ok(move |event, window, cx| {
+            let from_pointer = pointer_confirm.replace(false);
+            if !from_pointer && window.focused(cx) == shell_focus {
+                // Only the base Dialog's shell Enter is converted to Cancel.
+                // Pointer clicks keep their meaning even though gpui-kit's
+                // buttons deliberately do not take focus on mouse down.
+                window.dispatch_action(Box::new(Cancel), cx);
+                false
+            } else if let Some(handler) = &on_confirm {
+                handler(event, window, cx)
+            } else {
+                true
+            }
+        })
     }
 }
 
@@ -257,7 +282,7 @@ impl NyaDialogFooter {
     }
 
     pub fn into_element(self) -> impl IntoElement {
-        self.into_footer()
+        self.into_footer(Rc::new(Cell::new(false)))
     }
 
     fn button_props(&self) -> DialogButtonProps {
@@ -268,7 +293,7 @@ impl NyaDialogFooter {
             .ok_variant(ButtonVariant::Primary)
     }
 
-    fn into_footer(self) -> DialogFooter {
+    fn into_footer(self, pointer_confirm: Rc<Cell<bool>>) -> DialogFooter {
         let cancel = Button::new("nya-dialog-cancel")
             .outline()
             .label(self.cancel_label)
@@ -281,6 +306,7 @@ impl NyaDialogFooter {
             .loading(self.loading)
             .disabled(self.disabled || self.action_disabled)
             .key_context(ACTION_BUTTON_CONTEXT)
+            .on_click(move |_, _, _| pointer_confirm.set(true))
             .debug_selector(|| "nya-dialog-action-button".to_string());
 
         DialogFooter::new()
@@ -379,9 +405,19 @@ impl NyaDialogWindowExt for Window {
         // On the first build the dialog's Tab stops are not laid out yet; the
         // next-frame callback uses the first completed rendered frame instead.
         let focus_guard = Rc::new(std::cell::Cell::new(false));
+        let shell_focus = Rc::new(RefCell::new(None));
         self.open_dialog(cx, move |dialog, window, cx| {
             let _lifetime = &marker;
-            let built = build(NyaDialog::from_component(dialog), window, cx);
+            if shell_focus.borrow().is_none() {
+                let focused = window.focused(cx);
+                *shell_focus.borrow_mut() = focused;
+            }
+            let initial_shell_focus = shell_focus.borrow().clone();
+            let built = build(
+                NyaDialog::from_component(dialog, initial_shell_focus),
+                window,
+                cx,
+            );
             if built.focus_first_control && !focus_guard.replace(true) {
                 window.on_next_frame(|window, cx| window.focus_next(cx));
             }

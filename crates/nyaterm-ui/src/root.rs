@@ -1142,6 +1142,206 @@ mod tests {
     }
 
     #[gpui::test]
+    fn confirm_dialog_enter_before_initial_focus_cancels(cx: &mut TestAppContext) {
+        use std::cell::Cell;
+
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| RootContentFixture);
+            nya_root(content, window, cx)
+        });
+        let cancelled = Rc::new(Cell::new(0));
+        let cancelled_in_dialog = cancelled.clone();
+        let confirmed = Rc::new(Cell::new(0));
+        let confirmed_in_dialog = confirmed.clone();
+        cx.update(|window, cx| {
+            window.open_nya_dialog(cx, move |dialog, _, _| {
+                let cancelled = cancelled_in_dialog.clone();
+                let confirmed = confirmed_in_dialog.clone();
+                NyaConfirmDialog::new(
+                    dialog.title("Quit").width(384.),
+                    NyaDialogFooter::new("Cancel", "Quit").danger(),
+                )
+                .content(div().child("Quit?"))
+                .on_confirm(move |_, _, _| {
+                    confirmed.set(confirmed.get() + 1);
+                    true
+                })
+                .on_cancel(move |_, _, _| {
+                    cancelled.set(cancelled.get() + 1);
+                    true
+                })
+                .into_dialog()
+            });
+        });
+        draw(cx);
+
+        // open_dialog initially focuses the shell. Before the next-frame
+        // callback moves to Cancel, Enter must not activate the danger action.
+        let key = gpui::Keystroke::parse("enter").unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke: key });
+        cx.run_until_parked();
+        draw(cx);
+        assert_eq!(
+            confirmed.get(),
+            0,
+            "Enter on the dialog shell must not confirm the danger action"
+        );
+        assert_eq!(cancelled.get(), 1, "Enter on the dialog shell must cancel");
+        cx.update(|window, cx| assert!(!window.has_active_nya_dialog(cx)));
+    }
+
+    #[gpui::test]
+    fn confirm_dialog_focused_action_enter_confirms(cx: &mut TestAppContext) {
+        use std::cell::Cell;
+
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| RootContentFixture);
+            nya_root(content, window, cx)
+        });
+        let cancelled = Rc::new(Cell::new(0));
+        let cancelled_in_dialog = cancelled.clone();
+        let confirmed = Rc::new(Cell::new(0));
+        let confirmed_in_dialog = confirmed.clone();
+        cx.update(|window, cx| {
+            window.open_nya_dialog(cx, move |dialog, _, _| {
+                let cancelled = cancelled_in_dialog.clone();
+                let confirmed = confirmed_in_dialog.clone();
+                NyaConfirmDialog::new(
+                    dialog.title("Quit").width(384.),
+                    NyaDialogFooter::new("Cancel", "Quit").danger(),
+                )
+                .content(div().child("Quit?"))
+                .on_confirm(move |_, _, _| {
+                    confirmed.set(confirmed.get() + 1);
+                    true
+                })
+                .on_cancel(move |_, _, _| {
+                    cancelled.set(cancelled.get() + 1);
+                    true
+                })
+                .into_dialog()
+            });
+        });
+        draw(cx);
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+            window.focus_next(cx);
+        });
+        draw(cx);
+
+        let key = gpui::Keystroke::parse("enter").unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke: key });
+        cx.run_until_parked();
+        draw(cx);
+        assert_eq!(cancelled.get(), 0, "Enter on the action must not cancel");
+        assert_eq!(confirmed.get(), 1, "Enter on the action must confirm");
+        cx.update(|window, cx| assert!(!window.has_active_nya_dialog(cx)));
+    }
+
+    #[gpui::test]
+    fn confirm_dialog_shell_focused_action_click_confirms(cx: &mut TestAppContext) {
+        use std::cell::Cell;
+
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| RootContentFixture);
+            nya_root(content, window, cx)
+        });
+        let cancelled = Rc::new(Cell::new(0));
+        let cancelled_in_dialog = cancelled.clone();
+        let confirmed = Rc::new(Cell::new(0));
+        let confirmed_in_dialog = confirmed.clone();
+        cx.update(|window, cx| {
+            window.open_nya_dialog(cx, move |dialog, _, _| {
+                let cancelled = cancelled_in_dialog.clone();
+                let confirmed = confirmed_in_dialog.clone();
+                NyaConfirmDialog::new(
+                    dialog.title("Quit").width(384.),
+                    NyaDialogFooter::new("Cancel", "Quit").danger(),
+                )
+                .content(div().child("Quit?"))
+                .on_confirm(move |_, _, _| {
+                    confirmed.set(confirmed.get() + 1);
+                    true
+                })
+                .on_cancel(move |_, _, _| {
+                    cancelled.set(cancelled.get() + 1);
+                    true
+                })
+                .into_dialog()
+            });
+        });
+        draw(cx);
+
+        let action = cx
+            .debug_bounds("nya-dialog-action-button")
+            .expect("the action button draws");
+        cx.simulate_click(action.center(), Modifiers::default());
+        cx.run_until_parked();
+        draw(cx);
+        assert_eq!(cancelled.get(), 0, "clicking the action must not cancel");
+        assert_eq!(confirmed.get(), 1, "clicking the action must confirm");
+        cx.update(|window, cx| assert!(!window.has_active_nya_dialog(cx)));
+    }
+
+    #[gpui::test]
+    fn confirm_dialog_default_shell_enter_cancels(cx: &mut TestAppContext) {
+        use std::cell::Cell;
+
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| RootContentFixture);
+            nya_root(content, window, cx)
+        });
+        let cancelled = Rc::new(Cell::new(0));
+        let cancelled_in_dialog = cancelled.clone();
+        cx.update(|window, cx| {
+            window.open_nya_dialog(cx, move |dialog, _, _| {
+                let cancelled = cancelled_in_dialog.clone();
+                NyaConfirmDialog::new(
+                    dialog.title("Quit").width(384.),
+                    NyaDialogFooter::new("Cancel", "Quit").danger(),
+                )
+                .content(div().child("Quit?"))
+                .on_cancel(move |_, _, _| {
+                    cancelled.set(cancelled.get() + 1);
+                    true
+                })
+                .into_dialog()
+            });
+        });
+        draw(cx);
+
+        let key = gpui::Keystroke::parse("enter").unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke: key });
+        cx.run_until_parked();
+        draw(cx);
+        assert_eq!(
+            cancelled.get(),
+            1,
+            "default shell Enter must use the cancel callback"
+        );
+        cx.update(|window, cx| assert!(!window.has_active_nya_dialog(cx)));
+    }
+
+    #[gpui::test]
     fn confirm_form_focuses_its_first_input(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
         let field = cx.new(|cx| NyaInputState::new(cx, ""));
