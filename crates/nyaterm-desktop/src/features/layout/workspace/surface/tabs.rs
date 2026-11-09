@@ -162,6 +162,7 @@ impl RenderOnce for SessionTabCloseButton {
             .clone()
             .tab_stop(true);
         let focused = focus.is_focused(window);
+        let ring_selector = format!("{}-focus-ring", self.id);
         let palette = self.palette;
         let tooltip = if self.locked {
             t!("tabCtx.lockedCloseBlocked")
@@ -187,6 +188,10 @@ impl RenderOnce for SessionTabCloseButton {
                 rgb(palette.focus_ring)
             } else {
                 rgba(0x00000000)
+            })
+            .when(focused, |this| {
+                let selector = ring_selector.clone();
+                this.debug_selector(move || selector.clone())
             })
             .text_size(px(10.))
             .text_color(rgb(palette.text_muted))
@@ -1528,6 +1533,30 @@ mod tests {
         });
         draw_fixture(cx);
         assert_eq!(opacity.get(), 1.);
+    }
+
+    #[gpui::test]
+    fn close_button_reveals_focus_ring_and_activates_from_keyboard(cx: &mut TestAppContext) {
+        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
+        let (cx, activations, opacity) = tab_close_fixture(cx);
+        draw_fixture(cx);
+        assert_eq!(opacity.get(), 0.);
+        assert!(
+            cx.debug_bounds("test-session-tab-close-focus-ring")
+                .is_none()
+        );
+
+        cx.update(|window, cx| window.focus_next(cx));
+        draw_fixture(cx);
+        assert_eq!(opacity.get(), 1., "focus must reveal the close button");
+        assert!(
+            cx.debug_bounds("test-session-tab-close-focus-ring")
+                .is_some(),
+            "the focused close button must expose its painted ring bounds"
+        );
+
+        press_key(cx, "space");
+        assert_eq!(activations.get(), 1);
     }
 
     #[gpui::test]
