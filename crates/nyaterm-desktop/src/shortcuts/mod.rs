@@ -1446,6 +1446,33 @@ mod tests {
     }
 
     #[test]
+    fn tab_shortcuts_keep_platform_defaults() {
+        let cases = [
+            (ShortcutId::NextTab, "ctrl+tab", "meta+tab"),
+            (ShortcutId::PreviousTab, "ctrl+shift+tab", "meta+shift+tab"),
+            (ShortcutId::CloseTab, "ctrl+shift+w", "meta+w,meta+shift+w"),
+        ];
+        for (id, windows, macos) in cases {
+            let definition = SHORTCUT_REGISTRY
+                .iter()
+                .find(|definition| definition.id == id)
+                .expect("tab shortcut stays registered");
+            assert_eq!(
+                definition
+                    .default_binding_for(ShortcutPlatform::Windows)
+                    .canonical(),
+                windows
+            );
+            assert_eq!(
+                definition
+                    .default_binding_for(ShortcutPlatform::MacOs)
+                    .canonical(),
+                macos
+            );
+        }
+    }
+
+    #[test]
     fn tauri_aligned_defaults_are_platform_specific() {
         let recording = SHORTCUT_REGISTRY
             .iter()
