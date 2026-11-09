@@ -78,6 +78,41 @@ fn session_tab_background(
     }
 }
 
+fn session_tab_accent(
+    palette: &crate::theme::ThemePalette,
+    active: bool,
+    disconnected: bool,
+    unread: bool,
+    custom: Option<u32>,
+) -> u32 {
+    if let Some(custom) = custom {
+        return custom;
+    }
+    if disconnected {
+        palette.danger
+    } else if active {
+        palette.primary
+    } else if unread {
+        palette.warning
+    } else {
+        palette.text_dimmed
+    }
+}
+
+fn session_tab_title_color(
+    palette: &crate::theme::ThemePalette,
+    active: bool,
+    disconnected: bool,
+) -> u32 {
+    if disconnected {
+        palette.text_dimmed
+    } else if active {
+        palette.text
+    } else {
+        palette.text_muted
+    }
+}
+
 /// A view boundary keeps animation frames inside the strip. The application
 /// remains the owner of sessions; this view only adapts its presentation.
 struct SessionTabStrip {
@@ -602,17 +637,13 @@ impl NyaTermApp {
                 scope
             }
         });
-        let accent_color = if is_active {
-            custom_color.unwrap_or(palette.primary)
-        } else if let Some(custom_color) = custom_color {
-            custom_color
-        } else if is_disconnected {
-            palette.danger
-        } else if has_unread {
-            palette.warning
-        } else {
-            palette.text_dimmed
-        };
+        let accent_color = session_tab_accent(
+            &palette,
+            is_active,
+            is_disconnected,
+            has_unread,
+            custom_color,
+        );
         let accent = rgb(accent_color);
         // Build both the strip and its drag preview from the same resolved
         // icon, including uploaded images and full-color connection assets.
@@ -814,13 +845,11 @@ impl NyaTermApp {
                     } else {
                         FontWeight(500.)
                     })
-                    .text_color(if is_disconnected {
-                        rgb(palette.text_dimmed)
-                    } else if is_active {
-                        rgb(palette.text)
-                    } else {
-                        rgb(palette.text_muted)
-                    })
+                    .text_color(rgb(session_tab_title_color(
+                        &palette,
+                        is_active,
+                        is_disconnected,
+                    )))
                     .overflow_hidden()
                     // Without this the title wraps inside the tab and the
                     // strip shows whichever line happens to land on the
@@ -852,7 +881,7 @@ impl NyaTermApp {
                 )
             })
             .when(has_unread && !is_active, |this| {
-                this.child(div().size(px(7.)).rounded_full().bg(rgb(palette.success)))
+                this.child(div().size(px(7.)).rounded_full().bg(rgb(palette.warning)))
             })
             .child(SessionTabCloseButton::new(
                 format!("session-tab-close-{close_session_id}"),
@@ -1355,8 +1384,8 @@ mod tests {
     };
 
     use super::{
-        SessionTabCloseButton, session_tab_background, tab_drop_insert_after, tab_scroll_x,
-        tab_strip_overflows,
+        SessionTabCloseButton, session_tab_accent, session_tab_background, session_tab_title_color,
+        tab_drop_insert_after, tab_scroll_x, tab_strip_overflows,
     };
 
     struct TabCloseFixture {
@@ -1443,6 +1472,45 @@ mod tests {
         assert_eq!(
             session_tab_background(&palette, false, Some(0x336699)),
             Hsla::from(rgba((0x336699 << 8) | 0x14))
+        );
+    }
+
+    #[test]
+    fn tab_accent_prioritises_disconnect_over_unread_and_active() {
+        let palette = crate::theme::theme_palette("github-dark");
+        assert_eq!(
+            session_tab_accent(&palette, true, true, true, None),
+            palette.danger
+        );
+        assert_eq!(
+            session_tab_accent(&palette, false, false, true, None),
+            palette.warning
+        );
+        assert_eq!(
+            session_tab_accent(&palette, true, false, false, None),
+            palette.primary
+        );
+        assert_eq!(
+            session_tab_accent(&palette, false, false, false, None),
+            palette.text_dimmed
+        );
+        assert_eq!(
+            session_tab_accent(&palette, true, true, true, Some(0x336699)),
+            0x336699
+        );
+    }
+
+    #[test]
+    fn tab_title_uses_one_text_scale_for_every_state() {
+        let palette = crate::theme::theme_palette("github-dark");
+        assert_eq!(session_tab_title_color(&palette, true, false), palette.text);
+        assert_eq!(
+            session_tab_title_color(&palette, false, false),
+            palette.text_muted
+        );
+        assert_eq!(
+            session_tab_title_color(&palette, false, true),
+            palette.text_dimmed
         );
     }
 
