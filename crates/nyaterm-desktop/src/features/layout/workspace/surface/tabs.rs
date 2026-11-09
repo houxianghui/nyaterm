@@ -5,7 +5,7 @@ use super::tab_motion::{TabMotionElement, TabStripViewportElement};
 use crate::features::shell::session_tabs::{SessionStripTab, SessionStripTabId};
 
 use gpui::{
-    Anchor, App, ClickEvent, Context, FontWeight, IntoElement, MouseButton, RenderOnce,
+    Anchor, App, ClickEvent, Context, FontWeight, Hsla, IntoElement, MouseButton, RenderOnce,
     ScrollDelta, ScrollWheelEvent, SharedString, Window, div, point, prelude::*, px, rgb, rgba,
     svg,
 };
@@ -62,6 +62,20 @@ fn tab_strip_overflows(
         0.
     };
     max_offset > occupied_control_width + end_drop_target_width + TAB_STRIP_OVERFLOW_TOLERANCE
+}
+
+/// Selected tabs use a quiet fill; unselected tabs leave the strip visible.
+fn session_tab_background(
+    palette: &crate::theme::ThemePalette,
+    active: bool,
+    custom: Option<u32>,
+) -> Hsla {
+    match (custom, active) {
+        (Some(color), true) => rgba((color << 8) | 0x24).into(),
+        (Some(color), false) => rgba((color << 8) | 0x14).into(),
+        (None, true) => rgb(palette.bg).into(),
+        (None, false) => rgba(0x00000000).into(),
+    }
 }
 
 /// A view boundary keeps animation frames inside the strip. The application
@@ -616,17 +630,11 @@ impl NyaTermApp {
             }
         };
         let drag_icon = tab_icon.clone();
-        let bg = if let Some(custom_color) = custom_color {
-            rgba((custom_color << 8) | if is_active { 0x24 } else { 0x14 })
-        } else if is_active {
-            rgb(palette.surface)
-        } else {
-            rgba(0x00000000)
-        };
+        let bg = session_tab_background(&palette, is_active, custom_color);
         let hover_bg = if let Some(custom_color) = custom_color {
             rgba((custom_color << 8) | if is_active { 0x32 } else { 0x22 })
         } else {
-            self.shell_surface_color(palette.hover)
+            rgba((palette.hover << 8) | 0x1a)
         };
         // Match the Zed tab affordance through NyaTerm's theme projection:
         // the whole target uses the theme hover surface and the insertion
@@ -675,14 +683,11 @@ impl NyaTermApp {
             .gap_2()
             .relative()
             .when(is_active, |this| {
-                this.border_1()
-                    .border_color(rgb(palette.border))
-                    .shadow_sm()
-                    .child(
-                        div()
-                            .debug_selector(|| format!("session-tab-active-{session_id}"))
-                            .size(px(0.)),
-                    )
+                this.border_1().border_color(rgba(0x00000000)).child(
+                    div()
+                        .debug_selector(|| format!("session-tab-active-{session_id}"))
+                        .size(px(0.)),
+                )
             })
             .bg(bg)
             .when(is_disconnected, |this| this.opacity(0.78))
@@ -794,7 +799,7 @@ impl NyaTermApp {
                 div()
                     .min_w(px(12.))
                     .text_size(px(12.))
-                    .font_weight(FontWeight(700.))
+                    .font_weight(FontWeight(600.))
                     .text_color(rgb(palette.text_dimmed))
                     .child(format!("{tab_number}")),
             )
@@ -805,7 +810,7 @@ impl NyaTermApp {
                     .max_w(px(160.))
                     .text_size(px(12.))
                     .font_weight(if is_active {
-                        FontWeight(700.)
+                        FontWeight(600.)
                     } else {
                         FontWeight(500.)
                     })
@@ -1344,12 +1349,15 @@ mod tests {
     use std::rc::Rc;
 
     use gpui::{
-        Background, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+        Background, Hsla, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
         ParentElement as _, Render, RenderOnce as _, Styled as _, TestAppContext,
-        VisualTestContext, div, point, px, rgb,
+        VisualTestContext, div, point, px, rgb, rgba,
     };
 
-    use super::{SessionTabCloseButton, tab_drop_insert_after, tab_scroll_x, tab_strip_overflows};
+    use super::{
+        SessionTabCloseButton, session_tab_background, tab_drop_insert_after, tab_scroll_x,
+        tab_strip_overflows,
+    };
 
     struct TabCloseFixture {
         activations: Rc<Cell<usize>>,
@@ -1409,6 +1417,33 @@ mod tests {
             prefer_character_input: false,
         });
         cx.simulate_event(KeyUpEvent { keystroke });
+    }
+
+    #[test]
+    fn active_tab_is_a_subtle_fill_and_inactive_tabs_are_transparent() {
+        let palette = crate::theme::theme_palette("github-dark");
+        assert_eq!(session_tab_background(&palette, false, None).a, 0.);
+        assert_eq!(
+            session_tab_background(&palette, true, None),
+            Hsla::from(rgb(palette.bg))
+        );
+        assert_ne!(
+            session_tab_background(&palette, true, None),
+            Hsla::from(rgb(palette.surface))
+        );
+    }
+
+    #[test]
+    fn custom_color_tabs_keep_their_exact_tint_alpha() {
+        let palette = crate::theme::theme_palette("github-dark");
+        assert_eq!(
+            session_tab_background(&palette, true, Some(0x336699)),
+            Hsla::from(rgba((0x336699 << 8) | 0x24))
+        );
+        assert_eq!(
+            session_tab_background(&palette, false, Some(0x336699)),
+            Hsla::from(rgba((0x336699 << 8) | 0x14))
+        );
     }
 
     #[gpui::test]
