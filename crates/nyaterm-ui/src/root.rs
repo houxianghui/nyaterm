@@ -931,6 +931,52 @@ mod tests {
     }
 
     #[gpui::test]
+    fn dangerous_confirm_uses_primary_fill_without_danger_fill(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| RootContentFixture);
+            nya_root(content, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.open_nya_dialog(cx, |dialog, _, _| {
+                NyaConfirmDialog::new(
+                    dialog.title("Quit").width(384.),
+                    NyaDialogFooter::new("Cancel", "Quit").danger(),
+                )
+                .content(div().child("Active sessions will be disconnected. Quit?"))
+                .into_dialog()
+            });
+        });
+        draw(cx);
+
+        let action = cx
+            .debug_bounds("nya-dialog-action-button")
+            .expect("the action button draws");
+        let (primary, danger) = cx.update(|_, cx| {
+            let theme = gpui_kit::component::ActiveTheme::theme(cx);
+            (theme.tokens.button_primary, theme.tokens.button_danger)
+        });
+        cx.update(|window, _| {
+            let action = action.scale(window.scale_factor());
+            let quads = window.painted_quads();
+            assert!(
+                !quads.iter().any(|quad| {
+                    quad.bounds.intersects(&action)
+                        && quad.background == gpui::Background::from(danger)
+                }),
+                "the dangerous action must not paint a solid danger fill"
+            );
+            assert!(
+                quads.iter().any(|quad| {
+                    quad.bounds.intersects(&action)
+                        && quad.background == gpui::Background::from(primary)
+                }),
+                "the dangerous action keeps the theme's prominent fill"
+            );
+        });
+    }
+
+    #[gpui::test]
     fn nya_alert_dialog_renders_action_footer(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
 

@@ -265,20 +265,10 @@ impl NyaDialogFooter {
             .cancel_text(self.cancel_label.clone())
             .ok_text(self.action_label.clone())
             .show_cancel(true)
-            .ok_variant(if self.danger {
-                ButtonVariant::Danger
-            } else {
-                ButtonVariant::Primary
-            })
+            .ok_variant(ButtonVariant::Primary)
     }
 
     fn into_footer(self) -> DialogFooter {
-        let action_variant = if self.danger {
-            ButtonVariant::Danger
-        } else {
-            ButtonVariant::Primary
-        };
-
         let cancel = Button::new("nya-dialog-cancel")
             .outline()
             .label(self.cancel_label)
@@ -287,7 +277,7 @@ impl NyaDialogFooter {
             .debug_selector(|| "nya-dialog-cancel-button".to_string());
         let action = Button::new("nya-dialog-action")
             .label(self.action_label)
-            .with_variant(action_variant)
+            .primary()
             .loading(self.loading)
             .disabled(self.disabled || self.action_disabled)
             .key_context(ACTION_BUTTON_CONTEXT)
