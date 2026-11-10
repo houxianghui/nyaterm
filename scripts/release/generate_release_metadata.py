@@ -45,12 +45,20 @@ MSI_ARTIFACTS = {
 
 def download_artifacts(version: str) -> dict[str, str]:
     msi = MSI_ARTIFACTS if package_native.includes_windows_msi(version) else {}
-    return {**DOWNLOAD_ARTIFACTS, **msi}
+    return {
+        platform: template
+        for platform, template in {**DOWNLOAD_ARTIFACTS, **msi}.items()
+        if platform.startswith("windows-")
+    }
 
 
 def updater_artifacts(version: str) -> dict[str, str]:
     msi = MSI_ARTIFACTS if package_native.includes_windows_msi(version) else {}
-    return {**UPDATER_ARTIFACTS, **msi}
+    return {
+        platform: template
+        for platform, template in {**UPDATER_ARTIFACTS, **msi}.items()
+        if platform.startswith("windows-")
+    }
 
 
 CHANNEL_MANIFEST_NAMES = ("latest.json", "downloads.json")
@@ -66,7 +74,7 @@ def sha256(path: Path) -> str:
 
 def expected_artifacts(version: str) -> set[str]:
     names: set[str] = set()
-    for target in package_native.TARGETS:
+    for target in package_native.CI_TARGETS:
         names.update(package_native.artifact_names(target, version))
     return names
 

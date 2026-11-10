@@ -119,7 +119,9 @@ cargo build -p nyaterm-app --bin nyaterm --release --locked
 
 发布包由 `scripts/release/package_native.py` 生成。它会以锁定依赖分别构建应用和两个 helper，把 helper 放到应用旁边，并按平台产出安装包和便携包。新增 helper 时必须同时更新该脚本的 `HELPER_BINS` 列表。
 
-### 六个发布目标
+### 原生打包目标与 CI 范围
+
+打包脚本保留六个原生目标：
 
 | 平台 | Rust target | 产物 |
 | --- | --- | --- |
@@ -130,14 +132,14 @@ cargo build -p nyaterm-app --bin nyaterm --release --locked
 | Windows x64 | `x86_64-pc-windows-msvc` | `_portable.zip`、`-setup.exe` |
 | Windows arm64 | `aarch64-pc-windows-msvc` | `_portable.zip`、`-setup.exe` |
 
-Release CI 的每个 matrix leg 都执行：
+当前 `Release` 与 `Main Snapshot` CI 只调度 Windows x64 和 Windows ARM64 两个 matrix leg；macOS/Linux 目标仍可用于手动原生打包，Rust CI 的跨平台测试矩阵保持不变。每个打包 leg 都执行：
 
 ```bash
 python scripts/release/package_native.py "${TARGET}"
 python scripts/release/verify_native_package.py --target "${TARGET}" --version "${VERSION}" --dist dist
 ```
 
-发布前还会对六目标合并后的资产集合执行 `scripts/ci/check_release_assets.py`，拒绝缺失或多余的产物。
+发布前还会对两个 Windows CI 目标合并后的资产集合执行 `scripts/ci/check_release_assets.py`，拒绝缺失或多余的产物。
 
 `NYATERM_ARTIFACT_VERSION` 只改变产物文件名中的版本段，包内元数据仍使用 workspace 的 SemVer。该接口仅供手动快照构建使用，打包和验包必须传入同一个值：
 
@@ -149,9 +151,9 @@ python scripts/release/verify_native_package.py \
   --artifact-version main-snapshot --dist dist
 ```
 
-正式标签在验包后发布 GitHub Release 和 R2 版本目录，再触发 Gitee、AUR 与 Homebrew。官网读取 `downloads.json`；签名的 `latest.json` 只用于让已安装的旧 Tauri 版本迁移到 GPUI。稳定版才覆盖 R2 根目录清单，预发布只保留版本化清单。手动运行 `Main Snapshot` 会覆盖 `main-snapshot` prerelease，不发布到外部分发渠道。
+正式标签在验包后发布 GitHub Release 和 R2 版本目录，再触发 Gitee 镜像。AUR 与 Homebrew 不再随 Windows-only Release 自动发布，只保留手动工作流以维护历史 macOS/Linux 包。官网读取 `downloads.json`；签名的 `latest.json` 只用于让已安装的旧 Tauri 版本迁移到 GPUI。稳定版才覆盖 R2 根目录清单，预发布只保留版本化清单。手动运行 `Main Snapshot` 会覆盖 `main-snapshot` prerelease，不发布到外部分发渠道。
 
-Release workflow 需要 `NYATERM_GITHUB_GIST_CLIENT_ID`、Gitee/R2 Variables，以及 Tauri updater、R2、Gitee、AUR、Homebrew 对应的 Secrets。相关发布步骤缺少配置时会失败，不会生成缺功能或只发布一部分渠道的正式包。
+Release workflow 需要 `NYATERM_GITHUB_GIST_CLIENT_ID`、Gitee/R2 Variables，以及 Tauri updater、R2、Gitee 对应的 Secrets。手动维护 AUR 或 Homebrew 时仍需对应渠道的 Secrets。相关发布步骤缺少配置时会失败，不会生成缺功能或只发布一部分渠道的正式包。
 
 ### 原生工具与手工验收边界
 

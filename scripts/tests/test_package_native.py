@@ -232,6 +232,15 @@ class PackageNativeTests(unittest.TestCase):
         for target, names in expected.items():
             with self.subTest(target=target):
                 self.assertEqual(package_native.artifact_names(target, "v2.0.0"), names)
+        self.assertEqual(set(package_native.TARGETS), set(expected))
+
+    def test_ci_targets_are_windows_only_without_removing_native_targets(self) -> None:
+        self.assertEqual(
+            set(package_native.CI_TARGETS),
+            {"x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"},
+        )
+        self.assertIn("aarch64-apple-darwin", package_native.TARGETS)
+        self.assertIn("x86_64-unknown-linux-gnu", package_native.TARGETS)
 
     def test_release_binary_always_uses_explicit_target_directory(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):

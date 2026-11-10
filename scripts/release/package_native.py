@@ -141,6 +141,12 @@ TARGETS = {
     ),
 }
 
+# Native packaging remains available for every target above; CI only schedules
+# and validates the Windows subset.
+CI_TARGETS = tuple(
+    target for target, info in TARGETS.items() if info.os_name == "windows"
+)
+
 
 def run(
     args: list[str],

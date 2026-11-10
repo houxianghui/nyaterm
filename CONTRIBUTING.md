@@ -116,14 +116,12 @@ cargo test -p nyaterm-transport --test sftp_service_e2e --locked sftp_service_ro
 
 ### Release packaging matrix
 
-Release CI packages and verifies six native targets:
+Release CI packages and verifies the two Windows native targets. The packaging
+script retains its macOS and Linux targets for manual native builds, and the
+cross-platform Rust test matrix is unchanged:
 
 | Runner | Rust target | Artifacts |
 | --- | --- | --- |
-| macOS arm64 | `aarch64-apple-darwin` | `.dmg`, `.app.tar.gz` |
-| macOS x64 | `x86_64-apple-darwin` | `.dmg`, `.app.tar.gz` |
-| Linux x64 | `x86_64-unknown-linux-gnu` | `.AppImage`, `.deb`, `.rpm` |
-| Linux arm64 | `aarch64-unknown-linux-gnu` | `.AppImage`, `.deb`, `.rpm` |
 | Windows x64 | `x86_64-pc-windows-msvc` | `_portable.zip`, `-setup.exe` |
 | Windows arm64 | `aarch64-pc-windows-msvc` | `_portable.zip`, `-setup.exe` |
 
@@ -148,7 +146,9 @@ python scripts/release/verify_native_package.py \
 ```
 
 Tag releases publish the verified assets to GitHub and Cloudflare R2, then
-trigger the Gitee, AUR, and Homebrew workflows. `downloads.json` is the website
+trigger the Gitee mirror. AUR and Homebrew no longer run automatically for the
+Windows-only release pipeline; their manual workflows remain available for
+maintaining historical macOS/Linux packages. `downloads.json` is the website
 download catalog; the signed `latest.json` exists only to migrate installed
 Tauri releases. A manual `Main Snapshot` run overwrites the `main-snapshot`
 prerelease and does not publish to downstream channels. Release builds require

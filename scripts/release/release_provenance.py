@@ -38,10 +38,10 @@ def record(dist: Path, target: str, source_sha: str, version: str, run_id: str) 
 
 
 def verify(dist: Path, records: Path, source_sha: str, version: str, run_id: str) -> None:
-    expected_records = {f"{target}.json" for target in package_native.TARGETS}
+    expected_records = {f"{target}.json" for target in package_native.CI_TARGETS}
     if {p.name for p in records.iterdir()} != expected_records:
         raise ValueError("incomplete or unexpected provenance records; rebuild all packages")
-    for target in package_native.TARGETS:
+    for target in package_native.CI_TARGETS:
         actual = json.loads((records / f"{target}.json").read_text(encoding="utf-8"))
         if actual != record(dist, target, source_sha, version, run_id):
             raise ValueError(f"package provenance mismatch for {target}; rebuild packages")

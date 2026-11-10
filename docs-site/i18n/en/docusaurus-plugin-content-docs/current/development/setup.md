@@ -119,7 +119,9 @@ The native binary is written to `target/release/nyaterm`, or `target/release/nya
 
 Release packages come from `scripts/release/package_native.py`. It builds the application and both helpers with locked dependencies, puts the helpers next to the application, and produces native installers and portable packages. When you add a helper, its `HELPER_BINS` list must be updated too.
 
-### Six release targets
+### Native packaging targets and CI scope
+
+The packaging script retains six native targets:
 
 | Platform | Rust target | Artifacts |
 | --- | --- | --- |
@@ -130,14 +132,14 @@ Release packages come from `scripts/release/package_native.py`. It builds the ap
 | Windows x64 | `x86_64-pc-windows-msvc` | `_portable.zip`, `-setup.exe` |
 | Windows arm64 | `aarch64-pc-windows-msvc` | `_portable.zip`, `-setup.exe` |
 
-Every release CI matrix leg runs:
+`Release` and `Main Snapshot` CI currently schedule only the Windows x64 and Windows ARM64 matrix legs. The macOS/Linux targets remain available for manual native packaging, and the cross-platform Rust CI test matrix is unchanged. Every packaging leg runs:
 
 ```bash
 python scripts/release/package_native.py "${TARGET}"
 python scripts/release/verify_native_package.py --target "${TARGET}" --version "${VERSION}" --dist dist
 ```
 
-Before publication, `scripts/ci/check_release_assets.py` also rejects missing or extra artifacts in the combined six-target asset set.
+Before publication, `scripts/ci/check_release_assets.py` also rejects missing or extra artifacts in the combined asset set for the two Windows CI targets.
 
 `NYATERM_ARTIFACT_VERSION` changes only the version segment in artifact names;
 package metadata still uses the workspace SemVer. This interface is reserved
@@ -152,9 +154,9 @@ python scripts/release/verify_native_package.py \
   --artifact-version main-snapshot --dist dist
 ```
 
-After validation, a version tag publishes GitHub Release and versioned R2 assets, then triggers Gitee, AUR, and Homebrew. The website reads `downloads.json`; signed `latest.json` exists only to migrate installed Tauri releases to GPUI. Only stable releases replace the root R2 manifests, while prereleases retain versioned manifests. A manual `Main Snapshot` run overwrites the `main-snapshot` prerelease without publishing to downstream channels.
+After validation, a version tag publishes GitHub Release and versioned R2 assets, then triggers the Gitee mirror. AUR and Homebrew no longer run automatically for the Windows-only release pipeline; their manual workflows remain available for maintaining historical macOS/Linux packages. The website reads `downloads.json`; signed `latest.json` exists only to migrate installed Tauri releases to GPUI. Only stable releases replace the root R2 manifests, while prereleases retain versioned manifests. A manual `Main Snapshot` run overwrites the `main-snapshot` prerelease without publishing to downstream channels.
 
-The Release workflow requires `NYATERM_GITHUB_GIST_CLIENT_ID`, the Gitee/R2 repository variables, and the updater, R2, Gitee, AUR, and Homebrew secrets named in the workflows. Missing configuration fails the relevant release step instead of producing an incomplete official release.
+The Release workflow requires `NYATERM_GITHUB_GIST_CLIENT_ID`, the Gitee/R2 repository variables, and the updater, R2, and Gitee secrets named in the workflows. Manual AUR or Homebrew maintenance still requires the corresponding channel secrets. Missing configuration fails the relevant release step instead of producing an incomplete official release.
 
 ### Native tools and the manual-acceptance boundary
 

@@ -1,9 +1,6 @@
 name: Publish AUR package
 
 on:
-  workflow_run:
-    workflows: ['Release']
-    types: [completed]
   workflow_dispatch:
     inputs:
       version:
@@ -31,7 +28,6 @@ env:
 jobs:
   publish:
     name: Publish nyaterm-bin
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -42,27 +38,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
           publish='true'
           dry_run="${INPUT_DRY_RUN:-false}"
-          if [[ "${GITHUB_EVENT_NAME}" == 'workflow_dispatch' ]]; then
-            version="${INPUT_VERSION#v}"
-          else
-            r2_success="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.name == "Publish Cloudflare R2 mirror" and .conclusion == "success")] | length')"
-            if [[ "${r2_success}" == '1' ]]; then
-              receipt_dir="$(mktemp -d)"
-              trap 'rm -rf "${receipt_dir}"' EXIT
-              gh run download "${RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
-                --name published-release-tag --dir "${receipt_dir}"
-              tag="$(cat "${receipt_dir}/published-release-tag.txt")"
-              version="${tag#v}"
-            else
-              version=''
-            fi
-          fi
+          version="${INPUT_VERSION#v}"
           if [[ -z "${version}" || "${version}" == *-* || ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             publish='false'
           fi

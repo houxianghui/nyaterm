@@ -45,6 +45,32 @@ class ReleaseWorkflowTests(unittest.TestCase):
         snapshot = WORKFLOW.with_name("main-snapshot.yml").read_text(encoding="utf-8")
         self.assertNotIn("install-wix", snapshot)
 
+    def test_ci_packages_only_windows_and_disables_unsupported_auto_channels(self) -> None:
+        expected = [
+            ("windows-x64", "windows-2025", "x86_64-pc-windows-msvc"),
+            ("windows-arm64", "windows-2025", "aarch64-pc-windows-msvc"),
+        ]
+        snapshot = WORKFLOW.with_name("main-snapshot.yml").read_text(encoding="utf-8")
+        snapshot_package = snapshot.split("  package:\n", 1)[1].split("\n  publish:", 1)[0]
+        for package in (jobs()["package"], snapshot_package):
+            entries = re.findall(
+                r"- \{ label: ([^,]+), os: ([^,]+), target: ([^}]+) \}",
+                package,
+            )
+            self.assertEqual(entries, expected)
+
+        preparation = jobs()["prepare_release"]
+        self.assertNotIn("_macos_", preparation)
+        self.assertNotIn("_linux_", preparation)
+        self.assertNotIn("pattern: NyaTerm-*", preparation)
+        self.assertNotIn("pattern: provenance-*", preparation)
+        self.assertEqual(preparation.count("pattern: NyaTerm-windows-*"), 2)
+        self.assertEqual(preparation.count("pattern: provenance-windows-*"), 2)
+        for name in ("homebrew", "aur"):
+            workflow = WORKFLOW.with_name(f"publish-{name}.yml").read_text(encoding="utf-8")
+            self.assertNotIn("workflow_run:", workflow)
+            self.assertIn("workflow_dispatch:", workflow)
+
     def test_rehearsal_never_enables_publication(self) -> None:
         blocks = jobs()
         for publish, verify, package, reuse, expected in (
@@ -84,7 +110,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertIn("ref: ${{ needs.preflight.outputs.source_sha }}", jobs()[name])
             self.assertNotIn("inputs.source_ref", jobs()[name])
 
-    def test_downstream_channels_use_published_release_receipt(self) -> None:
+    def test_gitee_uses_published_release_receipt(self) -> None:
         publication = jobs()["publish"]
         self.assertIn("name: published-release-tag", publication)
         self.assertIn("path: published-release-tag.txt", publication)
@@ -93,23 +119,20 @@ class ReleaseWorkflowTests(unittest.TestCase):
             publication.index("name: Save downstream release tag"),
             publication.index("name: Publish verified draft"),
         )
-        for name in ("homebrew", "aur", "gitee-release"):
-            with self.subTest(channel=name):
-                workflow = WORKFLOW.with_name(f"publish-{name}.yml").read_text(encoding="utf-8")
-                self.assertIn('gh run download "${RUN_ID}"', workflow)
-                self.assertIn("--name published-release-tag", workflow)
-                self.assertIn('cat "${receipt_dir}/published-release-tag.txt"', workflow)
-                self.assertIn('gh release view', workflow)
-                self.assertIn('--json isDraft', workflow)
-                self.assertNotIn("git ls-remote --tags", workflow)
-                self.assertNotIn("HEAD_SHA:", workflow)
-                self.assertIn("if [[ \"${GITHUB_EVENT_NAME}\" == 'workflow_dispatch' ]]; then", workflow)
+        workflow = WORKFLOW.with_name("publish-gitee-release.yml").read_text(encoding="utf-8")
+        self.assertIn('gh run download "${RUN_ID}"', workflow)
+        self.assertIn("--name published-release-tag", workflow)
+        self.assertIn('cat "${receipt_dir}/published-release-tag.txt"', workflow)
+        self.assertIn('gh release view', workflow)
+        self.assertIn('--json isDraft', workflow)
+        self.assertNotIn("git ls-remote --tags", workflow)
+        self.assertNotIn("HEAD_SHA:", workflow)
+        self.assertIn("if [[ \"${GITHUB_EVENT_NAME}\" == 'workflow_dispatch' ]]; then", workflow)
 
-    def test_downstream_channels_require_successful_r2_publication(self) -> None:
-        for name in ("homebrew", "aur", "gitee-release"):
-            content = WORKFLOW.with_name(f"publish-{name}.yml").read_text(encoding="utf-8")
-            self.assertIn('select(.name == "Publish Cloudflare R2 mirror" and .conclusion == "success")', content)
-            self.assertIn('if [[ "${r2_success}" == \'1\' ]]', content)
+    def test_gitee_requires_successful_r2_publication(self) -> None:
+        content = WORKFLOW.with_name("publish-gitee-release.yml").read_text(encoding="utf-8")
+        self.assertIn('select(.name == "Publish Cloudflare R2 mirror" and .conclusion == "success")', content)
+        self.assertIn('if [[ "${r2_success}" == \'1\' ]]', content)
 
 
     def test_draft_notes_are_preserved_until_publish_gate(self) -> None:
