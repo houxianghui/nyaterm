@@ -714,7 +714,12 @@ mod tests {
             });
         });
         draw(cx);
-        cx.simulate_keystrokes("enter");
+        // Confirmation dialogs initially focus Cancel, so explicitly activate
+        // the action instead of sending Enter to the default cancel control.
+        let confirm = cx
+            .debug_bounds("nya-dialog-action-button")
+            .expect("restore confirmation action should render");
+        cx.simulate_click(confirm.center(), Modifiers::default());
         draw(cx);
         assert!(
             cx.debug_bounds("snapshot-password-dialog-content")

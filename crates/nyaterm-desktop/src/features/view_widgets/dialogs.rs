@@ -385,6 +385,7 @@ mod tests {
             test_dir.path(),
             "local",
         );
+        cx.update_entity(&app, |app, cx| app.sync_component_theme(cx));
         let shutdown_requests = Arc::new(AtomicUsize::new(0));
         let shutdown_cancellations = Arc::new(AtomicUsize::new(0));
         let observed_requests = shutdown_requests.clone();
