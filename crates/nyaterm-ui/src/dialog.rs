@@ -9,7 +9,7 @@ use gpui::{
     SharedString, Styled as _, Window, WindowId, div, px,
 };
 use gpui_kit::component::{
-    Disableable as _, WindowExt as _,
+    DialogHandle, Disableable as _, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
     dialog::{Cancel, Confirm, Dialog, DialogAction, DialogButtonProps, DialogClose, DialogFooter},
 };
@@ -21,15 +21,16 @@ pub struct NyaDialog {
     pointer_confirm: Rc<Cell<bool>>,
 }
 
-/// A weak identity: the component stack's builder owns the dialog's lifetime.
+/// A weak identity whose logical lifetime ends when the component closes it.
 #[derive(Clone)]
 pub struct NyaDialogHandle {
     window: WindowId,
     marker: Weak<()>,
+    lifecycle: DialogHandle,
 }
 
 #[derive(Default)]
-struct DialogIdentities(HashMap<WindowId, Vec<Weak<()>>>);
+struct DialogIdentities(HashMap<WindowId, Vec<(Weak<()>, DialogHandle)>>);
 
 impl Global for DialogIdentities {}
 
@@ -40,7 +41,7 @@ impl Global for DialogButtonBindings {}
 
 impl NyaDialogHandle {
     pub fn is_active(&self) -> bool {
-        self.marker.strong_count() > 0
+        self.lifecycle.is_active() && self.marker.strong_count() > 0
     }
 
     pub fn is_top(&self, window: &Window, cx: &mut App) -> bool {
@@ -49,14 +50,14 @@ impl NyaDialogHandle {
         }
         let identities = cx.default_global::<DialogIdentities>();
         identities.0.retain(|_, stack| {
-            stack.retain(|marker| marker.strong_count() > 0);
+            stack.retain(|(marker, lifecycle)| lifecycle.is_active() && marker.strong_count() > 0);
             !stack.is_empty()
         });
         identities
             .0
             .get(&self.window)
             .and_then(|stack| stack.last())
-            .is_some_and(|marker| marker.ptr_eq(&self.marker))
+            .is_some_and(|(marker, _)| marker.ptr_eq(&self.marker))
     }
 }
 
@@ -366,20 +367,7 @@ impl NyaDialogWindowExt for Window {
         F: Fn(NyaDialog, &mut Window, &mut App) -> NyaDialog + 'static,
     {
         let marker = Rc::new(());
-        let handle = NyaDialogHandle {
-            window: self.window_handle().window_id(),
-            marker: Rc::downgrade(&marker),
-        };
-        let identities = cx.default_global::<DialogIdentities>();
-        identities.0.retain(|_, stack| {
-            stack.retain(|marker| marker.strong_count() > 0);
-            !stack.is_empty()
-        });
-        identities
-            .0
-            .entry(handle.window)
-            .or_default()
-            .push(handle.marker.clone());
+        let weak = Rc::downgrade(&marker);
         if !cx.has_global::<DialogButtonBindings>() {
             cx.set_global(DialogButtonBindings);
             // Dialog's own `enter -> Confirm` binding runs before GPUI can
@@ -404,9 +392,9 @@ impl NyaDialogWindowExt for Window {
         // visible, so schedule the opt-in focus move exactly once per opening.
         // On the first build the dialog's Tab stops are not laid out yet; the
         // next-frame callback uses the first completed rendered frame instead.
-        let focus_guard = Rc::new(std::cell::Cell::new(false));
+        let focus_guard = Rc::new(Cell::new(false));
         let shell_focus = Rc::new(RefCell::new(None));
-        self.open_dialog(cx, move |dialog, window, cx| {
+        let lifecycle = self.open_tracked_dialog(cx, move |dialog, window, cx| {
             let _lifetime = &marker;
             if shell_focus.borrow().is_none() {
                 let focused = window.focused(cx);
@@ -425,6 +413,21 @@ impl NyaDialogWindowExt for Window {
                 .into_component()
                 .shadow(gpui_base::Theme::global(cx).tokens.shadow.lg)
         });
+        let handle = NyaDialogHandle {
+            window: self.window_handle().window_id(),
+            marker: weak,
+            lifecycle,
+        };
+        let identities = cx.default_global::<DialogIdentities>();
+        identities.0.retain(|_, stack| {
+            stack.retain(|(marker, lifecycle)| lifecycle.is_active() && marker.strong_count() > 0);
+            !stack.is_empty()
+        });
+        identities
+            .0
+            .entry(handle.window)
+            .or_default()
+            .push((handle.marker.clone(), handle.lifecycle.clone()));
         handle
     }
 

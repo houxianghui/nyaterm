@@ -18,6 +18,11 @@ pub type NyaRoot = gpui_kit::component::Root;
 
 pub type NyaWindowHandle = WindowHandle<NyaRoot>;
 
+/// Install component actions and keybindings once before creating UI roots.
+pub fn init_components(cx: &mut App) {
+    gpui_kit::init(cx);
+}
+
 /// Override only this window's component root; restoring removes the override so
 /// subsequent theme changes continue to supply the background normally.
 pub fn set_nya_root_transparent(root: &mut NyaRoot, transparent: bool) {
@@ -948,6 +953,11 @@ mod tests {
             });
         });
         draw(cx);
+        // Tracked dialogs paint their entrance from transparent. Assert the
+        // resting fill after the upstream transition, not its invisible first frame.
+        cx.background_executor
+            .advance_clock(*gpui_kit::component::dialog::ANIMATION_DURATION);
+        draw(cx);
 
         let action = cx
             .debug_bounds("nya-dialog-action-button")
@@ -966,12 +976,14 @@ mod tests {
                 }),
                 "the dangerous action must not paint a solid danger fill"
             );
+            let action_backgrounds = quads
+                .iter()
+                .filter(|quad| quad.bounds.intersects(&action))
+                .map(|quad| quad.background)
+                .collect::<Vec<_>>();
             assert!(
-                quads.iter().any(|quad| {
-                    quad.bounds.intersects(&action)
-                        && quad.background == gpui::Background::from(primary)
-                }),
-                "the dangerous action keeps the theme's prominent fill"
+                action_backgrounds.contains(&gpui::Background::from(primary)),
+                "the dangerous action keeps the theme's prominent fill; primary={primary:?}, action_backgrounds={action_backgrounds:?}"
             );
         });
     }

@@ -1,17 +1,3 @@
-use rust_i18n::t;
-
-use gpui::{
-    AnyElement, Context, IntoElement, KeyDownEvent, ListHorizontalSizingBehavior, MouseButton,
-    MouseDownEvent, SharedString, div, prelude::*, px, rgb, rgba, svg, uniform_list,
-};
-use nyaterm_core::truncate_preview;
-use nyaterm_ui::{
-    NyaContextMenu, NyaHorizontalScrollbar, NyaSearchInput, NyaUniformListScrollbar, radius_lg,
-    radius_md, radius_sm,
-};
-
-use crate::models::TransferBrowserSortColumn;
-
 use super::super::browser_filter::{TransferBrowserFooterStats, transfer_browser_footer_stats};
 use super::super::entry_row::format_browser_file_size;
 use super::super::panel::TransferPanel;
@@ -27,6 +13,17 @@ use super::helpers::{
     compact_transfer_toolbar_button_enabled, compact_transfer_upload_menu_button,
     transfer_toolbar_divider,
 };
+use crate::models::TransferBrowserSortColumn;
+use gpui::{
+    AnyElement, Context, IntoElement, KeyDownEvent, ListHorizontalSizingBehavior, MouseButton,
+    MouseDownEvent, SharedString, div, prelude::*, px, rgb, rgba, svg, uniform_list,
+};
+use nyaterm_core::truncate_preview;
+use nyaterm_ui::{
+    NyaContextMenu, NyaHorizontalScrollbar, NyaSearchInput, NyaUniformListScrollbar, radius_lg,
+    radius_md, radius_sm,
+};
+use rust_i18n::t;
 
 const FILE_BROWSER_SCROLLBAR_SIZE_PX: f32 = 16.;
 
@@ -133,7 +130,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_view(
             for row in browser.tree.rows.iter().filter(|row| !row.root) {
                 stats.total_item_count += 1;
                 if let Some(entry) = row.entry.as_ref()
-                    && entry.file_type != nyaterm_transport::SftpFileType::Directory
+                    && entry.file_type != nyaterm_files::sftp::SftpFileType::Directory
                 {
                     stats.total_file_size = stats
                         .total_file_size
@@ -545,16 +542,6 @@ pub(in crate::features::pages::transfers) fn transfer_browser_view(
                                     cx.listener(|panel, _, _, cx| panel.with_app(cx, |this, cx| {
                                         this.toggle_transfer_browser_hidden_files(cx);
                                     })),
-                                ))
-                                .child(transfer_toolbar_divider(palette))
-                                .child(compact_transfer_toolbar_button(
-                                    palette,
-                                    "transfer-browser-open-file-manager",
-                                    "icons/file-manager.svg",
-                                    t!("fileManager.openWorkspace"),
-                                    cx.listener(|panel, _, _, cx| panel.with_app(cx, |this, cx| {
-                                        this.open_file_manager_tab(None, cx);
-                                    })),
                                 )),
                         )
                         .when(search_expanded && !tree_mode, |toolbar| {
@@ -613,6 +600,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_view(
                     .child(
                         div()
                             .id(SharedString::from("transfer-browser-table-scroll"))
+                            .debug_selector(|| "transfer-browser-table-scroll".into())
                             .size_full()
                             .min_w_0()
                             .overflow_x_scroll()

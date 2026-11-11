@@ -1,6 +1,7 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
@@ -12,11 +13,11 @@ use gpui::{
 use nyaterm_core::ResolvedKeywordHighlightRule;
 use nyaterm_terminal::selection::{
     TerminalBufferCellPos, TerminalCellSide, TerminalSelection, TerminalSelectionEndpoint,
-    expand_selection_range,
+    TerminalSelectionMode, expand_selection_range,
 };
 use nyaterm_terminal::{
-    ShellInputLineKind, TerminalLineId, TerminalSnapshot, terminal_cell_count,
-    terminal_char_cell_width, terminal_is_zero_width_mark,
+    TerminalLineId, TerminalSnapshot, terminal_cell_count, terminal_char_cell_width,
+    terminal_is_zero_width_mark,
 };
 
 use crate::contrast::{
@@ -28,15 +29,19 @@ use crate::glyphs::{
 };
 use crate::keywords::{
     TerminalKeywordHighlightLookup, TerminalKeywordHighlightSnapshot, TerminalKeywordRowReuseKey,
-    terminal_keyword_row_reuse_key, terminal_keyword_row_reuse_keys, terminal_keyword_rules_key,
+    terminal_keyword_row_reuse_key, terminal_keyword_row_reuse_keys_for_rows,
+    terminal_keyword_rules_key,
 };
 use crate::paint::{
     apply_search_ranges, line_strike_color, push_col_range_bg, terminal_cell_text_at_col,
     terminal_highlight_spans_compiled, terminal_highlight_spans_with_keyword_ranges_and_options,
     terminal_keyword_exclusion_ranges, terminal_run_font,
 };
+use crate::paint_mask::paint_outside;
+use crate::stripes::{TerminalStripeMode, terminal_row_stripe_color};
 use crate::terminal_font_features;
 use crate::types::{TerminalHighlightSpan, TerminalPaintGeometry};
+use crate::unwrapped::TerminalUnwrappedLayout;
 
 fn terminal_geometry_diagnostics_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -78,6 +83,7 @@ pub struct TerminalGridSelection {
     pub anchor_side: TerminalCellSide,
     pub head_side: TerminalCellSide,
     pub all_buffer: bool,
+    pub mode: TerminalSelectionMode,
 }
 
 impl TerminalGridSelection {
@@ -109,6 +115,7 @@ impl TerminalGridSelection {
             anchor_side: selection.anchor.side,
             head_side: selection.head.side,
             all_buffer: selection.all_buffer,
+            mode: selection.mode,
         }
     }
 
@@ -123,6 +130,7 @@ impl TerminalGridSelection {
                 self.head_side,
             ),
             all_buffer: self.all_buffer,
+            mode: self.mode,
         }
         .cols_for_absolute_line(line)
     }
@@ -411,7 +419,6 @@ pub struct NyaTerminalElement {
     snapshot: Arc<TerminalSnapshot>,
     keyword_rules: Arc<Vec<ResolvedKeywordHighlightRule>>,
     keyword_highlights: Option<Arc<TerminalKeywordHighlightSnapshot>>,
-    input_keyword_highlights: Option<Arc<TerminalKeywordHighlightSnapshot>>,
     decorations: Arc<[TerminalLineDecorations]>,
     selection: Option<TerminalGridSelection>,
     layout_cache: Option<Arc<Mutex<NyaTerminalLayoutCache>>>,
@@ -428,15 +435,19 @@ pub struct NyaTerminalElement {
     bold_default_foreground: bool,
     minimum_contrast_ratio: f32,
     visual_y_offset: f32,
+    unwrapped: Option<Arc<TerminalUnwrappedLayout>>,
     layout_rows: Option<usize>,
     fill_height: bool,
     zebra_stripes_enabled: bool,
+    zebra_stripes_by_row: bool,
     target_line: Option<TerminalLineId>,
+    paint_exclusion: Option<Rc<Cell<Option<Bounds<Pixels>>>>>,
     #[cfg(feature = "renderer-bench")]
     cell_glyph_rendering: bool,
 }
 
 struct TerminalPaintRow {
+    x: Pixels,
     y: Pixels,
     line: Arc<ShapedLine>,
 }
@@ -509,7 +520,6 @@ impl NyaTerminalElement {
             snapshot,
             keyword_rules,
             keyword_highlights: None,
-            input_keyword_highlights: None,
             decorations: decorations.into(),
             selection: None,
             layout_cache: None,
@@ -526,10 +536,13 @@ impl NyaTerminalElement {
             bold_default_foreground: false,
             minimum_contrast_ratio: 1.0,
             visual_y_offset: 0.0,
+            unwrapped: None,
             layout_rows: None,
             fill_height: false,
             zebra_stripes_enabled: false,
+            zebra_stripes_by_row: false,
             target_line: None,
+            paint_exclusion: None,
             #[cfg(feature = "renderer-bench")]
             cell_glyph_rendering: true,
         }
@@ -537,6 +550,13 @@ impl NyaTerminalElement {
 
     pub fn with_layout_cache(mut self, cache: Arc<Mutex<NyaTerminalLayoutCache>>) -> Self {
         self.layout_cache = Some(cache);
+        self
+    }
+
+    /// The overlay resolves its frame-local bounds during prepaint. Exclude all
+    /// grid layers there, while leaving the parent's surface material intact.
+    pub fn with_paint_exclusion(mut self, exclusion: Rc<Cell<Option<Bounds<Pixels>>>>) -> Self {
+        self.paint_exclusion = Some(exclusion);
         self
     }
 
@@ -589,31 +609,22 @@ impl NyaTerminalElement {
 
     /// Exact input-row results travel with the text frame and take precedence
     /// over output batches. A known-empty result also suppresses stale colors.
-    pub fn with_input_keyword_highlights(
-        mut self,
-        highlights: Arc<TerminalKeywordHighlightSnapshot>,
-    ) -> Self {
-        self.input_keyword_highlights = Some(highlights);
-        self
-    }
-
     fn keyword_highlight_lookup(
         &self,
         row: usize,
         reuse_key: Option<TerminalKeywordRowReuseKey>,
     ) -> Option<TerminalKeywordHighlightLookup<'_>> {
-        self.input_keyword_highlights
-            .as_ref()
-            .and_then(|highlights| highlights.lookup_with_reuse_key(row, &self.snapshot, reuse_key))
-            .or_else(|| {
-                self.keyword_highlights.as_ref().and_then(|highlights| {
-                    highlights
-                        .lookup_with_reuse_key(row, &self.snapshot, reuse_key)
-                        .or_else(|| {
-                            highlights.stale_lookup_with_reuse_key(row, &self.snapshot, reuse_key)
-                        })
-                })
-            })
+        // One snapshot holds every row, including the live input row.
+        self.keyword_highlights.as_ref().and_then(|highlights| {
+            highlights
+                .lookup_with_reuse_key(row, &self.snapshot, reuse_key)
+                .or_else(|| highlights.stale_lookup_with_reuse_key(row, &self.snapshot, reuse_key))
+        })
+    }
+
+    pub fn with_unwrapped_layout(mut self, layout: Option<Arc<TerminalUnwrappedLayout>>) -> Self {
+        self.unwrapped = layout;
+        self
     }
 
     pub fn with_visual_y_offset(mut self, offset: f32) -> Self {
@@ -628,6 +639,11 @@ impl NyaTerminalElement {
     ) -> Self {
         self.zebra_stripes_enabled = enabled;
         self.target_line = target_line;
+        self
+    }
+
+    pub fn with_zebra_stripes_by_row(mut self, by_row: bool) -> Self {
+        self.zebra_stripes_by_row = by_row;
         self
     }
 
@@ -739,13 +755,10 @@ impl NyaTerminalElement {
     }
 
     fn keyword_rules_key(&self) -> u64 {
-        self.input_keyword_highlights
-            .as_ref()
-            .or(self.keyword_highlights.as_ref())
-            .map_or_else(
-                || terminal_keyword_rules_key(&self.keyword_rules),
-                |highlights| highlights.rules_key(),
-            )
+        self.keyword_highlights.as_ref().map_or_else(
+            || terminal_keyword_rules_key(&self.keyword_rules),
+            |highlights| highlights.rules_key(),
+        )
     }
 
     fn contrast_overlays<'a>(
@@ -1304,10 +1317,39 @@ fn push_terminal_background_ranges(
     }
 }
 
+fn push_command_navigation_highlight(
+    snapshot: &TerminalSnapshot,
+    row: usize,
+    target: Option<TerminalLineId>,
+    palette: nyaterm_ui::ThemePalette,
+    geometry: TerminalPaintGeometry,
+    out: &mut Vec<PaintQuad>,
+) {
+    if target.is_none()
+        || !snapshot
+            .row(row)
+            .is_some_and(|data| !data.cleared && data.line_id == target)
+    {
+        return;
+    }
+    out.push(fill(
+        Bounds::new(
+            point(
+                geometry.bounds.left(),
+                geometry.bounds.top()
+                    + px(geometry.visual_y_offset + row as f32 * geometry.cell_height),
+            ),
+            size(geometry.bounds.size.width, px(geometry.cell_height)),
+        ),
+        rgb(palette.terminal_line_highlight),
+    ));
+}
+
 fn push_terminal_zebra_stripes(
     snapshot: &TerminalSnapshot,
     visible_rows: std::ops::Range<usize>,
     target_line: Option<TerminalLineId>,
+    mode: TerminalStripeMode,
     palette: nyaterm_ui::ThemePalette,
     geometry: TerminalPaintGeometry,
     out: &mut Vec<PaintQuad>,
@@ -1332,18 +1374,9 @@ fn push_terminal_zebra_stripes(
     };
 
     for row_index in visible_rows {
-        let color = snapshot.row(row_index).and_then(|row| {
-            if row.line_id.is_some() && row.line_id == target_line {
-                Some((palette.terminal_line_highlight << 8) | 0xff)
-            } else if matches!(
-                row.shell_input,
-                Some(ShellInputLineKind::Submitted | ShellInputLineKind::Active)
-            ) {
-                Some((palette.terminal_fg << 8) | 0x0f)
-            } else {
-                None
-            }
-        });
+        let color = snapshot
+            .row(row_index)
+            .and_then(|row| terminal_row_stripe_color(row, mode, target_line, palette));
         match (pending.as_mut(), color) {
             (Some((pending_color, _, end)), Some(color))
                 if *pending_color == color && *end == row_index =>
@@ -1474,10 +1507,32 @@ fn terminal_selection_cols_for_snapshot_row(
     let absolute_end = snapshot.total_rows.saturating_sub(snapshot.display_offset);
     let absolute_start = absolute_end.saturating_sub(snapshot.row_count());
     let absolute_line = absolute_start.saturating_add(row);
-    let (start, end) = selection?.cols_for_absolute_line(absolute_line)?;
-    let start = start.min(snapshot.cols);
-    let end = end.min(snapshot.cols);
-    expand_selection_range(&snapshot.row(row)?.cells, start, end)
+    let selection = selection?;
+    let (start, end) = selection.cols_for_absolute_line(absolute_line)?;
+    let snapshot_row = snapshot.row(row)?;
+    let (start, expanded_end) = expand_selection_range(
+        &snapshot_row.cells,
+        start.min(snapshot.cols),
+        end.min(snapshot.cols),
+    )?;
+    if selection.mode == TerminalSelectionMode::Block
+        || (!selection.all_buffer && selection.anchor_line == selection.head_line)
+        || snapshot_row.wraps_to_next
+    {
+        return Some((start, expanded_end));
+    }
+
+    // Multiline hard-line tails shrink, including explicit endpoints and empty
+    // rows. Mouse anchors and copied text retain their logical ranges; contrast
+    // correction must use this painted range too.
+    let content_end = snapshot_row
+        .cells
+        .iter()
+        .enumerate()
+        .rfind(|(_, cell)| !cell.text.is_empty())
+        .map_or(0, |(col, cell)| col + usize::from(cell.width));
+    let end = expanded_end.min(content_end);
+    (start < end).then_some((start, end))
 }
 
 fn push_dynamic_selection_background(
@@ -1617,11 +1672,7 @@ impl Element for NyaTerminalElement {
         let mut base_font = font(SharedString::from(self.font_family.clone()));
         base_font.fallbacks = self.font_fallbacks.clone();
         base_font.features = terminal_font_features();
-        let keyword_rules_key = if let Some(highlights) = self
-            .input_keyword_highlights
-            .as_ref()
-            .or(self.keyword_highlights.as_ref())
-        {
+        let keyword_rules_key = if let Some(highlights) = self.keyword_highlights.as_ref() {
             highlights.rules_key()
         } else if self.keyword_rules.is_empty() {
             0
@@ -1651,71 +1702,197 @@ impl Element for NyaTerminalElement {
             cell_width: cell_w,
             cell_height: cell_h,
         };
-        let visible_rows = terminal_visible_rows_for_clipped_bounds(
+        let mut visible_rows = terminal_visible_rows_for_clipped_bounds(
             bounds,
             visible_bounds,
             cell_h,
             self.snapshot.row_count(),
             visual_y_offset,
         );
+        if let Some(layout) = self.unwrapped.as_ref() {
+            let first = layout
+                .segments
+                .first()
+                .map_or(0, |segment| segment.source_row);
+            let last = layout
+                .segments
+                .last()
+                .map_or(first, |segment| segment.source_row + 1);
+            visible_rows = first..last;
+        }
         let visible_row_start = visible_rows.start;
         let visible_row_end = visible_rows.end;
-        let visible_row_count = visible_rows.len();
-        if self.zebra_stripes_enabled {
+        let visible_row_count = self
+            .unwrapped
+            .as_ref()
+            .map_or(visible_rows.len(), |layout| layout.segments.len());
+        if self.zebra_stripes_enabled && self.unwrapped.is_none() {
             push_terminal_zebra_stripes(
                 self.snapshot.as_ref(),
                 visible_rows.clone(),
                 self.target_line,
+                TerminalStripeMode::new(self.zebra_stripes_by_row, false),
                 self.palette,
                 paint_geometry,
                 &mut plan.zebra_stripes,
             );
+        }
+        if self.zebra_stripes_enabled
+            && let Some(layout) = self.unwrapped.as_ref()
+        {
+            for display_row in 0..layout.viewport_rows {
+                let row = layout.first_source_row(display_row);
+                if row >= self.snapshot.row_count() {
+                    break;
+                }
+                let target = layout.target_line_for_display_row(
+                    &self.snapshot,
+                    display_row,
+                    self.target_line,
+                );
+                push_terminal_zebra_stripes(
+                    self.snapshot.as_ref(),
+                    row..row + 1,
+                    target,
+                    TerminalStripeMode::new(self.zebra_stripes_by_row, true),
+                    self.palette,
+                    TerminalPaintGeometry {
+                        visual_y_offset: (display_row as f32 - row as f32) * cell_h,
+                        ..paint_geometry
+                    },
+                    &mut plan.zebra_stripes,
+                );
+            }
+        }
+        // Navigation feedback is independent of zebra stripes and glyph layout.
+        if let Some(layout) = self.unwrapped.as_ref() {
+            for display_row in 0..layout.viewport_rows {
+                let row = layout.first_source_row(display_row);
+                let target = layout.target_line_for_display_row(
+                    &self.snapshot,
+                    display_row,
+                    self.snapshot.command_navigation_target,
+                );
+                push_command_navigation_highlight(
+                    &self.snapshot,
+                    row,
+                    target,
+                    self.palette,
+                    TerminalPaintGeometry {
+                        visual_y_offset: (display_row as f32 - row as f32) * cell_h,
+                        ..paint_geometry
+                    },
+                    &mut plan.decoration_backgrounds,
+                );
+            }
+        } else {
+            for row in visible_rows.clone() {
+                push_command_navigation_highlight(
+                    &self.snapshot,
+                    row,
+                    self.snapshot.command_navigation_target,
+                    self.palette,
+                    paint_geometry,
+                    &mut plan.decoration_backgrounds,
+                );
+            }
         }
         let wrapped_scan_start = visible_rows.start.saturating_sub(1);
         let wrapped_scan_end = visible_rows
             .end
             .saturating_add(1)
             .min(self.snapshot.row_count());
-        let visible_has_wrapped_group = self
-            .snapshot
-            .rows()
-            .get(wrapped_scan_start..wrapped_scan_end)
-            .unwrap_or_default()
-            .iter()
-            .any(|row| row.wrapped);
+        let visible_has_wrapped_group = self.unwrapped.is_none()
+            && self
+                .snapshot
+                .rows()
+                .get(wrapped_scan_start..wrapped_scan_end)
+                .unwrap_or_default()
+                .iter()
+                .any(|row| row.wrapped);
         let keyword_row_reuse_keys = self
-            .input_keyword_highlights
+            .keyword_highlights
             .as_ref()
-            .or(self.keyword_highlights.as_ref())
             .filter(|_| visible_has_wrapped_group)
-            .map(|_| terminal_keyword_row_reuse_keys(self.snapshot.as_ref()));
+            .map(|_| {
+                terminal_keyword_row_reuse_keys_for_rows(
+                    self.snapshot.as_ref(),
+                    wrapped_scan_start..wrapped_scan_end,
+                )
+            });
         // Follow the editor model: once the visible viewport is entirely hot,
         // spend at most one subsequent frame shaping the nearest retained row.
         // Any changed visible row suppresses this work, keeping input/output
         // latency ahead of speculative scroll preparation.
-        let prefetch_row = layout_cache.as_deref().and_then(|cache| {
-            terminal_layout_prefetch_row(visible_rows.clone(), self.snapshot.row_count(), |row| {
-                let keyword_reuse_key = keyword_row_reuse_keys
-                    .as_deref()
-                    .and_then(|keys| keys.get(row))
-                    .copied()
-                    .flatten()
-                    .or_else(|| terminal_keyword_row_reuse_key(self.snapshot.as_ref(), row));
-                let (key, reuse_key) = self.row_layout_cache_keys(
-                    row,
-                    keyword_paint_style_key,
-                    empty_keyword_paint_style_key,
-                    keyword_reuse_key,
-                );
-                cache.contains_paint_row(key, reuse_key)
-            })
-        });
-        let mut rows_to_prepare = Vec::with_capacity(visible_row_count.saturating_add(1));
-        rows_to_prepare.extend(visible_rows.clone());
-        if let Some(row) = prefetch_row {
-            rows_to_prepare.push(row);
-        }
+        let prefetch_row = layout_cache
+            .as_deref()
+            .filter(|_| self.unwrapped.is_none())
+            .and_then(|cache| {
+                terminal_layout_prefetch_row(
+                    visible_rows.clone(),
+                    self.snapshot.row_count(),
+                    |row| {
+                        let keyword_reuse_key = keyword_row_reuse_keys
+                            .as_deref()
+                            .and_then(|keys| {
+                                row.checked_sub(wrapped_scan_start)
+                                    .and_then(|index| keys.get(index))
+                            })
+                            .copied()
+                            .flatten()
+                            .or_else(|| {
+                                self.unwrapped
+                                    .is_none()
+                                    .then(|| {
+                                        terminal_keyword_row_reuse_key(self.snapshot.as_ref(), row)
+                                    })
+                                    .flatten()
+                            });
+                        let (key, reuse_key) = self.row_layout_cache_keys(
+                            row,
+                            keyword_paint_style_key,
+                            empty_keyword_paint_style_key,
+                            keyword_reuse_key,
+                        );
+                        cache.contains_paint_row(key, reuse_key)
+                    },
+                )
+            });
+        let rows_to_prepare = if let Some(layout) = self.unwrapped.as_ref() {
+            layout
+                .segments
+                .iter()
+                .map(|segment| segment.source_row)
+                .collect::<Vec<_>>()
+        } else {
+            let mut rows = Vec::with_capacity(visible_row_count.saturating_add(1));
+            rows.extend(visible_rows.clone());
+            rows.extend(prefetch_row);
+            rows
+        };
         for row in rows_to_prepare {
+            let segment = self.unwrapped.as_ref().and_then(|layout| {
+                layout
+                    .segments
+                    .iter()
+                    .find(|segment| segment.source_row == row)
+            });
+            let paint_geometry = if let Some(segment) = segment {
+                TerminalPaintGeometry {
+                    bounds: Bounds::new(
+                        point(
+                            bounds.left() + px(segment.column_offset * cell_w),
+                            bounds.top(),
+                        ),
+                        bounds.size,
+                    ),
+                    visual_y_offset: (segment.display_row as f32 - row as f32) * cell_h,
+                    cell_width: cell_w,
+                    cell_height: cell_h,
+                }
+            } else {
+                paint_geometry
+            };
             let row_is_visible = row >= visible_row_start && row < visible_row_end;
             let snapshot_row = self.snapshot.row(row);
             let line = snapshot_row.map(|row| row.text.as_str()).unwrap_or("");
@@ -1724,10 +1901,18 @@ impl Element for NyaTerminalElement {
             let row_revision = snapshot_row.map(|row| row.revision);
             let keyword_reuse_key = keyword_row_reuse_keys
                 .as_deref()
-                .and_then(|keys| keys.get(row))
+                .and_then(|keys| {
+                    row.checked_sub(wrapped_scan_start)
+                        .and_then(|index| keys.get(index))
+                })
                 .copied()
                 .flatten()
-                .or_else(|| terminal_keyword_row_reuse_key(self.snapshot.as_ref(), row));
+                .or_else(|| {
+                    self.unwrapped
+                        .is_none()
+                        .then(|| terminal_keyword_row_reuse_key(self.snapshot.as_ref(), row))
+                        .flatten()
+                });
             let keyword_lookup = self.keyword_highlight_lookup(row, keyword_reuse_key);
             let keyword_result_known_empty = keyword_lookup
                 .as_ref()
@@ -1751,7 +1936,8 @@ impl Element for NyaTerminalElement {
             let keyword_exclusions_affect_glyphs = !keyword_result_known_empty
                 && keyword_rules_key != 0
                 && !keyword_excluded_ranges.is_empty();
-            let y = px(f32::from(bounds.top()) + visual_y_offset + row as f32 * cell_h);
+            let y =
+                px(f32::from(bounds.top()) + paint_geometry.visual_y_offset + row as f32 * cell_h);
 
             if row_is_visible {
                 if !decorations.active_search_ranges.is_empty() {
@@ -2051,6 +2237,7 @@ impl Element for NyaTerminalElement {
                     .text_run_count
                     .saturating_add(painted_row.text_run_count);
                 plan.rows.push(TerminalPaintRow {
+                    x: paint_geometry.bounds.left(),
                     y,
                     line: Arc::clone(&painted_row.line),
                 });
@@ -2067,7 +2254,10 @@ impl Element for NyaTerminalElement {
                 let strike_y = y + (ascent * 0.5 + baseline) * 0.5;
                 for range in &painted_row.text_decorations.strikethroughs {
                     plan.strikethroughs.push(TerminalStrikethroughPaint {
-                        origin: point(bounds.left() + px(range.start as f32 * cell_w), strike_y),
+                        origin: point(
+                            paint_geometry.bounds.left() + px(range.start as f32 * cell_w),
+                            strike_y,
+                        ),
                         width: px((range.end - range.start) as f32 * cell_w),
                         color: range.color,
                     });
@@ -2173,22 +2363,49 @@ impl Element for NyaTerminalElement {
             }
         }
 
+        let cursor_geometry = self.unwrapped.as_ref().and_then(|layout| {
+            layout.display_position(self.snapshot.cursor.row, self.snapshot.cursor.col)
+        });
+        let cursor_in_view = if self.unwrapped.is_some() {
+            cursor_geometry.is_some_and(|(_, col)| col >= -1.0 && col < self.snapshot.cols as f32)
+        } else {
+            self.snapshot.cursor.row >= visible_row_start
+                && self.snapshot.cursor.row < visible_row_end
+        };
+        let cursor_paint_geometry = if let Some((display_row, display_col)) = cursor_geometry {
+            TerminalPaintGeometry {
+                bounds: Bounds::new(
+                    point(
+                        bounds.left()
+                            + px((display_col - self.snapshot.cursor.col as f32) * cell_w),
+                        bounds.top(),
+                    ),
+                    bounds.size,
+                ),
+                visual_y_offset: (display_row as f32 - self.snapshot.cursor.row as f32) * cell_h,
+                cell_width: cell_w,
+                cell_height: cell_h,
+            }
+        } else {
+            paint_geometry
+        };
         if self.show_cursor
             && self.snapshot.cursor.row < self.snapshot.row_count()
             && self.snapshot.cursor.col < self.snapshot.cols.max(1)
-            && self.snapshot.cursor.row >= visible_row_start
-            && self.snapshot.cursor.row < visible_row_end
+            && cursor_in_view
         {
-            let left =
-                (f32::from(bounds.left()) + self.snapshot.cursor.col as f32 * cell_w).floor();
+            let left = (f32::from(cursor_paint_geometry.bounds.left())
+                + self.snapshot.cursor.col as f32 * cell_w)
+                .floor();
             let top = (f32::from(bounds.top())
-                + visual_y_offset
+                + cursor_paint_geometry.visual_y_offset
                 + self.snapshot.cursor.row as f32 * cell_h)
                 .floor();
-            let right =
-                (f32::from(bounds.left()) + (self.snapshot.cursor.col + 1) as f32 * cell_w).ceil();
+            let right = (f32::from(cursor_paint_geometry.bounds.left())
+                + (self.snapshot.cursor.col + 1) as f32 * cell_w)
+                .ceil();
             let bottom = (f32::from(bounds.top())
-                + visual_y_offset
+                + cursor_paint_geometry.visual_y_offset
                 + (self.snapshot.cursor.row + 1) as f32 * cell_h)
                 .ceil();
             let x = px(left);
@@ -2219,7 +2436,7 @@ impl Element for NyaTerminalElement {
                             color: self.palette.terminal_bg,
                         }],
                         self.snapshot.cursor.row,
-                        paint_geometry,
+                        cursor_paint_geometry,
                         scale_factor,
                         &mut plan.cursor_cell_glyphs,
                     );
@@ -2414,80 +2631,111 @@ impl Element for NyaTerminalElement {
         let viewport_mask = ContentMask {
             bounds: window.content_mask().bounds.intersect(&bounds),
         };
+        let exclusion = self.paint_exclusion.as_ref().and_then(|mask| mask.get());
         window.with_content_mask(Some(viewport_mask), |window| {
             // zebra → cell bg → under images → search/selection → marks → text → images → cursor
             for quad in prepaint.zebra_stripes.drain(..) {
-                window.paint_quad(quad);
+                paint_outside(exclusion, quad.bounds, window, cx, |window, _| {
+                    window.paint_quad(quad.clone());
+                });
             }
             for quad in prepaint.backgrounds.drain(..) {
-                window.paint_quad(quad);
+                paint_outside(exclusion, quad.bounds, window, cx, |window, _| {
+                    window.paint_quad(quad.clone());
+                });
             }
             for image in prepaint.images_under.drain(..) {
-                let _ = window.paint_image(
-                    image.bounds,
-                    image.bounds,
-                    gpui::Corners::default(),
-                    image.image,
-                    0,
-                    false,
-                );
+                paint_outside(exclusion, image.bounds, window, cx, |window, _| {
+                    let _ = window.paint_image(
+                        image.bounds,
+                        image.bounds,
+                        gpui::Corners::default(),
+                        image.image.clone(),
+                        0,
+                        false,
+                    );
+                });
             }
             for quad in prepaint.placeholders_under.drain(..) {
-                window.paint_quad(quad);
+                paint_outside(exclusion, quad.bounds, window, cx, |window, _| {
+                    window.paint_quad(quad.clone());
+                });
             }
             for quad in prepaint.decoration_backgrounds.drain(..) {
-                window.paint_quad(quad);
+                paint_outside(exclusion, quad.bounds, window, cx, |window, _| {
+                    window.paint_quad(quad.clone());
+                });
             }
             for quad in prepaint.active_markers.drain(..) {
-                window.paint_quad(quad);
+                paint_outside(exclusion, quad.bounds, window, cx, |window, _| {
+                    window.paint_quad(quad.clone());
+                });
             }
             for row in prepaint.rows.drain(..) {
-                let _ = row.line.paint(
-                    point(bounds.left(), row.y),
-                    px(cell_height),
-                    gpui::TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                );
+                paint_outside(exclusion, viewport_mask.bounds, window, cx, |window, cx| {
+                    let _ = row.line.paint(
+                        point(row.x, row.y),
+                        px(cell_height),
+                        gpui::TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    );
+                });
             }
-            prepaint.cell_glyphs.paint(window, cx);
+            prepaint
+                .cell_glyphs
+                .paint_with_exclusion(exclusion, window, cx);
             for strike in prepaint.strikethroughs.drain(..) {
-                window.paint_strikethrough(
-                    strike.origin,
-                    strike.width,
-                    &line_strike_color(rgb(strike.color).into()),
-                );
+                paint_outside(exclusion, viewport_mask.bounds, window, cx, |window, _| {
+                    window.paint_strikethrough(
+                        strike.origin,
+                        strike.width,
+                        &line_strike_color(rgb(strike.color).into()),
+                    );
+                });
             }
             for quad in prepaint.underlines.drain(..) {
-                window.paint_quad(quad);
+                paint_outside(exclusion, quad.bounds, window, cx, |window, _| {
+                    window.paint_quad(quad.clone());
+                });
             }
             for image in prepaint.images_above.drain(..) {
-                let _ = window.paint_image(
-                    image.bounds,
-                    image.bounds,
-                    gpui::Corners::default(),
-                    image.image,
-                    0,
-                    false,
-                );
+                paint_outside(exclusion, image.bounds, window, cx, |window, _| {
+                    let _ = window.paint_image(
+                        image.bounds,
+                        image.bounds,
+                        gpui::Corners::default(),
+                        image.image.clone(),
+                        0,
+                        false,
+                    );
+                });
             }
             for quad in prepaint.placeholders_above.drain(..) {
-                window.paint_quad(quad);
+                paint_outside(exclusion, quad.bounds, window, cx, |window, _| {
+                    window.paint_quad(quad.clone());
+                });
             }
             if let Some(cursor) = prepaint.cursor_background.take() {
-                window.paint_quad(cursor);
+                paint_outside(exclusion, cursor.bounds, window, cx, |window, _| {
+                    window.paint_quad(cursor.clone());
+                });
             }
-            prepaint.cursor_cell_glyphs.paint(window, cx);
+            prepaint
+                .cursor_cell_glyphs
+                .paint_with_exclusion(exclusion, window, cx);
             if let Some(cursor_glyph) = prepaint.cursor_glyph.take() {
-                let _ = cursor_glyph.line.paint(
-                    cursor_glyph.origin,
-                    px(cell_height),
-                    gpui::TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                );
+                paint_outside(exclusion, viewport_mask.bounds, window, cx, |window, cx| {
+                    let _ = cursor_glyph.line.paint(
+                        cursor_glyph.origin,
+                        px(cell_height),
+                        gpui::TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    );
+                });
             }
         });
         let elapsed = started_at.elapsed();

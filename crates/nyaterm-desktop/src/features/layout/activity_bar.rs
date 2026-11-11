@@ -627,6 +627,10 @@ impl NyaTermApp {
 
         div()
             .id(SharedString::from(format!("activity-{entry_id}")))
+            .debug_selector({
+                let entry_id = entry_id.clone();
+                move || format!("activity-{entry_id}")
+            })
             .relative()
             .when(show_labels, |this| {
                 this.w_full()
@@ -688,7 +692,6 @@ impl NyaTermApp {
             // A transparent border reserves the line's space outside a drag.
             .border_t_2()
             .border_color(rgba(0x00000000))
-            .cursor_move()
             .on_drag(
                 ActivityBarDragPayload {
                     entry_id: entry_id.clone(),

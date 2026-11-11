@@ -41,6 +41,7 @@ impl NyaTermApp {
         self.hide_secret_inputs(cx);
         self.security.remember_screen_lock_focus(window.focused(cx));
         self.security.activate_screen_lock(String::new());
+        self.reconcile_command_suggestion_availability(cx);
         self.forget_text_inputs("security.unlock.password");
         self.forget_text_inputs("security.editor.");
         self.connection_state.clear_editor_secrets(cx);
@@ -65,7 +66,7 @@ impl NyaTermApp {
         self.shell.set_status("screen unlocked".to_string());
         self.broadcast_screen_lock(false, cx);
         cx.spawn(async move |this, cx| {
-            let _ = this.update_in(cx, |this, window, cx| {
+            let _ = NyaTermApp::update_in_main_window(&this, cx, |this, window, cx| {
                 if !this.security.screen_locked() {
                     if let Some(focus) = restore_focus {
                         window.focus(&focus, cx);

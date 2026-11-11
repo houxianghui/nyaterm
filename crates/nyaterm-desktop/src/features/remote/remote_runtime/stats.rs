@@ -1,12 +1,27 @@
-use futures::StreamExt as _;
-use gpui::Context;
-use nyaterm_transport::RemoteStatsService;
-
 use crate::features::NyaTermApp;
 use crate::features::remote::state::StatsApplyOutcome;
 use crate::features::runtime_jobs::StatsJobResult;
+use futures::StreamExt as _;
+use gpui::Context;
+use nyaterm_remote_ops::stats::{RemoteStatsOptions, RemoteStatsService};
 
 impl NyaTermApp {
+    pub(in crate::features) fn remote_stats_users_setting_changed(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.remote_ops
+            .invalidate_stats_users(self.settings.summary().ui_remote_stats_show_users);
+        self.flush_remote_panel_snapshots(cx);
+        if self.settings.summary().ui_remote_stats_show_users {
+            self.refresh_remote_monitor_if_due(
+                crate::features::pages::remote::RemoteMonitorKind::Stats,
+                cx,
+            );
+        }
+        cx.notify();
+    }
+
     pub(in crate::features) fn refresh_stats(&mut self, cx: &mut Context<Self>) {
         self.start_stats_refresh(true, cx);
     }
@@ -26,9 +41,11 @@ impl NyaTermApp {
                 return;
             }
         };
-        let config = context.config;
-        let multiplex = context.multiplex;
-        if !config.remote_stats_enabled() {
+        let target = context.target;
+        if target
+            .ssh_config()
+            .is_some_and(|config| !config.remote_stats_enabled())
+        {
             self.remote_ops
                 .set_stats_status("remote stats are unavailable for network device sessions");
             self.shell
@@ -60,15 +77,18 @@ impl NyaTermApp {
         let rejected_session_id = job_session_id.clone();
         let sampling_session_id = job_session_id.clone();
         let sampler = self.remote_ops.stats_sampler();
+        let users_revision = self.remote_ops.stats_users_revision();
+        let options = RemoteStatsOptions {
+            collect_logged_in_users: self.settings.summary().ui_remote_stats_show_users,
+        };
         if let Err(error) = self
             .blocking_jobs
             .submit_detached("remote-stats", move |_| {
-                let result = (|| {
-                    RemoteStatsService::with_multiplex(config, multiplex)?
-                        .snapshot(sampler.as_ref(), &sampling_session_id)
-                })()
-                .map_err(|error| error.to_string());
+                let result = RemoteStatsService::with_target(target)
+                    .snapshot_with_options(sampler.as_ref(), &sampling_session_id, options)
+                    .map_err(|error| error.to_string());
                 let _ = tx.unbounded_send(StatsJobResult {
+                    users_revision,
                     job_id,
                     session_id: job_session_id,
                     result,
@@ -76,6 +96,7 @@ impl NyaTermApp {
             })
         {
             let _ = rejected_tx.unbounded_send(StatsJobResult {
+                users_revision,
                 job_id,
                 session_id: rejected_session_id,
                 result: Err(error.to_string()),
@@ -132,6 +153,12 @@ impl NyaTermApp {
                             cx.notify();
                         }
                         this.sync_remote_panel_demand(cx);
+                        if this.remote_ops.stats_users_refresh_pending() {
+                            this.refresh_remote_monitor_if_due(
+                                crate::features::pages::remote::RemoteMonitorKind::Stats,
+                                cx,
+                            );
+                        }
                         // Flush boundary: a reply changed the pane, so its panel
                         // gets the snapshot now rather than at the next paint.
                         this.flush_remote_panel_snapshots(cx);

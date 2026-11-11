@@ -1,3 +1,4 @@
+use super::components::agent_kind_display_name;
 use super::{
     AiAgentStepPresentation, AiHeaderPresentation, AiMentionCandidate, AiModelChoice,
     AiPanelChrome, AiPanelSnapshot, AiTargetSession, harness,
@@ -69,8 +70,22 @@ impl NyaTermApp {
                 label
             };
         }
+        let mode_label = if self.ai.chat_run_mode() == AiMode::Agent {
+            format!(
+                "{} · {}",
+                t!("ai.modeAgent"),
+                agent_kind_display_name(&self.ai.chat_agent_kind())
+            )
+        } else {
+            t!("ai.modeAsk").to_string()
+        };
         AiHeaderPresentation {
             running: self.ai.chat_or_agent_is_running(),
+            conversation_title: self
+                .ai
+                .conversation_title()
+                .unwrap_or_else(|| t!("ai.newChat").to_string()),
+            mode_label,
             selected_model_id,
             model_label,
             execution_mode: self
@@ -222,8 +237,11 @@ impl NyaTermApp {
             .existing_text_input("ai.chat.prompt")
             .expect("AI prompt input was just built");
 
+        // A running request keeps the box editable so the next instruction can
+        // be drafted; sending stays blocked until the run settles.
         prompt_input.update(cx, |input, cx| {
-            input.set_disabled(running || !enabled, cx);
+            input.set_disabled(!enabled, cx);
+            input.set_auto_grow(3, 6, cx);
             input.set_placeholder(prompt_placeholder, cx);
         });
 
@@ -252,6 +270,28 @@ impl NyaTermApp {
             None
         };
         let native_run = self.ai.native_run_view();
+        let native_approvals = native_run
+            .as_ref()
+            .filter(|view| {
+                self.ai
+                    .native_run_is_live(&view.run_id, self.ai.chat_session_id())
+            })
+            .map(|view| {
+                let mut approvals = self
+                    .mcp
+                    .capabilities
+                    .native_approval_requests(&view.run_id, self.ai.chat_session_id());
+                for view in &mut approvals {
+                    if let Some(target) = &view.approval.target
+                        && let Some(label) = self.session.display_name(target)
+                    {
+                        view.approval.target = Some(format!("{label} ({target})"));
+                    }
+                }
+                approvals
+            })
+            .unwrap_or_default()
+            .into();
         let mut native_answer_inputs = Vec::new();
         if let Some(view) = &native_run
             && view.status == nyaterm_core::ai::harness::AgentRunStatus::WaitingForUser
@@ -279,6 +319,7 @@ impl NyaTermApp {
         AiPanelSnapshot {
             index: Arc::default(),
             native_run,
+            native_approvals,
             native_answer_inputs,
             ui_font_family: if self.settings.summary().ui_font_family.trim().is_empty() {
                 crate::features::shell::gpui_ui_font_fallback().into()
@@ -389,7 +430,6 @@ impl NyaTermApp {
             mention_candidates,
             quoted_text: self.ai.chat_quote().map(str::to_string),
             detected_error: self.ai.panel_detected_error().cloned(),
-            message_menu: self.ai.chat_message_menu().cloned(),
             history_open: self.ai.history_is_open(),
             history_query: self.ai.history_query().to_string(),
             history_sessions: self.ai.history_sessions().to_vec().into(),
@@ -403,6 +443,7 @@ impl NyaTermApp {
                 .into(),
             current_ai_session_id: self.ai.chat_session_id().to_string(),
             owner_terminal_id: self.session.active_id().map(str::to_string),
+            last_agent_kind: self.ai.last_agent_kind(),
             owner_connection_id: self
                 .session
                 .active_id()
@@ -425,6 +466,7 @@ impl NyaTermApp {
     }
 
     pub(in crate::features) fn sync_ai_active_scope(&mut self, cx: &mut Context<Self>) {
+        let before = self.ai_header_presentation();
         let scope = self
             .session
             .active_id()
@@ -433,6 +475,7 @@ impl NyaTermApp {
         if self.ai.switch_visible_scope(&scope) {
             let draft = self.ai.chat_prompt_draft().to_string();
             self.reset_text_input("ai.chat.prompt", &draft, cx);
+            self.notify_root_if_ai_header_changed(before, cx);
         }
     }
 }

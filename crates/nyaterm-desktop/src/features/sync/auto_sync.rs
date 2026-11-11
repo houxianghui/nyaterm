@@ -43,6 +43,7 @@ impl AutoSyncTrigger {
 }
 
 pub(crate) enum AutoSyncResult {
+    V4(super::cloud_sync_v4::SyncReport),
     Disabled,
     Skipped,
     Debouncing(Duration),
@@ -55,25 +56,23 @@ pub(crate) enum AutoSyncResult {
     Synced(Box<CloudSyncResult>),
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct AutoSyncRequest {
+    pub trigger: AutoSyncTrigger,
+    pub change_elapsed: Duration,
+    pub pull_safe: bool,
+    pub remote_available: bool,
+}
+
 pub(crate) fn run_auto_sync(
     store: &StoreBlockingClient,
     runtime: &AppRuntime,
-    trigger: AutoSyncTrigger,
-    change_elapsed: Duration,
-    pull_safe: bool,
+    request: AutoSyncRequest,
     before_apply: &dyn Fn() -> Result<(), CloudSyncError>,
     controls: &AutoSyncOperationControls,
 ) -> Result<AutoSyncResult, CloudSyncError> {
-    let mut scope = super::io_runtime::IoScope::new(trigger.history_name());
-    let result = run_auto_sync_inner(
-        store,
-        runtime,
-        trigger,
-        change_elapsed,
-        pull_safe,
-        before_apply,
-        controls,
-    );
+    let mut scope = super::io_runtime::IoScope::new(request.trigger.history_name());
+    let result = run_auto_sync_inner(store, runtime, request, before_apply, controls);
     scope.finish(&result);
     match &result {
         Ok(AutoSyncResult::Disabled) => scope.skipped("disabled"),
@@ -88,12 +87,16 @@ pub(crate) fn run_auto_sync(
 fn run_auto_sync_inner(
     store: &StoreBlockingClient,
     runtime: &AppRuntime,
-    trigger: AutoSyncTrigger,
-    change_elapsed: Duration,
-    pull_safe: bool,
+    request: AutoSyncRequest,
     before_apply: &dyn Fn() -> Result<(), CloudSyncError>,
     controls: &AutoSyncOperationControls,
 ) -> Result<AutoSyncResult, CloudSyncError> {
+    let AutoSyncRequest {
+        trigger,
+        change_elapsed,
+        pull_safe,
+        remote_available,
+    } = request;
     controls.sync.checkpoint()?;
     let _operation = match crate::features::cloud_sync_operation_lock().try_lock() {
         Ok(guard) => guard,
@@ -112,6 +115,12 @@ fn run_auto_sync_inner(
     if let Some(skipped) = auto_sync_skip(&settings, trigger, change_elapsed) {
         return Ok(skipped);
     }
+    let protocol_version = super::effective_protocol_version(&settings);
+    if !matches!(protocol_version, 3 | 4) {
+        return Err(CloudSyncError::Remote(
+            "Unsupported cloud sync protocol".into(),
+        ));
+    }
     let password = password.ok_or(nyaterm_core::PortableSnapshotError::MissingMasterPassword)?;
     let options = LocalCloudSyncOptions {
         device_name: Some(settings.device_name.clone()),
@@ -124,6 +133,58 @@ fn run_auto_sync_inner(
         master_password: password,
         enabled: true,
     };
+    if protocol_version == 4 {
+        let preview = if trigger == AutoSyncTrigger::Change {
+            let Some(preview) = super::cloud_sync_v4::preview_on_change(
+                store,
+                &settings,
+                &options,
+                remote_available,
+                &controls.sync,
+            )?
+            else {
+                return Ok(AutoSyncResult::Skipped);
+            };
+            preview
+        } else {
+            super::cloud_sync_v4::preview(store, &settings, &options, &controls.sync)?
+        };
+        if preview.migration
+            || !pull_safe
+            || !settings.auto_pull_remote_changes
+            || !settings.auto_push_on_change
+        {
+            return Ok(AutoSyncResult::RemoteAvailable {
+                retry_when_safe: !pull_safe,
+                revision: None,
+            });
+        }
+        let unchanged = preview
+            .apply
+            .local
+            .replica
+            .as_ref()
+            .is_some_and(|replica| replica.document == preview.apply.plan.replica.document);
+        let published = preview.apply.local.published_document.as_deref()
+            == Some(nyaterm_sync::engine::digest(&preview.apply.plan.replica.document).as_str());
+        if unchanged
+            && published
+            && preview.apply.local.pending.is_none()
+            && (preview.apply.local.deferred.is_empty()
+                || preview.apply.local.applied_generation == preview.apply.generation)
+        {
+            return Ok(AutoSyncResult::Skipped);
+        }
+        before_apply()?;
+        return super::cloud_sync_v4::apply_and_publish(
+            store,
+            &settings,
+            &options,
+            preview,
+            &controls.sync,
+        )
+        .map(AutoSyncResult::V4);
+    }
     if trigger == AutoSyncTrigger::Change {
         let caches = super::io_runtime::CloudSyncIoRuntime::shared().caches(
             store,
@@ -264,9 +325,9 @@ fn now_ms() -> u64 {
 
 impl NyaTermApp {
     pub(crate) fn auto_cloud_sync_pull_blocked(&self) -> bool {
-        self.session.session_order_len() > 0
-            || self.session.start_has_pending()
-            || self.remote_desktop.has_active_sessions()
+        self.session.has_live_remote_sessions()
+            || self.session.start_is_busy()
+            || self.remote_desktop.blocks_configuration_replacement()
             || self.settings_draft_dirty()
     }
 
@@ -279,6 +340,27 @@ impl NyaTermApp {
             return;
         }
         match result {
+            Ok(AutoSyncResult::V4(report)) => {
+                let mut message = if report.verified {
+                    t!("settings.syncV3Verified", count = report.conflicts).to_string()
+                } else {
+                    t!(
+                        "settings.syncV3Pending",
+                        detail = report.publication_error.clone().unwrap_or_default()
+                    )
+                    .to_string()
+                };
+                if report.deferred > 0 {
+                    message.push_str(&format!(
+                        " · {}",
+                        t!("settings.syncV3Deferred", count = report.deferred)
+                    ));
+                }
+                self.cloud_sync
+                    .complete_job(self.cloud_sync.state().clone(), message.clone());
+                self.shell.set_status(message);
+                self.refresh_store_from_runtime_and_sync_theme(cx);
+            }
             Ok(AutoSyncResult::RemoteAvailable { .. }) => {
                 self.cloud_sync
                     .set_status(t!("settings.syncRemoteAvailable"));
@@ -396,9 +478,12 @@ mod tests {
             result = super::run_auto_sync(
                 &store,
                 &runtime,
-                AutoSyncTrigger::Change,
-                Duration::from_secs(61),
-                true,
+                super::AutoSyncRequest {
+                    trigger: AutoSyncTrigger::Change,
+                    change_elapsed: Duration::from_secs(61),
+                    pull_safe: true,
+                    remote_available: false,
+                },
                 &|| Ok(()),
                 &AutoSyncOperationControls::default(),
             );
@@ -451,5 +536,70 @@ mod tests {
             auto_sync_skip(&settings, AutoSyncTrigger::Focus, Duration::ZERO),
             Some(AutoSyncResult::Disabled)
         ));
+    }
+
+    #[test]
+    fn a_stored_v4_preference_does_not_block_a_legacy_gist_auto_sync() {
+        use crate::features::sync::io_runtime::IoScope;
+        use crate::features::sync::operation::AutoSyncOperationControls;
+        use crate::test_support::{TestConfigDir, blocking_test_store};
+        use nyaterm_core::{AppRuntime, CloudSyncError, RuntimeMode};
+        use nyaterm_store::StoreDomain;
+        let dir = TestConfigDir::new("nyaterm-cloud-sync-gist-v4-fallback");
+        let store = blocking_test_store(dir.path());
+        store
+            .request_fn(StoreDomain::CloudSync, |s| {
+                s.save_master_password(Some("fixture-password"))?;
+                s.save_cloud_sync_settings(CloudSyncSettings {
+                    enabled: true,
+                    provider: "github_gist".into(),
+                    protocol_version: 4,
+                    ..CloudSyncSettings::default()
+                })?;
+                Ok(())
+            })
+            .unwrap();
+        let runtime = AppRuntime::from_parts_for_test(
+            RuntimeMode::Portable,
+            dir.path().into(),
+            dir.join("config"),
+            dir.join("logs"),
+            dir.join("cache"),
+            None,
+        );
+        let scope = IoScope::new("fixture");
+        let mut result = Ok(AutoSyncResult::Busy);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < deadline {
+            result = super::run_auto_sync(
+                &store,
+                &runtime,
+                super::AutoSyncRequest {
+                    trigger: AutoSyncTrigger::Settings,
+                    change_elapsed: Duration::ZERO,
+                    pull_safe: false,
+                    remote_available: false,
+                },
+                &|| Ok(()),
+                &AutoSyncOperationControls::default(),
+            );
+            if !matches!(result, Ok(AutoSyncResult::Busy)) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let error = match result {
+            Err(error) => error,
+            _ => panic!("the gist access token is missing"),
+        };
+        let message = match error {
+            CloudSyncError::Remote(message) => message,
+            other => panic!("unexpected cloud sync error: {other:?}"),
+        };
+        assert_eq!(
+            message, "GitHub Gist access token is required",
+            "auto sync must take the legacy gist path instead of failing V4 validation"
+        );
+        assert_eq!(scope.stats.lock().unwrap().requests, 0);
     }
 }

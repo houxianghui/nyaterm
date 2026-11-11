@@ -46,6 +46,125 @@ impl ThemePalette {
         self.terminal_ansi[usize::from(index.min(15))]
     }
 
+    /// Text color for a solid accent fill such as a confirm button.
+    ///
+    /// White stays the default, so existing themes keep their look. It is only
+    /// replaced (by the darker of the theme's background and text color) when it
+    /// would be close to unreadable, as with the pale cyan and green of Dracula.
+    pub fn text_on_fill(self, fill: u32) -> u32 {
+        const WHITE: u32 = 0x00ff_ffff;
+        const MIN_WHITE_CONTRAST: f32 = 2.0;
+        if contrast_ratio(WHITE, fill) >= MIN_WHITE_CONTRAST {
+            return WHITE;
+        }
+        if relative_luminance(self.bg) <= relative_luminance(self.text) {
+            self.bg
+        } else {
+            self.text
+        }
+    }
+
+    /// Hover fill that improves contrast against the normal-state label color.
+    ///
+    /// Move a little toward white behind dark text, or toward black behind light
+    /// text, instead of swapping to a hard-coded green that may lose contrast.
+    pub fn hover_fill(self, fill: u32) -> u32 {
+        let text = self.text_on_fill(fill);
+        let toward = if relative_luminance(text) < relative_luminance(fill) {
+            0xffffff
+        } else {
+            0x000000
+        };
+        let mix = |shift: u32| {
+            let start = ((fill >> shift) & 0xff) as f32;
+            let end = ((toward >> shift) & 0xff) as f32;
+            (start + (end - start) * 0.12).round() as u32
+        };
+        (mix(16) << 16) | (mix(8) << 8) | mix(0)
+    }
+
+    /// True when this palette paints a dark shell.
+    pub fn is_dark(self) -> bool {
+        relative_luminance(self.bg) < 0.5
+    }
+
+    /// The single background token for every input surface: single-line and
+    /// multi-line text fields, password and search fields, number fields, and
+    /// select triggers.
+    ///
+    /// Preserve the theme's input token, including user-provided custom colors.
+    /// Do not use this for tabs, cards, hover fills, or terminal surfaces.
+    pub fn input_surface(self) -> u32 {
+        self.input
+    }
+
+    /// Opaque full-screen backdrop of the lock screen.
+    ///
+    /// It must hide private workspace content, so it stays fully opaque. The
+    /// scrim is mixed from the theme's own shell color and accent before it is
+    /// darkened, so light themes show a tinted veil that still belongs to their
+    /// palette instead of a neutral near-black sheet, while dark themes keep
+    /// their own hue and stay at or below the page brightness. The result is
+    /// darkened below the page so the raised card separates from it.
+    pub fn lock_screen_backdrop(self) -> u32 {
+        let tinted = blend_rgb(
+            self.bg,
+            self.primary,
+            if self.is_dark() { 0.2 } else { 0.65 },
+        );
+        let target_luminance = if self.is_dark() {
+            relative_luminance(self.bg) * 0.85
+        } else {
+            0.05
+        };
+        darken_to_luminance(tinted, target_luminance)
+    }
+
+    /// The raised card surface hosting the lock screen content.
+    pub fn lock_screen_card(self) -> u32 {
+        if self.is_dark() {
+            self.surface_elevated
+        } else {
+            self.bg
+        }
+    }
+
+    /// Secondary copy inside the lock screen card, adjusted for the card surface.
+    pub fn lock_screen_muted_text(self) -> u32 {
+        ensure_contrast(self.text_muted, self.lock_screen_card(), 4.5)
+    }
+
+    /// Chrome text drawn directly on the lock screen backdrop.
+    pub fn lock_screen_on_backdrop_text(self) -> u32 {
+        ensure_contrast(self.text_muted, self.lock_screen_backdrop(), 4.5)
+    }
+
+    /// Error copy inside the lock screen card.
+    pub fn lock_screen_danger(self) -> u32 {
+        ensure_contrast(self.danger, self.lock_screen_card(), 4.5)
+    }
+
+    /// Label color for the primary unlock button.
+    ///
+    /// Uses the theme's own `on_primary` pair; some themes (solarized-light)
+    /// top out just above 4:1 because their primary fill cannot host 4.5:1 text,
+    /// and recoloring the fill would invent a visual style the theme does not
+    /// define.
+    pub fn lock_screen_on_primary(self) -> u32 {
+        ensure_contrast(self.on_primary, self.primary, 4.0)
+    }
+
+    /// Palette copy for window chrome rendered over the lock screen backdrop.
+    pub fn lock_screen_chrome_palette(self) -> ThemePalette {
+        let backdrop = self.lock_screen_backdrop();
+        let card = self.lock_screen_card();
+        let mut palette = self;
+        palette.text_muted = ensure_contrast(self.text_muted, backdrop, 4.5);
+        palette.text = ensure_contrast(self.text, card, 4.5);
+        palette.hover = card;
+        palette
+    }
+
     /// Keep the cursor visible without changing terminal foreground/background colors.
     pub fn apply_cursor_contrast_ratio(&mut self, ratio: f32) {
         if ratio <= 1.01 {
@@ -54,6 +173,42 @@ impl ThemePalette {
         self.terminal_cursor =
             ensure_contrast(self.terminal_cursor, self.terminal_bg, ratio.min(4.5));
     }
+}
+
+/// Scale an RGB color's channels toward black, keeping the same hue.
+fn scale_rgb(color: u32, keep: f32) -> u32 {
+    let scale = |channel: u32| ((channel as f32) * keep).round().clamp(0.0, 255.0) as u32;
+    (scale((color >> 16) & 0xff) << 16) | (scale((color >> 8) & 0xff) << 8) | scale(color & 0xff)
+}
+
+/// Mix `amount` of `tint` into `base`, channel by channel.
+fn blend_rgb(base: u32, tint: u32, amount: f32) -> u32 {
+    let mix = |shift: u32| {
+        let base = ((base >> shift) & 0xff) as f32;
+        let tint = ((tint >> shift) & 0xff) as f32;
+        (base + (tint - base) * amount).round().clamp(0.0, 255.0) as u32
+    };
+    (mix(16) << 16) | (mix(8) << 8) | mix(0)
+}
+
+/// Multiplicatively darken `color` until its luminance sits just below `target`.
+///
+/// Scaling every channel by the same factor keeps the blended hue; only the
+/// chroma of the already dark result shrinks, which is the point of a scrim.
+fn darken_to_luminance(color: u32, target: f32) -> u32 {
+    if relative_luminance(color) <= target {
+        return color;
+    }
+    let (mut low, mut high) = (0.0f32, 1.0f32);
+    for _ in 0..20 {
+        let mid = (low + high) / 2.;
+        if relative_luminance(scale_rgb(color, mid)) <= target {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    scale_rgb(color, low)
 }
 
 fn relative_luminance(rgb: u32) -> f32 {
@@ -114,6 +269,19 @@ fn ensure_contrast(fg: u32, bg: u32, min_ratio: f32) -> u32 {
             return candidate;
         }
     }
+    if best_ratio < min_ratio {
+        // Mid-luminance backgrounds can be unreachable from the preferred
+        // extreme (white on macOS blue tops out below 4:1). The opposite
+        // achromatic extreme is the only remaining way to meet the minimum.
+        let fallback = if target_toward_white {
+            0x000000
+        } else {
+            0xffffff
+        };
+        if contrast_ratio(fallback, bg) > best_ratio {
+            return fallback;
+        }
+    }
     best
 }
 
@@ -138,6 +306,7 @@ pub const APPEARANCE_THEME_IDS: &[&str] = &[
     "rose-pine-dawn",
     "nord-light",
     "one-light",
+    "dracula-light",
 ];
 
 /// Human label for Settings theme chips.
@@ -162,6 +331,7 @@ pub fn appearance_theme_label(theme: &str) -> &'static str {
         "rose-pine-dawn" => "Pine Dawn",
         "nord-light" => "Nord Light",
         "one-light" => "One Light",
+        "dracula-light" => "Dracula Light",
         "catppuccin" => "Catppuccin",
         _ => "Custom",
     }
@@ -278,43 +448,6 @@ fn builtin_palette(theme: &str) -> ThemePalette {
             terminal_ansi: [
                 0x111827, 0xb91c1c, 0x166534, 0x854d0e, 0x1d4ed8, 0x7e22ce, 0x0e7490, 0x4b5563,
                 0x374151, 0x991b1b, 0x14532d, 0x713f12, 0x1e40af, 0x6b21a8, 0x155e75, 0x111827,
-            ],
-        },
-        "dracula" => ThemePalette {
-            ui_terminal_bg: 0,
-            danger_hover: 0,
-            shadow: 0,
-            scroll_thumb: 0,
-            terminal_fg_intense: None,
-            terminal_line_highlight: 0,
-            terminal_find_bg: 0,
-            terminal_find_border: 0,
-            bg: 0x251b33,
-            surface: 0x1d1828,
-            surface_elevated: 0x342743,
-            section_header: 0x2b203a,
-            hover: 0x342743,
-            input: 0x1f1a2b,
-            border: 0x5a426e,
-            text: 0xf8f8f2,
-            text_muted: 0xbd93f9,
-            text_dimmed: 0x6272a4,
-            primary: 0xbd93f9,
-            primary_hover: 0xa77bfa,
-            on_primary: 0x282a36,
-            focus_ring: 0xbd93f9,
-            link: 0x8be9fd,
-            accent: 0xff79c6,
-            success: 0x50fa7b,
-            warning: 0xf1fa8c,
-            danger: 0xff5555,
-            terminal_bg: 0x24172f,
-            terminal_fg: 0xf8f8f2,
-            terminal_cursor: 0xf8f8f2,
-            terminal_selection: 0x4a3561,
-            terminal_ansi: [
-                0x21222c, 0xff5555, 0x50fa7b, 0xf1fa8c, 0xbd93f9, 0xff79c6, 0x8be9fd, 0xf8f8f2,
-                0x7f8fbd, 0xff6e6e, 0x69ff94, 0xffffa5, 0xd6acff, 0xff92df, 0xa4ffff, 0xffffff,
             ],
         },
         "nord" => ThemePalette {
@@ -831,9 +964,13 @@ pub fn available_themes(catalog: &nyaterm_core::themes::ThemeCatalog) -> Vec<(St
 }
 pub fn theme_palette(id: &str) -> ThemePalette {
     let theme = nyaterm_core::themes::resolve_theme(id, &Default::default());
-    // WindTerm uses the bundled JSON as its single color source; older built-ins
-    // retain their established RGB palettes.
-    if matches!(id, "windterm-dark" | "windterm-light") {
+    // WindTerm and Dracula take the bundled JSON as their single color source
+    // (Dracula follows the official palette); older built-ins retain their
+    // established RGB palettes.
+    if matches!(
+        id,
+        "windterm-dark" | "windterm-light" | "dracula" | "dracula-light"
+    ) {
         return palette_from_theme(&theme);
     }
     let mut palette = builtin_palette(id);
@@ -919,7 +1056,41 @@ pub fn palette_from_theme(theme: &nyaterm_core::themes::ThemeConfig) -> ThemePal
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::theme_palette;
+
+    fn channel_span(color: u32) -> u32 {
+        let r = (color >> 16) & 0xff;
+        let g = (color >> 8) & 0xff;
+        let b = color & 0xff;
+        r.max(g).max(b) - r.min(g).min(b)
+    }
+
+    fn hue_degrees(color: u32) -> Option<f32> {
+        let r = ((color >> 16) & 0xff) as f32;
+        let g = ((color >> 8) & 0xff) as f32;
+        let b = (color & 0xff) as f32;
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let delta = max - min;
+        if delta < 5. {
+            return None;
+        }
+        let hue = if max == r {
+            60. * (((g - b) / delta) % 6.)
+        } else if max == g {
+            60. * ((b - r) / delta + 2.)
+        } else {
+            60. * ((r - g) / delta + 4.)
+        };
+        Some(hue.rem_euclid(360.))
+    }
+
+    fn hue_distance(a: f32, b: f32) -> f32 {
+        let distance = (a - b).abs();
+        distance.min(360. - distance)
+    }
 
     #[test]
     fn selectable_builtins_match_the_core_theme_catalog() {
@@ -939,6 +1110,96 @@ mod tests {
         ] {
             assert!(available.contains(&(id.into(), label.into())));
         }
+    }
+
+    #[test]
+    fn dracula_palettes_follow_the_official_specification() {
+        // Dracula Classic follows https://draculatheme.com/spec; Alucard Classic
+        // uses its official palette, except for adapted ANSI black and white.
+        for (id, bg, panel, fg, selection, ansi) in [
+            (
+                "dracula",
+                0x282a36,
+                0x21222c,
+                0xf8f8f2,
+                0x44475a,
+                [
+                    0x21222c, 0xff5555, 0x50fa7b, 0xf1fa8c, 0xbd93f9, 0xff79c6, 0x8be9fd, 0xf8f8f2,
+                    0x6272a4, 0xff6e6e, 0x69ff94, 0xffffa5, 0xd6acff, 0xff92df, 0xa4ffff, 0xffffff,
+                ],
+            ),
+            (
+                "dracula-light",
+                0xfffbeb,
+                0xf5f1e2,
+                0x1f1f1f,
+                0xcfcfde,
+                [
+                    0x1f1f1f, 0xcb3a2a, 0x14710a, 0x846e15, 0x644ac9, 0xa3144d, 0x036a96, 0x6c664b,
+                    0x6c664b, 0xd74c3d, 0x198d0c, 0x9e841a, 0x7862d0, 0xbf185a, 0x047fb4, 0x2c2b31,
+                ],
+            ),
+        ] {
+            let palette = theme_palette(id);
+            assert_eq!(palette.bg, bg, "{id} background");
+            assert_eq!(palette.surface, panel, "{id} panel");
+            assert_eq!(palette.terminal_bg, bg, "{id} terminal background");
+            assert_eq!(palette.terminal_fg, fg, "{id} foreground");
+            assert_eq!(palette.terminal_selection, selection, "{id} selection");
+            assert_eq!(palette.terminal_ansi, ansi, "{id} ANSI colors");
+        }
+    }
+
+    #[test]
+    fn confirm_buttons_stay_readable_on_pale_accent_fills() {
+        // Dracula's link and success colors are pale: white text is ~1.4:1 there.
+        let dracula = theme_palette("dracula");
+        for fill in [dracula.link, dracula.success] {
+            let text = dracula.text_on_fill(fill);
+            assert_ne!(text, 0xffffff, "{fill:#08x} must not get white text");
+            assert!(super::contrast_ratio(text, fill) >= 4.5, "{fill:#08x}");
+        }
+        // Themes whose accents already take white keep it, so their look is unchanged.
+        for id in super::APPEARANCE_THEME_IDS {
+            let palette = theme_palette(id);
+            if super::contrast_ratio(0xffffff, palette.link) >= 2.0 {
+                assert_eq!(palette.text_on_fill(palette.link), 0xffffff, "{id}");
+            }
+        }
+    }
+
+    #[test]
+    fn success_button_hover_keeps_dracula_labels_readable() {
+        for id in ["dracula", "dracula-light"] {
+            let palette = theme_palette(id);
+            let fill = palette.success;
+            let hover_fill = palette.hover_fill(fill);
+            let text = palette.text_on_fill(fill);
+            assert_ne!(fill, hover_fill, "{id} should have a hover cue");
+            assert!(
+                super::contrast_ratio(text, fill) >= 4.5,
+                "{id} normal success label"
+            );
+            assert!(
+                super::contrast_ratio(text, hover_fill) >= 4.5,
+                "{id} hovered success label"
+            );
+            assert!(
+                super::contrast_ratio(text, hover_fill) >= super::contrast_ratio(text, fill),
+                "{id} hover should not reduce label contrast"
+            );
+        }
+    }
+
+    #[test]
+    fn dracula_dark_interface_roles_follow_the_vscode_extension() {
+        // Source: dracula/visual-studio-code, src/dracula.yml.
+        let palette = theme_palette("dracula");
+        assert_eq!(palette.input, 0x282a36, "input.background");
+        assert_eq!(palette.section_header, 0x282a36, "sideBarSectionHeader");
+        assert_eq!(palette.hover, 0x343746, "list.hoverBackground over #282a36");
+        assert_eq!(palette.focus_ring, 0x6272a4, "focusBorder");
+        assert_eq!(palette.text_dimmed, 0x6272a4, "tab.inactiveForeground");
     }
 
     #[test]
@@ -1011,7 +1272,7 @@ mod tests {
                 0x6d28d9,
             ),
             (
-                "dracula", 0xbd93f9, 0xa77bfa, 0x282a36, 0xbd93f9, 0x8be9fd, 0xff79c6,
+                "dracula", 0xbd93f9, 0xa77bfa, 0x282a36, 0x6272a4, 0x8be9fd, 0xff79c6,
             ),
             (
                 "nord", 0x88c0d0, 0x7bb8c9, 0x2e3440, 0x88c0d0, 0x81a1c1, 0x5e81ac,
@@ -1124,6 +1385,15 @@ mod tests {
                 0x4078f2,
                 0xa626a4,
             ),
+            (
+                "dracula-light",
+                0x644ac9,
+                0x5238b0,
+                0xffffff,
+                0x644ac9,
+                0x036a96,
+                0xa3144d,
+            ),
         ];
 
         for (id, primary, hover, on_primary, focus, link, accent) in expected {
@@ -1159,6 +1429,111 @@ mod tests {
             assert_eq!(
                 palette.terminal_ansi[15], ansi_bright_white,
                 "{id} ansi bright white"
+            );
+        }
+    }
+
+    #[test]
+    fn input_surface_preserves_builtin_and_custom_theme_tokens() {
+        for id in super::APPEARANCE_THEME_IDS {
+            let palette = super::theme_palette(id);
+            assert_eq!(palette.input_surface(), palette.input, "{id}");
+            let mut custom = palette;
+            custom.input = 0xe4d1ba;
+            assert_eq!(custom.input_surface(), 0xe4d1ba, "custom input for {id}");
+        }
+    }
+
+    #[test]
+    fn lock_screen_layers_follow_theme_and_stay_readable() {
+        for id in super::APPEARANCE_THEME_IDS {
+            let palette = super::theme_palette(id);
+            let backdrop = palette.lock_screen_backdrop();
+            let card = palette.lock_screen_card();
+            let backdrop_luminance = super::relative_luminance(backdrop);
+            let card_luminance = super::relative_luminance(card);
+
+            // The opaque backdrop hides the workspace and never outshines it.
+            assert!(
+                backdrop_luminance <= super::relative_luminance(palette.bg) + 1e-6,
+                "{id} backdrop brighter than the page"
+            );
+            if !palette.is_dark() {
+                assert!(
+                    backdrop_luminance < 0.08,
+                    "{id} light-theme backdrop must be visibly dimmed"
+                );
+            }
+
+            // The card has to separate from the backdrop in both theme modes.
+            assert!(
+                card_luminance > backdrop_luminance,
+                "{id} card is not raised above the backdrop"
+            );
+            assert!(
+                super::contrast_ratio(card, backdrop) >= 1.15,
+                "{id} card/backdrop contrast too low"
+            );
+
+            assert!(
+                super::contrast_ratio(palette.text, card) >= 4.5,
+                "{id} title contrast on the card"
+            );
+            assert!(
+                super::contrast_ratio(palette.lock_screen_muted_text(), card) >= 4.5,
+                "{id} secondary copy contrast on the card"
+            );
+            assert!(
+                super::contrast_ratio(palette.lock_screen_danger(), card) >= 4.5,
+                "{id} error copy contrast on the card"
+            );
+            assert!(
+                super::contrast_ratio(palette.lock_screen_on_backdrop_text(), backdrop) >= 4.5,
+                "{id} chrome copy contrast on the backdrop"
+            );
+            assert!(
+                super::contrast_ratio(palette.lock_screen_on_primary(), palette.primary) >= 4.0,
+                "{id} unlock label contrast on the primary button"
+            );
+
+            let chrome = palette.lock_screen_chrome_palette();
+            assert!(
+                super::contrast_ratio(chrome.text_muted, backdrop) >= 4.5,
+                "{id} window control icon contrast on the backdrop"
+            );
+            assert!(
+                super::contrast_ratio(chrome.text, chrome.hover) >= 4.5,
+                "{id} window control hover label contrast"
+            );
+        }
+    }
+
+    #[test]
+    fn lock_screen_backdrop_keeps_each_theme_identity() {
+        let mut backdrops = HashSet::new();
+        for id in super::APPEARANCE_THEME_IDS {
+            let palette = super::theme_palette(id);
+            let backdrop = palette.lock_screen_backdrop();
+            assert!(
+                backdrops.insert(backdrop),
+                "{id} reuses another theme's backdrop color"
+            );
+            // A neutral scrim would collapse the channels together; each theme
+            // has to keep a visible tint of its own shell or accent.
+            assert!(
+                channel_span(backdrop) >= 6,
+                "{id} backdrop collapsed into neutral near-black"
+            );
+            let backdrop_hue = hue_degrees(backdrop)
+                .unwrap_or_else(|| panic!("{id} backdrop hue collapsed into neutral"));
+            let related = [hue_degrees(palette.primary), hue_degrees(palette.bg)]
+                .into_iter()
+                .flatten()
+                .map(|hue| hue_distance(backdrop_hue, hue))
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                related <= 30.,
+                "{id} backdrop hue is not derived from bg or primary"
             );
         }
     }

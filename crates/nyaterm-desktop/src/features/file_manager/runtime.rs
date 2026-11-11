@@ -9,7 +9,8 @@ use crate::features::transfers::file_operations::{
     FileMutation, FileMutationIntent, FileTransferOperation,
 };
 use gpui::{Context, Window, prelude::*};
-use nyaterm_transport::{FileBrowserService, RemoteFilePath};
+use nyaterm_files::file_browser::FileBrowserService;
+use nyaterm_files::sftp::RemoteFilePath;
 use rust_i18n::t;
 
 impl NyaTermApp {
@@ -46,15 +47,19 @@ impl NyaTermApp {
         let service = match self.file_browser_service_for_endpoint(&endpoint) {
             Ok(service) => service,
             Err(error) => {
+                let show_hidden = self.settings.summary().ui_file_explorer_show_hidden_files;
                 workspace.update(cx, |workspace, cx| {
-                    workspace.apply_list_result(FileManagerListResult {
-                        pane: pane_id,
-                        generation,
-                        endpoint,
-                        path,
-                        snapshot,
-                        result: Err(error.to_string()),
-                    });
+                    workspace.apply_list_result(
+                        FileManagerListResult {
+                            pane: pane_id,
+                            generation,
+                            endpoint,
+                            path,
+                            snapshot,
+                            result: Err(error.to_string()),
+                        },
+                        show_hidden,
+                    );
                     let pane = workspace.pane_mut(pane_id);
                     pane.disconnected = true;
                     cx.notify();
@@ -84,15 +89,19 @@ impl NyaTermApp {
             let missing = result.as_ref().err().is_some_and(|(missing, _)| *missing);
             let success = result.is_ok();
             let _ = this.update(cx, |app, cx| {
+                let show_hidden = app.settings.summary().ui_file_explorer_show_hidden_files;
                 let changed = workspace.update(cx, |workspace, cx| {
-                    let changed = workspace.apply_list_result(FileManagerListResult {
-                        pane: pane_id,
-                        generation,
-                        endpoint: endpoint.clone(),
-                        path: path.clone(),
-                        snapshot,
-                        result: result.map_err(|(_, message)| message),
-                    });
+                    let changed = workspace.apply_list_result(
+                        FileManagerListResult {
+                            pane: pane_id,
+                            generation,
+                            endpoint: endpoint.clone(),
+                            path: path.clone(),
+                            snapshot,
+                            result: result.map_err(|(_, message)| message),
+                        },
+                        show_hidden,
+                    );
                     if changed {
                         cx.notify();
                     }
@@ -209,8 +218,9 @@ impl NyaTermApp {
     ) {
         let targets: Vec<_> = self
             .file_manager
-            .workspaces()
-            .flat_map(|(id, workspace)| {
+            .all_workspaces()
+            .flat_map(|workspace| {
+                let id = workspace.read(cx).id.clone();
                 [PaneId::Left, PaneId::Right]
                     .into_iter()
                     .filter_map(|pane_id| {
@@ -219,7 +229,7 @@ impl NyaTermApp {
                             && (pane.path.raw_path_token.is_none()
                                 || path.raw_path_token.is_none()
                                 || pane.path.raw_path_token == path.raw_path_token)
-                            && nyaterm_transport::file_browser_path_eq(
+                            && nyaterm_files::file_browser::file_browser_path_eq(
                                 endpoint.kind(),
                                 &pane.path.display_path,
                                 &path.display_path,
@@ -239,7 +249,7 @@ impl NyaTermApp {
                 PaneEndpoint::Local => {
                     self.session
                         .file_browser_backend_support_for_session(session)
-                        == Some(nyaterm_transport::FileBrowserBackendKind::Local)
+                        == Some(nyaterm_files::file_browser::FileBrowserBackendKind::Local)
                 }
                 PaneEndpoint::Session(id) => *session == id,
                 PaneEndpoint::OfflineConnection(_) => false,
@@ -255,7 +265,7 @@ impl NyaTermApp {
         let matches_active = match endpoint {
             PaneEndpoint::Local => {
                 self.session.active_file_browser_backend()
-                    == Some(nyaterm_transport::FileBrowserBackendKind::Local)
+                    == Some(nyaterm_files::file_browser::FileBrowserBackendKind::Local)
             }
             PaneEndpoint::Session(id) => active.as_ref() == Some(id),
             PaneEndpoint::OfflineConnection(_) => false,
@@ -280,11 +290,7 @@ impl NyaTermApp {
         disconnected: bool,
         cx: &mut Context<Self>,
     ) {
-        let workspaces: Vec<_> = self
-            .file_manager
-            .workspaces()
-            .map(|(_, entity)| entity.clone())
-            .collect();
+        let workspaces: Vec<_> = self.file_manager.all_workspaces().collect();
         for workspace in workspaces {
             workspace.update(cx, |workspace, cx| {
                 workspace.mark_disconnected(session_id, disconnected);
@@ -303,8 +309,8 @@ impl NyaTermApp {
     ) {
         let workspaces: Vec<_> = self
             .file_manager
-            .workspaces()
-            .map(|(id, entity)| (id.clone(), entity.clone()))
+            .all_workspaces()
+            .map(|entity| (entity.read(cx).id.clone(), entity.clone()))
             .collect();
         for (manager_id, workspace) in workspaces {
             let panes = workspace.read(cx).pane_ids_for_session(session_id);
@@ -397,7 +403,7 @@ impl NyaTermApp {
                         .existing_text_input("file-manager.name")
                         .map(|field| field.read(cx).value(cx))
                         .unwrap_or_default();
-                    if !nyaterm_transport::valid_file_browser_child_name(
+                    if !nyaterm_files::file_browser::valid_file_browser_child_name(
                         selection.endpoint.kind(),
                         &name,
                     ) {

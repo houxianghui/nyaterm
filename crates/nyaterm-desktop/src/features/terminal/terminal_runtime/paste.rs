@@ -1,9 +1,16 @@
 use gpui::{AppContext as _, Context, KeyDownEvent, Keystroke, Window};
+use nyaterm_core::completion::types::supports_full_command_fill;
+use nyaterm_core::terminal::editing::{EditIntent, plan_edit};
+use nyaterm_core::terminal::input_tracker::apply_terminal_input_data_in_place;
 use nyaterm_core::terminal_input_fanout_status;
 use nyaterm_ui::{NyaDocumentEditorEvent, NyaDocumentEditorState};
 use rust_i18n::t;
+use std::time::Instant;
 
 use crate::features::NyaTermApp;
+use crate::features::terminal::command_suggestions::paste::SuggestionPasteContext;
+use crate::features::terminal::editing_payload::shell_edit_payload;
+use crate::features::terminal::editing_state::SnapshotEvidence;
 use crate::models::{is_multi_line_paste, normalize_paste_newlines};
 
 impl NyaTermApp {
@@ -83,29 +90,7 @@ impl NyaTermApp {
             .terminal_show_multi_line_paste_dialog
             && is_multi_line_paste(&text)
         {
-            let text = normalize_paste_newlines(&text);
-            let editor = cx.new(|cx| {
-                NyaDocumentEditorState::new_with_placeholder(
-                    window,
-                    cx,
-                    text,
-                    t!("terminal.multiLinePasteTextPlaceholder").to_string(),
-                )
-            });
-            let subscription =
-                cx.subscribe(&editor, |this, _, event: &NyaDocumentEditorEvent, cx| {
-                    if matches!(event, NyaDocumentEditorEvent::Changed(_)) {
-                        this.mark_user_activity();
-                        cx.notify();
-                    }
-                });
-            self.terminal.paste.open(editor.clone(), subscription);
-            self.shell
-                .set_status("multi-line paste confirmation opened".to_string());
-            editor.update(cx, |editor, cx| {
-                editor.move_cursor_to_end(cx);
-            });
-            cx.notify();
+            self.open_multi_line_paste_review(text, window, cx);
             return;
         }
         let payload = normalize_paste_newlines(&text);
@@ -118,6 +103,61 @@ impl NyaTermApp {
         self.send_terminal_paste_input(&payload, cx);
     }
 
+    fn open_multi_line_paste_review(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = normalize_paste_newlines(&text);
+        let editor = cx.new(|cx| {
+            NyaDocumentEditorState::new_source_with_placeholder(
+                window,
+                cx,
+                text,
+                "bash",
+                t!("terminal.multiLinePasteTextPlaceholder").to_string(),
+            )
+        });
+        let subscription = cx.subscribe(&editor, |this, _, event: &NyaDocumentEditorEvent, cx| {
+            if matches!(event, NyaDocumentEditorEvent::Changed(_)) {
+                this.mark_user_activity();
+                cx.notify();
+            }
+        });
+        self.terminal.paste.open(editor.clone(), subscription);
+        self.shell
+            .set_status("multi-line paste confirmation opened".to_string());
+        editor.update(cx, |editor, cx| {
+            editor.move_cursor_to_end(cx);
+        });
+        cx.notify();
+    }
+
+    pub(in crate::features) fn open_pending_suggestion_paste(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut review) = self.terminal.paste.suggestion.take() else {
+            return;
+        };
+        let Some(text) = review.pending_text.take() else {
+            self.terminal.paste.suggestion = Some(review);
+            return;
+        };
+        if let Err(message) = self.validate_command_suggestion_input(&review.context, cx) {
+            self.terminal.paste.clear();
+            self.shell.set_status(message);
+            cx.notify();
+            return;
+        }
+        // Choosing a multiline completion always opens review, even when the
+        // clipboard preference allows ordinary multiline pastes immediately.
+        self.open_multi_line_paste_review(text, window, cx);
+        self.terminal.paste.suggestion = Some(review);
+    }
+
     pub(in crate::features) fn session_bracketed_paste(&self, session_id: &str) -> bool {
         self.terminal
             .view
@@ -127,15 +167,50 @@ impl NyaTermApp {
             .unwrap_or(false)
     }
 
+    pub(in crate::features) fn suggestion_paste_needs_bracketed_shell(&self) -> bool {
+        self.terminal
+            .paste
+            .suggestion
+            .as_ref()
+            .is_some_and(|review| {
+                self.session.active_id() != Some(review.context.session_id.as_str())
+                    || !self.session_bracketed_paste(&review.context.session_id)
+                    || !self
+                        .terminal
+                        .editing
+                        .state()
+                        .is_some_and(|state| state.allows_editing())
+            })
+    }
+
+    pub(in crate::features) fn suggestion_paste_cannot_replace_input(&self) -> bool {
+        self.terminal.paste.suggestion.is_some()
+            && self
+                .terminal
+                .editing
+                .state()
+                .is_none_or(|state| !state.model.input.value.is_empty() && !state.allows_editing())
+    }
+
     pub(in crate::features) fn wrap_terminal_paste_bytes_for_session(
         &self,
         session_id: &str,
         text: &str,
     ) -> Result<Vec<u8>, String> {
+        let bracketed = self.session_bracketed_paste(session_id);
+        // Outside bracketed paste the program sees the bytes as typed input, and
+        // a typed line break is CR (the Enter key). Sending LF makes it Ctrl+J,
+        // which programs such as nano 3.x treat as "justify" and join the lines.
+        // xterm, alacritty and iTerm2 convert the same way. The conversion is
+        // done on text, before the session encoding, so it stays encoding-safe.
+        let text = if bracketed {
+            std::borrow::Cow::Borrowed(text)
+        } else {
+            std::borrow::Cow::Owned(text.replace('\n', "\r"))
+        };
         let body = self.encode_session_outgoing(session_id, text.as_bytes())?;
         Ok(Self::wrap_terminal_paste_wire_bytes_for_bracketed(
-            &body,
-            self.session_bracketed_paste(session_id),
+            &body, bracketed,
         ))
     }
 
@@ -201,6 +276,13 @@ impl NyaTermApp {
             }
         };
         let byte_count = primary_bytes.len();
+        // A newline inside bracketed paste edits the shell buffer; only a
+        // later Enter or OSC boundary can confirm an actual submission.
+        let navigation_candidate = if primary_bytes.starts_with(b"\x1b[200~") {
+            None
+        } else {
+            self.prepare_command_navigation_input(text.as_bytes())
+        };
         match self.write_session_wire_input_recorded_as(
             &session_id,
             &primary_bytes,
@@ -235,7 +317,7 @@ impl NyaTermApp {
             }
         }
 
-        self.note_shell_editing_input(text.as_bytes(), cx);
+        self.note_shell_editing_input_with_navigation(text.as_bytes(), navigation_candidate, cx);
         // History tracks the logical pasted text, not per-session framing bytes.
         let history_bytes = text.as_bytes();
         let session_refs: Vec<&str> = ok_sessions.iter().map(String::as_str).collect();
@@ -277,6 +359,12 @@ impl NyaTermApp {
             cx.notify();
             return;
         };
+        if let Some(review) = self.terminal.paste.suggestion.take() {
+            self.terminal.paste.clear();
+            self.send_reviewed_command_suggestion(&review.context, &text, false, cx);
+            self.focus_active_workspace_surface(window, cx);
+            return;
+        }
         self.terminal.paste.clear();
         if let Some(selected) = self.smart_cursor_selected_input_range() {
             self.replace_smart_input_selection_with_paste(selected, &text, cx);
@@ -303,10 +391,149 @@ impl NyaTermApp {
             cx.notify();
             return;
         };
+        if let Some(review) = self.terminal.paste.suggestion.take() {
+            self.terminal.paste.clear();
+            self.send_reviewed_command_suggestion(&review.context, &text, true, cx);
+            self.focus_active_workspace_surface(window, cx);
+            return;
+        }
         self.terminal.paste.clear();
         // Line-by-line send intentionally skips bracketed paste framing.
         self.send_terminal_input(line_by_line_paste_bytes(&text), cx);
         self.focus_active_workspace_surface(window, cx);
+    }
+
+    fn send_reviewed_command_suggestion(
+        &mut self,
+        context: &SuggestionPasteContext,
+        text: &str,
+        by_line: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = match self.validate_command_suggestion_input(context, cx) {
+            Ok(snapshot) => snapshot,
+            Err(message) => {
+                self.shell.set_status(message);
+                cx.notify();
+                return;
+            }
+        };
+        let state = self
+            .terminal
+            .editing
+            .state()
+            .expect("validated editing state");
+        if !supports_full_command_fill(text)
+            || state.model.input.desynced
+            || state.model.input.line_rewrite_required
+            || state.model.input.multiline
+            || state.model.input.paste_mode
+            || state.model.input.cursor != state.model.input.value.len()
+            || (!state.model.input.value.is_empty() && !state.allows_editing())
+        {
+            self.shell
+                .set_status("Cannot safely paste this suggestion; select it again");
+            cx.notify();
+            return;
+        }
+        // Direct completion paste retains the fill-only contract. The separate
+        // line-by-line action is the user's explicit request to submit lines.
+        if !by_line
+            && (!state.allows_editing() || !self.session_bracketed_paste(&context.session_id))
+        {
+            self.shell.set_status(
+                "Direct suggestion paste requires a shell with bracketed paste enabled",
+            );
+            cx.notify();
+            return;
+        }
+        let insertion = if by_line {
+            String::from_utf8(line_by_line_paste_bytes(text)).expect("UTF-8 paste text")
+        } else {
+            text.to_owned()
+        };
+        let input = &state.model.input;
+        let plan = if input.value.is_empty() {
+            plan_edit(input, state.model.version, EditIntent::Move(0)).map(|mut plan| {
+                plan.insert_text = insertion.clone();
+                plan.predicted.value = insertion.clone();
+                plan.predicted.cursor = insertion.len();
+                plan.predicted.multiline = insertion.contains(['\r', '\n']);
+                plan
+            })
+        } else {
+            plan_edit(
+                input,
+                state.model.version,
+                EditIntent::Replace {
+                    range: 0..input.value.len(),
+                    text: &insertion,
+                },
+            )
+        };
+        let Some(mut plan) = plan else {
+            self.shell.set_status("Cannot plan this suggestion paste");
+            cx.notify();
+            return;
+        };
+        let insertion_wire = if by_line {
+            self.encode_session_outgoing(&context.session_id, insertion.as_bytes())
+        } else {
+            self.wrap_terminal_paste_bytes_for_session(&context.session_id, &insertion)
+        };
+        let insertion_wire = match insertion_wire {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.shell.set_status(format!("paste failed: {error}"));
+                cx.notify();
+                return;
+            }
+        };
+        let mode = self.terminal_key_mode_for_session(Some(&context.session_id));
+        let (wire, logical) = shell_edit_payload(&plan, mode, insertion_wire);
+        if by_line {
+            plan.predicted = input.clone();
+            apply_terminal_input_data_in_place(
+                &mut plan.predicted,
+                std::str::from_utf8(&logical).expect("logical UTF-8 paste input"),
+            );
+        }
+        self.terminal.view.frame_pipeline.arm_output_event_wake();
+        let result = if by_line {
+            self.write_session_wire_input_recorded_as(&context.session_id, &wire, &logical)
+        } else {
+            self.write_session_literal_wire_input_recorded_as(&context.session_id, &wire, &logical)
+        };
+        if let Err(error) = result {
+            self.terminal.editing.state_mut().invalidate();
+            self.shell.set_status(format!("paste failed: {error}"));
+            cx.notify();
+            return;
+        }
+        let state = self.terminal.editing.state_mut();
+        state.model.accept_plan(plan, Instant::now());
+        state.pending_evidence = Some(SnapshotEvidence::from_snapshot(&snapshot));
+        state.mapping = None;
+        state.selection = None;
+        state.selection_origin_version = None;
+        if by_line {
+            let submitted = text
+                .split('\n')
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(ToOwned::to_owned)
+                .collect();
+            self.record_submitted_command_history(&[&context.session_id], submitted);
+        }
+        self.clear_terminal_selection(cx);
+        self.arm_terminal_input_wake(cx);
+        self.schedule_shell_edit_confirmation_timeout(cx);
+        self.shell.set_status(if by_line {
+            "Suggestion sent line by line"
+        } else {
+            "Suggestion pasted; press Enter to execute"
+        });
+        cx.notify();
     }
 
     pub(in crate::features) fn handle_multi_line_paste_key_down(
@@ -369,7 +596,8 @@ fn line_by_line_paste_bytes(text: &str) -> Vec<u8> {
     let mut bytes = Vec::new();
     for line in text.split('\n') {
         bytes.extend_from_slice(line.as_bytes());
-        bytes.push(b'\n');
+        // Each line is submitted like a typed Enter, which is CR.
+        bytes.push(b'\r');
     }
     bytes
 }
@@ -432,7 +660,7 @@ mod tests {
     fn line_by_line_paste_keeps_each_logical_line_and_appends_enter() {
         assert_eq!(
             line_by_line_paste_bytes("first\n第二\n"),
-            "first\n第二\n\n".as_bytes()
+            "first\r第二\r\r".as_bytes()
         );
     }
 
@@ -486,6 +714,13 @@ mod tests {
                     assert!(app.terminal.overlay_visibility().paste_review);
                     let editor = app.terminal.paste_review_editor().unwrap();
                     assert_eq!(editor.read(cx).selected_range(cx), 12..12);
+                    editor.update(cx, |editor, cx| {
+                        editor.apply_edit(" # 编辑".into(), 21..21, window, cx);
+                    });
+                    assert_eq!(
+                        app.multi_line_paste_text(cx).as_deref(),
+                        Some("first\nsecond # 编辑")
+                    );
                     match action {
                         "cancel" => app.close_multi_line_paste(window, cx),
                         "direct" => app.direct_multi_line_paste(window, cx),
@@ -500,5 +735,28 @@ mod tests {
                 assert!(!app.read(cx).terminal.overlay_visibility().paste_review);
             });
         }
+    }
+
+    #[test]
+    fn empty_paste_review_keeps_the_editor_open_for_both_send_actions() {
+        let dir = TestConfigDir::new("nyaterm-empty-paste-review");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app_with_visible_local_session(&mut cx, dir.path(), "session-a");
+        let host_app = app.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| FocusHost { app: host_app });
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.paste_terminal_text("first\nsecond".into(), window, cx);
+                let editor = app.terminal.paste_review_editor().unwrap();
+                editor.update(cx, |editor, cx| editor.replace_content("", window, cx));
+                assert_eq!(app.multi_line_paste_text(cx).as_deref(), Some(""));
+                app.direct_multi_line_paste(window, cx);
+                assert!(app.terminal.overlay_visibility().paste_review);
+                app.send_multi_line_paste_by_line(window, cx);
+                assert!(app.terminal.overlay_visibility().paste_review);
+                app.close_multi_line_paste(window, cx);
+            });
+        });
     }
 }

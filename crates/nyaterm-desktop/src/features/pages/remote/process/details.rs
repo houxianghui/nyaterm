@@ -1,20 +1,16 @@
-use nyaterm_ui::radius_md;
-use std::borrow::Cow;
-
+use super::super::panels::RemoteMonitorPanel;
+use super::data::ProcessDisplayMode;
+use super::resources::process_usage_color as usage_color;
+use crate::features::transfers::format_file_size;
+use crate::theme::ThemePalette;
+use crate::widgets::small_button;
 use gpui::{
     App, ClickEvent, Context, FontWeight, IntoElement, KeyDownEvent, SharedString, Window, div,
     prelude::*, px, rgb,
 };
-use nyaterm_core::truncate_preview;
-use nyaterm_transport::RemoteProcess;
-
-use super::super::panels::RemoteMonitorPanel;
-use crate::features::transfers::format_file_size;
-use crate::theme::ThemePalette;
-use crate::widgets::small_button;
-
-use super::data::{ProcessDisplayMode, process_details_height_px};
-use super::resources::usage_color;
+use nyaterm_remote_ops::remote_process::RemoteProcess;
+use nyaterm_ui::radius_md;
+use std::borrow::Cow;
 
 #[derive(Clone)]
 pub(in crate::features::pages::remote) struct ProcessDetailLabels {
@@ -26,8 +22,10 @@ pub(in crate::features::pages::remote) struct ProcessDetailLabels {
     pub apply_nice: Cow<'static, str>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::features::pages::remote) fn process_details(
     palette: ThemePalette,
+    host_identity: crate::features::remote::remote_runtime::host_tools::HostInteractionIdentity,
     process: &RemoteProcess,
     mode: ProcessDisplayMode,
     labels: ProcessDetailLabels,
@@ -45,13 +43,7 @@ pub(in crate::features::pages::remote) fn process_details(
         mode,
         ProcessDisplayMode::Compact | ProcessDisplayMode::Narrow
     );
-    let command_height = match mode {
-        ProcessDisplayMode::Compact => 80.,
-        ProcessDisplayMode::Narrow => 36.,
-        _ => 36.,
-    };
     let state_color = match process.state.trim().to_ascii_lowercase().as_str() {
-        "running" | "r" => rgb(0x34d399),
         "stopped" | "t" => rgb(palette.warning),
         "zombie" | "z" => rgb(palette.danger),
         _ => rgb(palette.text_muted),
@@ -59,7 +51,13 @@ pub(in crate::features::pages::remote) fn process_details(
 
     let metrics = div()
         .grid()
-        .grid_cols(if narrow { 2 } else { 4 })
+        .grid_cols(if mode == ProcessDisplayMode::Compact {
+            1
+        } else if narrow {
+            2
+        } else {
+            4
+        })
         .gap_1()
         .child(process_metric(
             palette,
@@ -77,19 +75,20 @@ pub(in crate::features::pages::remote) fn process_details(
             palette,
             labels.rss.clone(),
             format_file_size(Some(process.rss_kb.saturating_mul(1024))),
-            rgb(0xc084fc).into(),
+            rgb(palette.text).into(),
         ))
         .child(process_metric(
             palette,
             labels.elapsed.clone(),
             process.elapsed.clone(),
-            rgb(0x34d399).into(),
+            rgb(palette.text_muted).into(),
         ));
 
     div()
-        .h(px(process_details_height_px(mode)))
+        .w_full()
+        .min_w_0()
         .flex_none()
-        .overflow_hidden()
+        .whitespace_normal()
         .border_t_1()
         .border_color(rgb(palette.border))
         .bg(rgb(palette.bg))
@@ -100,7 +99,6 @@ pub(in crate::features::pages::remote) fn process_details(
         .gap_2()
         .child(
             div()
-                .h(px(31.))
                 .flex_none()
                 .flex()
                 .items_start()
@@ -117,15 +115,15 @@ pub(in crate::features::pages::remote) fn process_details(
                                 .text_size(px(12.))
                                 .font_weight(FontWeight(600.))
                                 .text_color(rgb(palette.text))
-                                .overflow_hidden()
-                                .child(truncate_preview(&process.command, 54)),
+                                .whitespace_normal()
+                                .child(process.command.clone()),
                         )
                         .child(
                             div()
                                 .font_family(crate::features::shell::gpui_code_font_family())
                                 .text_size(px(10.))
                                 .text_color(rgb(palette.text_dimmed))
-                                .overflow_hidden()
+                                .whitespace_normal()
                                 .child(format!(
                                     "PID {} · PPID {} · {}",
                                     process.pid, process.ppid, process.user
@@ -145,32 +143,29 @@ pub(in crate::features::pages::remote) fn process_details(
                         .text_size(px(10.))
                         .font_weight(FontWeight(700.))
                         .text_color(state_color)
-                        .child(truncate_preview(&process.state, 12)),
+                        .child(process.state.clone()),
                 ),
         )
         .child(metrics)
         .child(
             div()
-                .h(px(command_height))
-                .max_h(px(command_height))
                 .flex_none()
                 .min_w_0()
                 .rounded(radius_md())
                 .border_1()
-                .border_color(rgb(0x1d4f67))
+                .border_color(rgb(palette.border))
                 .bg(rgb(palette.surface))
-                .pl_2()
-                .pr_1()
+                .px_2()
                 .py_1()
                 .flex()
+                .flex_col()
                 .items_start()
-                .gap_1()
+                .gap_2()
                 .child(
                     div()
                         .min_w_0()
-                        .flex_1()
-                        .max_h(px(command_height - 10.))
-                        .overflow_hidden()
+                        .w_full()
+                        .whitespace_normal()
                         .font_family(crate::features::shell::gpui_code_font_family())
                         .text_size(px(10.))
                         .line_height(px(14.))
@@ -184,42 +179,50 @@ pub(in crate::features::pages::remote) fn process_details(
                     on_copy_command,
                 )),
         )
-        .child(
-            div()
-                .h(px(28.))
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .min_w_0()
-                        .w(px(if mode == ProcessDisplayMode::Compact {
-                            140.
-                        } else {
-                            80.
-                        }))
-                        .on_key_down(cx.listener(|panel, event: &KeyDownEvent, window, cx| {
+        .when_some(nice_input, |element, nice_input| {
+            element.child(
+                div()
+                    .debug_selector(|| "process-priority-controls".into())
+                    .flex_none()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .w(px(80.))
+                            .h(px(28.))
+                            .flex_none()
+                            .on_key_down(cx.listener({
+                                let identity = host_identity.clone();
+                                move |panel, event: &KeyDownEvent, window, cx| {
+                                    panel.with_app(cx, |this, cx| {
+                                        if this.host_interaction_identity(cx) == identity
+                                            && event.keystroke.key.as_str() == "enter"
+                                        {
+                                            cx.stop_propagation();
+                                            this.apply_process_nice_draft(window, cx);
+                                        }
+                                    });
+                                }
+                            }))
+                            .child(nice_input),
+                    )
+                    .child(small_button(
+                        palette,
+                        format!("process-nice-apply-{pid}"),
+                        labels.apply_nice.clone(),
+                        cx.listener(move |panel, _, window, cx| {
                             panel.with_app(cx, |this, cx| {
-                                if event.keystroke.key.as_str() == "enter" {
-                                    cx.stop_propagation();
+                                if this.host_interaction_identity(cx) == host_identity {
                                     this.apply_process_nice_draft(window, cx);
                                 }
                             });
-                        }))
-                        .children(nice_input),
-                )
-                .child(small_button(
-                    palette,
-                    format!("process-nice-apply-{pid}"),
-                    labels.apply_nice.clone(),
-                    cx.listener(move |panel, _, window, cx| {
-                        panel.with_app(cx, |this, cx| {
-                            this.apply_process_nice_draft(window, cx);
-                        });
-                    }),
-                )),
-        )
+                        }),
+                    )),
+            )
+        })
         .into_any_element()
 }
 
@@ -231,7 +234,7 @@ fn process_metric(
 ) -> impl IntoElement {
     let label: SharedString = label.into();
     div()
-        .h(px(39.))
+        .min_h(px(39.))
         .min_w_0()
         .rounded(radius_md())
         .border_1()
@@ -244,8 +247,8 @@ fn process_metric(
         .child(
             div()
                 .text_size(px(9.))
-                .text_color(color.opacity(0.75))
-                .overflow_hidden()
+                .text_color(rgb(palette.text_muted))
+                .whitespace_normal()
                 .child(label),
         )
         .child(
@@ -254,7 +257,7 @@ fn process_metric(
                 .text_size(px(11.))
                 .font_weight(FontWeight(700.))
                 .text_color(color)
-                .overflow_hidden()
+                .whitespace_normal()
                 .child(value),
         )
 }

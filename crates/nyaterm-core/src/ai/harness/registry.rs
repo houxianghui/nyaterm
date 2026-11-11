@@ -2,7 +2,9 @@ use nyaterm_mcp_protocol::{definition_for_tool, tool_input_schema, validate_tool
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::ai::{AiModelError, AiToolCall, RiskLevel};
+use crate::ai::{
+    AiChatRequest, AiMode, AiModelError, AiProviderApiProtocol, AiToolCall, RiskLevel,
+};
 
 use super::run::{AgentPlan, AgentQuestion, AgentVerification};
 
@@ -42,6 +44,8 @@ impl AgentTool {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentToolCall {
+    #[serde(skip)]
+    pub assistant_turn: Option<crate::ai::completion::AiAssistantTurn>,
     pub id: String,
     pub tool: AgentTool,
     pub arguments: Value,
@@ -67,7 +71,40 @@ impl std::fmt::Debug for AgentToolCall {
 
 pub struct AgentToolRegistry;
 
+/// Runtime request capabilities, shared by SDK and native wire builders.
+/// Tool choice is always automatic; execution is serialized by AgentRun.
+#[derive(Debug, Clone, Copy)]
+pub struct AgentRequestPolicy {
+    pub tools: Option<&'static [AgentTool]>,
+    pub strict: Option<bool>,
+}
+
 impl AgentToolRegistry {
+    pub fn request_policy(
+        request: &AiChatRequest,
+        protocol: AiProviderApiProtocol,
+    ) -> AgentRequestPolicy {
+        AgentRequestPolicy {
+            tools: (request.mode == AiMode::Agent
+                && !request.options.agent_json_protocol
+                && !request.options.connectivity_test)
+                .then(|| Self::available_tools(request)),
+            strict: (protocol == AiProviderApiProtocol::OpenaiCompatible).then_some(false),
+        }
+    }
+
+    pub fn available_tools(request: &crate::ai::AiChatRequest) -> &'static [AgentTool] {
+        if request
+            .options
+            .agent_context
+            .as_ref()
+            .is_some_and(|context| context.remaining_steps == 0)
+        {
+            &[AgentTool::FinalAnswer]
+        } else {
+            Self::TOOLS
+        }
+    }
     pub const TOOLS: &'static [AgentTool] = &[
         AgentTool::GetEnvironment,
         AgentTool::SessionGet,
@@ -152,7 +189,7 @@ impl AgentToolRegistry {
             let candidate =
                 crate::ai::extract_json_object(text).unwrap_or_else(|| text.trim().into());
             let mut value: Value = serde_json::from_str(&candidate)
-                .map_err(|_| invalid("invalid agent JSON".into()))?;
+                .map_err(|_| AiModelError::InvalidAgentJsonFallback)?;
             let name = value
                 .get("action")
                 .and_then(Value::as_str)
@@ -227,6 +264,7 @@ impl AgentToolRegistry {
                 json!({"status":"unverified","summary":"No explicit verification was supplied."});
         }
         let call = AgentToolCall {
+            assistant_turn: None,
             id,
             tool,
             arguments,
@@ -283,7 +321,7 @@ impl AgentToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::{AgentTool, AgentToolRegistry};
-    use crate::ai::{AiToolCall, RiskLevel};
+    use crate::ai::{AiModelError, AiToolCall, RiskLevel};
     use serde_json::json;
 
     #[test]
@@ -313,6 +351,28 @@ mod tests {
         let call =
             AgentToolRegistry::parse(&[], r#"{"action":"final_answer","answer":"done"}"#).unwrap();
         assert_eq!(call.arguments["verification"]["status"], "unverified");
+    }
+
+    #[test]
+    fn missing_tools_with_unparseable_text_have_a_distinct_protocol_error() {
+        for text in [
+            "",
+            "ordinary answer",
+            "{\"action\":",
+            "```json\n{broken}\n```",
+        ] {
+            let error = AgentToolRegistry::parse(&[], text).unwrap_err();
+            assert_eq!(error, AiModelError::InvalidAgentJsonFallback);
+            assert!(!error.to_string().starts_with("invalid AI chat JSON"));
+        }
+        assert_ne!(
+            AgentToolRegistry::parse(&[], r#"{"action":"unknown"}"#).unwrap_err(),
+            AiModelError::InvalidAgentJsonFallback
+        );
+        assert_ne!(
+            AgentToolRegistry::parse(&[], r#"{"answer":"missing action"}"#).unwrap_err(),
+            AiModelError::InvalidAgentJsonFallback
+        );
     }
 
     #[test]

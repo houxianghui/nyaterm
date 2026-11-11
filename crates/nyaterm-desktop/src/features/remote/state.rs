@@ -7,15 +7,18 @@ use crate::features::runtime_jobs::{
 };
 use crate::models::{DockerTab, RemoteProcessSortKey};
 use futures::channel::mpsc::UnboundedReceiver;
-use nyaterm_transport::{
-    DockerComposeService, DockerContainerDetails, RemoteDockerOverview, RemoteGpuOverview,
-    RemoteGpuProcess, RemoteNpuOverview, RemoteNpuProcess, RemoteProcess, RemoteStatsSampler,
+use nyaterm_remote_ops::ascend_npu::{RemoteNpuOverview, RemoteNpuProcess};
+use nyaterm_remote_ops::docker::{
+    DockerComposeService, DockerContainerDetails, RemoteDockerOverview,
 };
+use nyaterm_remote_ops::gpu::{RemoteGpuOverview, RemoteGpuProcess};
+use nyaterm_remote_ops::remote_process::RemoteProcess;
+use nyaterm_remote_ops::stats::RemoteStatsSampler;
 use std::sync::Arc;
 use std::time::Instant;
 
 #[cfg(test)]
-use nyaterm_transport::RemoteStats;
+use nyaterm_remote_ops::stats::RemoteStats;
 
 mod accelerator;
 mod docker;
@@ -31,9 +34,7 @@ pub(in crate::features) use accelerator::{GpuPresentationState, NpuPresentationS
 use docker::DockerPaneState;
 pub(in crate::features) use docker::{DockerDerivedItems, DockerPresentationState};
 use process::ProcessPaneState;
-pub(in crate::features) use process::{
-    ProcessApplyOutcome, ProcessPresentationState, ProcessSortColumns,
-};
+pub(in crate::features) use process::{ProcessApplyOutcome, ProcessPresentationState};
 use stats::StatsPaneState;
 pub(in crate::features) use stats::{StatsApplyOutcome, StatsPresentationState};
 
@@ -43,6 +44,9 @@ pub(in crate::features) struct RemoteOpsFeatureState {
     stats: StatsPaneState,
     gpu: AcceleratorPaneState<RemoteGpuOverview, GpuJobResult>,
     npu: AcceleratorPaneState<RemoteNpuOverview, NpuJobResult>,
+    /// Docker sudo/authorization is per connection; the local machine is one
+    /// long-lived connection, so its state lives here instead of on an SSH lease.
+    local_docker_state: nyaterm_remote_ops::docker::DockerConnectionState,
 }
 
 /// Focus handles the Remote page needs at construction time.
@@ -56,7 +60,14 @@ impl RemoteOpsFeatureState {
             stats: StatsPaneState::new(),
             gpu: AcceleratorPaneState::new("start an SSH session to inspect NVIDIA GPU"),
             npu: AcceleratorPaneState::new("start an SSH session to inspect Ascend NPU"),
+            local_docker_state: Default::default(),
         }
+    }
+
+    pub(in crate::features) fn local_docker_state(
+        &self,
+    ) -> nyaterm_remote_ops::docker::DockerConnectionState {
+        self.local_docker_state.clone()
     }
 
     pub(in crate::features) fn reset_for_session_switch(&mut self) {
@@ -96,7 +107,7 @@ impl RemoteOpsFeatureState {
     pub(in crate::features) fn take_icon_probe_snapshot(
         &mut self,
         session_id: &str,
-    ) -> Option<nyaterm_transport::RemoteStats> {
+    ) -> Option<nyaterm_remote_ops::stats::RemoteStats> {
         self.stats.take_icon_probe_snapshot(session_id)
     }
 
@@ -135,17 +146,6 @@ impl RemoteOpsFeatureState {
     /// The filtered, sorted NPU process list. Read-only.
     pub(in crate::features) fn derived_npu_processes(&self) -> Arc<[RemoteNpuProcess]> {
         self.npu.derived()
-    }
-
-    /// Tell the process table which sort columns the panel width can show.
-    ///
-    /// Returns whether anything changed, so the caller can skip a repaint. This is the
-    /// one input to the pane's invariant that the pane cannot observe for itself.
-    pub(in crate::features) fn set_process_sort_columns(
-        &mut self,
-        columns: ProcessSortColumns,
-    ) -> bool {
-        self.process.set_sort_columns(columns)
     }
 
     /// Revision of what `stats_presentation` would return.
@@ -522,6 +522,22 @@ impl RemoteOpsFeatureState {
         manual: bool,
     ) -> RemoteJobTicket<StatsJobResult> {
         self.stats.begin_job(session_id, manual)
+    }
+
+    pub(in crate::features) fn stats_users_revision(&self) -> u64 {
+        self.stats.users_revision()
+    }
+
+    pub(in crate::features) fn invalidate_stats_users(&mut self, enabled: bool) {
+        self.stats.invalidate_users(enabled);
+    }
+
+    pub(in crate::features) fn stats_users_refresh_pending(&self) -> bool {
+        self.stats.users_refresh_pending()
+    }
+
+    pub(in crate::features) fn take_stats_users_refresh_due(&mut self) -> bool {
+        self.stats.take_users_refresh_due()
     }
 
     pub(in crate::features) fn take_stats_warmup_retry_due(&mut self) -> bool {

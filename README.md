@@ -24,6 +24,10 @@
   &nbsp;
   <a href="https://docs.qq.com/doc/DYW5TUkZnakxOWUFW" target="_blank"><img src="https://img.shields.io/badge/WeChatGroup-Join-07C160?style=for-the-badge&logo=wechat&logoColor=white" alt="WeChatGroup" /></a>
   <br/>
+  <a href="https://linux.do" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/LINUX%20DO-Forum-F0B003?style=for-the-badge&logo=discourse&logoColor=white" alt="LINUX DO" />
+  </a>
+  <br/>
   <a href="https://nyaterm.app"><img alt="Version" src="https://img.shields.io/github/v/release/nyakang/nyaterm?style=flat-square&logo=github&color=0EA5E9&labelColor=334155"></a>
   &nbsp;
   <a href="https://github.com/nyakang/nyaterm/releases"><img alt="GitHub downloads" src="https://img.shields.io/github/downloads/nyakang/nyaterm/total?style=flat-square&logo=github&color=0EA5E9&label=Downloads&labelColor=334155"></a>
@@ -268,6 +272,13 @@ Sync encrypted portable configuration snapshots and restore backups through WebD
 | **Windows** | Windows 10/11, x64 / arm64 |
 | **macOS** | macOS 12+, Intel / Apple Silicon |
 | **Linux** | Ubuntu 20.04+, Fedora 36+, Arch Linux, and similar distributions |
+
+For customized Ubuntu 20.04 x86-64 desktops with **glibc 2.31**, use the dedicated
+[focal offline compatibility build](scripts/compat/linux-focal/README.md).
+Standard Linux release packages are built on newer distributions and may require
+a newer glibc. The compatibility build includes all runtime helpers, an ABI
+report, a system/GPU-first launcher and an explicit private CPU OpenGL fallback;
+the target needs a working X11 session.
 
 Download installers from [nyaterm.app](https://nyaterm.app) or the [Releases](https://github.com/nyakang/nyaterm/releases) page.
 

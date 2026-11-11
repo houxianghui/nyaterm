@@ -119,10 +119,12 @@ impl ConnectionAuth {
             connection_username
         }
         .to_string();
-        if self.mode == "none" {
+        // Stored credentials can outlive the selected authentication method.
+        // Resolve the identity above, but expose a login password only when selected.
+        if self.mode != "password" {
             return Ok((username, None));
         }
-        if self.mode == "password" && self.uses_account_password() {
+        if self.uses_account_password() {
             if let Some(account) = account {
                 let password = account
                     .password
@@ -135,10 +137,7 @@ impl ConnectionAuth {
                 return Err(AccountAuthError::MissingAccount);
             }
         }
-        let password = self
-            .password
-            .clone()
-            .filter(|value| !value.trim().is_empty());
+        let password = self.password.clone().filter(|value| !value.is_empty());
         if password.is_some() && self.has_password {
             return Err(AccountAuthError::LockedConnectionPassword);
         }
@@ -397,3 +396,54 @@ impl_redacted_debug!(
     },
     secret { secret }
 );
+
+#[cfg(test)]
+mod connection_password_tests {
+    use super::{ConnectionAuth, ConnectionPasswordSource, DecryptedSavedPassword};
+
+    #[test]
+    fn independent_password_resolution_preserves_spaces() {
+        for password in [" secret ", "   "] {
+            let auth = ConnectionAuth {
+                mode: "password".into(),
+                password_source: Some(ConnectionPasswordSource::Connection),
+                password: Some(password.into()),
+                ..ConnectionAuth::default()
+            };
+            let (_, resolved) = auth.resolve_account_auth("user", None).unwrap();
+            assert_eq!(resolved.as_deref(), Some(password));
+        }
+    }
+
+    #[test]
+    fn inactive_passwords_do_not_enter_authentication_or_block_identity_resolution() {
+        let account = DecryptedSavedPassword {
+            id: "account".into(),
+            name: "Fixture account".into(),
+            username: "account-user".into(),
+            password: None,
+        };
+        for mode in ["key", "agent", "none"] {
+            for source in [
+                ConnectionPasswordSource::Connection,
+                ConnectionPasswordSource::Account,
+            ] {
+                for locked in [false, true] {
+                    let auth = ConnectionAuth {
+                        mode: mode.into(),
+                        account_id: Some(account.id.clone()),
+                        password_source: Some(source),
+                        password: Some("fixture-inactive-secret".into()),
+                        has_password: locked,
+                        ..ConnectionAuth::default()
+                    };
+                    let (username, password) =
+                        auth.resolve_account_auth("user", Some(&account)).unwrap();
+                    assert_eq!(username, "account-user");
+                    assert!(password.is_none());
+                    assert!(auth.password.is_some());
+                }
+            }
+        }
+    }
+}

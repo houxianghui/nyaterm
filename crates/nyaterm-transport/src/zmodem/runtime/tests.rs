@@ -24,6 +24,7 @@ fn mock_session() -> (Arc<SessionManager>, ssh_mailbox::Receiver) {
     manager.sessions.lock().unwrap().insert(
         "test".into(),
         ManagedSession::Ssh(SshChannelTransport {
+            shell_enabled: true,
             info: SessionInfo {
                 id: "test".into(),
                 name: "test".into(),
@@ -34,6 +35,8 @@ fn mock_session() -> (Arc<SessionManager>, ssh_mailbox::Receiver) {
             },
             attempt: SshSessionConfig::default().attempt,
             command_tx,
+            tmux_tx: crate::tmux::mailbox::channel().0,
+            tmux_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             backspace_as_bs: false,
             worker_thread: None,
         }),
@@ -270,4 +273,73 @@ fn cancellation_can_publish_a_terminal_result_with_all_lifecycle_slots_full() {
     let state = shared.state.lock().unwrap();
     assert_eq!(state.events.len(), super::EVENT_CAPACITY);
     assert!(state.events.back().unwrap().done);
+}
+
+#[tokio::test]
+async fn tmux_modem_capability_and_transfer_writers_reject_before_sending() {
+    use crate::SessionError;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (manager, mut receiver) = mock_session();
+    let (mut info, active) = {
+        let sessions = manager.sessions.lock().unwrap();
+        let ManagedSession::Ssh(host) = &sessions["test"] else {
+            unreachable!()
+        };
+        (host.info.clone(), host.tmux_active.clone())
+    };
+    let (pane_tx, mut pane_rx) = crate::tmux::mailbox::channel();
+    active.store(true, Ordering::Release);
+    info.id = "pane".into();
+    SessionManager::register_tmux_pane(
+        &manager.sessions,
+        &manager.event_queue,
+        "test",
+        info,
+        "%0".into(),
+        pane_tx,
+    )
+    .unwrap();
+    for session in ["test", "pane"] {
+        assert!(!manager.supports_modem_transfer(session));
+        for error in [
+            manager
+                .write_raw_cancellable(session, b"binary", &AtomicBool::new(false))
+                .unwrap_err(),
+            manager
+                .write_raw_cancellable_measured(session, b"binary", &AtomicBool::new(false))
+                .unwrap_err(),
+        ] {
+            let SessionError::Write { source, .. } = error else {
+                panic!("unexpected error")
+            };
+            assert_eq!(
+                source.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::Unsupported
+            );
+        }
+    }
+    // Pane protocol/input bytes ride send-keys like any other pane input;
+    // only the transfer writers above stay rejected.
+    manager.write_raw("pane", b"binary").unwrap();
+    assert!(matches!(
+        pane_rx.recv().await.unwrap().command,
+        SshCommand::TmuxPaneInput { pane, data } if pane == "%0" && data == b"binary"
+    ));
+    // The tmux-owned control channel still refuses raw writes on the host.
+    let SessionError::Write { source, .. } = manager.write_raw("test", b"binary").unwrap_err()
+    else {
+        panic!("unexpected error")
+    };
+    assert_eq!(
+        source.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::Unsupported
+    );
+    assert!(receiver.try_recv().is_err());
+    active.store(false, Ordering::Release);
+    assert!(manager.supports_modem_transfer("test"));
+    manager.write_raw("test", b"binary").unwrap();
+    assert!(
+        matches!(receiver.try_recv().unwrap(), SshCommand::Write(write) if write.bytes == b"binary")
+    );
 }

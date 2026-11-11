@@ -10,6 +10,10 @@ pub(crate) enum SecurityAuthTab {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SecurityUnlockAction {
     SavePasswordEditor(u64),
+    RevealConnectionPassword {
+        editor_generation: u64,
+        revision: u64,
+    },
     ViewPrivateKey(String),
     CopyPublicKey(String),
     RevealPassword(String),
@@ -29,6 +33,19 @@ impl SecurityAuthTab {
             Self::Credentials => "securityAuth.credentials",
             Self::Otp => "securityAuth.otp",
             Self::KnownHosts => "securityAuth.knownHosts",
+        }
+    }
+
+    /// Tintable icon used when the tab bar is too narrow for labels. Every
+    /// security page repeats its title below the bar, so an icon-only bar
+    /// never hides which page is open.
+    pub(crate) const fn icon_path(self) -> &'static str {
+        match self {
+            Self::Keys => "icons/key-round.svg",
+            Self::Passwords => "icons/lock-keyhole.svg",
+            Self::Credentials => "icons/id-card.svg",
+            Self::Otp => "icons/clock.svg",
+            Self::KnownHosts => "icons/shield-check.svg",
         }
     }
 

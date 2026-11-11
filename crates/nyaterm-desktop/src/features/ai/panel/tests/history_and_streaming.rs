@@ -1,11 +1,12 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use gpui::{
     AppContext as _, Entity, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
     VisualTestContext, div, px,
 };
-use nyaterm_core::AiMode;
+use nyaterm_core::{AiAgentKind, AiMode};
 
 use super::{
     CompactAiHost, ai_snapshot_sets, app, compact_draw, compact_host, edit_panel_snapshot,
@@ -16,6 +17,36 @@ use crate::test_support::TestConfigDir;
 
 struct HistoryHost {
     app: Entity<NyaTermApp>,
+}
+
+#[test]
+fn closing_a_terminal_cancels_its_external_agent_without_cancelling_other_chats() {
+    for kind in [AiAgentKind::ClaudeCode, AiAgentKind::Codex] {
+        let root = TestConfigDir::new("nyaterm-ai-close-external-agent");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx, root.path());
+        cx.update_entity(&app, |app, cx| {
+            app.ai.switch_visible_scope("terminal:closed");
+            app.ai.set_chat_run_mode(AiMode::Agent, kind);
+            let closed = app
+                .ai
+                .begin_chat_request("inspect".into(), AiMode::Agent, None);
+            app.ai.switch_visible_scope("terminal:other");
+            let other = app.ai.begin_chat_request("other".into(), AiMode::Ask, None);
+
+            app.remove_session_state("closed", cx);
+
+            assert!(closed.cancel.load(Ordering::Acquire));
+            assert!(!other.cancel.load(Ordering::Acquire));
+            assert_eq!(app.ai.active_scope_key(), "terminal:other");
+            app.ai.switch_scope("terminal:closed");
+            assert!(!app.ai.chat_or_agent_is_running());
+            assert!(!app.ai.apply_chat_delta(closed.job_id, "late", None));
+            app.ai.switch_scope("terminal:other");
+            app.ai.cancel_chat_and_agent();
+        });
+    }
 }
 
 #[test]
@@ -33,6 +64,7 @@ fn opening_the_current_history_entry_keeps_live_message_ids_and_draft() {
         app.ai.cancel_chat_and_agent();
         app.ai.set_chat_prompt_draft("unsent".into());
         app.ai.toggle_history();
+        let title = app.ai_header_presentation().conversation_title;
         let id = app.ai.chat_session_id().to_string();
         let messages = app.ai.chat_messages().to_vec();
         app.load_ai_session_messages(id.clone(), cx);
@@ -41,6 +73,7 @@ fn opening_the_current_history_entry_keeps_live_message_ids_and_draft() {
         assert_eq!(app.ai.chat_prompt_draft(), "unsent");
         assert!(!app.ai.history_is_open());
         assert!(!app.ai.history_is_pending());
+        assert_eq!(app.ai_header_presentation().conversation_title, title);
     });
 }
 
@@ -362,7 +395,7 @@ fn content_cache_parses_only_changed_messages_and_ignores_a_replaced_session() {
         assert!(panel.prepared_message("message-1999").is_none());
         assert_eq!(
             panel.prepared_message("message-1").unwrap().display,
-            "fixture output\n".repeat(6).trim()
+            "fixture output\n".repeat(6)
         );
     });
 }

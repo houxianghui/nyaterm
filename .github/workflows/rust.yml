@@ -2,22 +2,27 @@ name: Rust
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 19 * * 6'
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main, migration/gpui, gpui]
   pull_request:
     branches: [main, migration/gpui, gpui]
+    types: [opened, synchronize, reopened, labeled]
 
 # No paths filter on purpose. A workflow filtered out by `paths` never runs, so its
 # gate job never reports either, which leaves a pull request waiting forever on a
-# required status check that will never arrive. The repository is public, so the
-# cost of building on a docs-only change is queue time, not billed minutes.
+# required status check that will never arrive. Select jobs inside the workflow
+# instead, so Rust gate still reports on documentation-only changes.
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,8 +30,39 @@ env:
   RUST_BACKTRACE: '1'
 
 jobs:
+  orchestrate:
+    name: Select CI jobs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      run_rust: ${{ steps.select.outputs.run_rust }}
+      run_tmux: ${{ steps.select.outputs.run_tmux }}
+      run_plugin_sdk: ${{ steps.select.outputs.run_plugin_sdk }}
+      run_python: ${{ steps.select.outputs.run_python }}
+      run_workflows: ${{ steps.select.outputs.run_workflows }}
+    steps:
+      - name: Checkout tested revision and comparison history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test selection rules and workflow gates
+        run: python -m unittest scripts.tests.test_select_rust_jobs -v
+
+      - name: Select jobs for this event
+        id: select
+        run: python scripts/ci/select_rust_jobs.py
+
   lint:
     name: Lint
+    needs: [orchestrate]
+    if: needs.orchestrate.outputs.run_rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -41,20 +77,22 @@ jobs:
           components: rustfmt, clippy
           cache-key: lint
 
-      - name: Install Linux system dependencies
-        uses: ./.github/actions/install-linux-deps
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Check architecture boundaries
         run: python scripts/ci/check_architecture.py
 
+      - name: Install Linux system dependencies
+        uses: ./.github/actions/install-linux-deps
+
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     name: Test (${{ matrix.label }})
+    needs: [orchestrate]
+    if: needs.orchestrate.outputs.run_rust == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -117,10 +155,70 @@ jobs:
 
       - name: Test Windows executable resources
         if: runner.os == 'Windows'
-        run: python -m unittest scripts.tests.test_windows_resources -v
+        run: python scripts/ci/test_scripts.py --suite windows-resources
+
+  tmux-compatibility:
+    name: tmux (${{ matrix.tmux }}, ${{ matrix.os }})
+    needs: [orchestrate]
+    if: needs.orchestrate.outputs.run_tmux == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            tmux: 3.2a
+          - os: ubuntu-24.04
+            tmux: '3.4'
+          - os: ubuntu-24.04
+            tmux: '3.8'
+          - os: macos-15
+            tmux: system
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: tmux-${{ runner.os }}
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/install-linux-deps
+        with:
+          extra_packages: libevent-dev libncurses-dev
+      - name: Build pinned tmux release
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          TMUX_VERSION: ${{ matrix.tmux }}
+        run: |
+          archive="$RUNNER_TEMP/tmux-$TMUX_VERSION.tar.gz"
+          curl --fail --location --retry 3 \
+            "https://github.com/tmux/tmux/releases/download/$TMUX_VERSION/tmux-$TMUX_VERSION.tar.gz" \
+            --output "$archive"
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/tmux-$TMUX_VERSION"
+          ./configure --prefix="$RUNNER_TEMP/tmux-install"
+          make -j2
+          make install
+          echo "NYATERM_TEST_TMUX=$RUNNER_TEMP/tmux-install/bin/tmux" >> "$GITHUB_ENV"
+      - name: Locate macOS tmux
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          command -v tmux || brew install tmux
+          echo "NYATERM_TEST_TMUX=$(command -v tmux)" >> "$GITHUB_ENV"
+      - name: Test real Control Mode over SSH
+        shell: bash
+        run: |
+          "$NYATERM_TEST_TMUX" -V
+          cargo test -p nyaterm-transport --lib real_tmux --locked -- --ignored
 
   plugin-sdk:
     name: Plugin SDK
+    needs: [orchestrate]
+    if: needs.orchestrate.outputs.run_plugin_sdk == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -150,12 +248,16 @@ jobs:
 
   python:
     name: Release helpers
+    needs: [orchestrate]
+    if: needs.orchestrate.outputs.run_python == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          # Auto-discovery includes compatibility fixtures read from historical tags.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install Python
@@ -163,23 +265,15 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Deliberately its own job: these need no Rust toolchain and no native
-      # libraries, so they should not queue behind a workspace build.
+      - name: Install script test tools
+        run: sudo apt-get update && sudo apt-get install -y minisign dpkg-dev g++ binutils
       - name: Test packaging helpers
-        run: >-
-          python -m unittest
-          scripts.tests.test_check_release_assets
-          scripts.tests.test_package_native
-          scripts.tests.test_windows_msi
-          scripts.tests.test_verify_native_package
-          scripts.tests.test_generate_release_metadata
-          scripts.tests.test_bump_version
-          scripts.tests.test_release_provenance
-          scripts.tests.test_release_workflow
-          scripts.tests.test_check_architecture
+        run: python scripts/ci/test_scripts.py
 
   workflows:
     name: Workflow syntax
+    needs: [orchestrate]
+    if: needs.orchestrate.outputs.run_workflows == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -200,10 +294,18 @@ jobs:
   gate:
     name: Rust gate
     runs-on: ubuntu-24.04
-    needs: [lint, test, plugin-sdk, python, workflows]
+    needs: [orchestrate, lint, test, tmux-compatibility, plugin-sdk, python, workflows]
     if: always()
     timeout-minutes: 5
     steps:
+      - name: Summarize dependency results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          {
+            printf '| Job | Result |\n| --- | --- |\n'
+            jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"' <<< "$NEEDS_JSON"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Check dependency results
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1

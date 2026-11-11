@@ -1,34 +1,22 @@
 use super::errors::format_rdp_error;
 use super::input::POINTER_MOVE_INTERVAL;
+use super::lifecycle::cancel_rdp_reconnect_schedule;
 use crate::features::NyaTermApp;
 use crate::features::remote_desktop::state::resize::should_disable_dynamic_resize_after_state;
-use crate::models::TransferJobKind;
-use crate::models::TransferJobState;
-use crate::models::TransferJobStatus;
+use crate::models::{TransferJobKind, TransferJobState, TransferJobStatus};
 use futures::StreamExt as _;
-use gpui::ClipboardItem;
-use gpui::Context;
-use gpui::Window;
-use nyaterm_remote_desktop::ClipboardOrigin;
-use nyaterm_remote_desktop::RDP_FRAMEBUFFER_LIMITS;
-use nyaterm_remote_desktop::RdpCapability;
-use nyaterm_remote_desktop::RdpClipboardTransferStatus;
-use nyaterm_remote_desktop::RdpError;
-use nyaterm_remote_desktop::RdpErrorKind;
-use nyaterm_remote_desktop::RdpFrameEvent;
-use nyaterm_remote_desktop::RdpRuntimeEvent;
-use nyaterm_remote_desktop::RdpSessionState;
-use nyaterm_remote_desktop::RemoteDesktopError;
-use nyaterm_remote_desktop::RemoteDesktopViewState;
-use nyaterm_remote_desktop::VNC_FRAMEBUFFER_LIMITS;
-use nyaterm_remote_desktop::VncRuntimeEvent;
-use nyaterm_remote_desktop::VncServerCapabilities;
-use nyaterm_remote_desktop::VncSessionState;
+use gpui::{ClipboardItem, Context, Window};
+use nyaterm_files::sftp_transfer_types::SftpTransferProgress;
+use nyaterm_remote_desktop::{
+    ClipboardOrigin, RDP_FRAMEBUFFER_LIMITS, RdpCapability, RdpClipboardTransferStatus, RdpError,
+    RdpErrorKind, RdpFrameEvent, RdpRuntimeEvent, RdpSessionState, RemoteDesktopError,
+    RemoteDesktopViewState, VNC_FRAMEBUFFER_LIMITS, VncRuntimeEvent, VncServerCapabilities,
+    VncSessionState,
+};
 use nyaterm_store::StoreDomain;
-use nyaterm_store::store_request;
-use nyaterm_transport::SftpTransferProgress;
-use std::time::Duration;
-use std::time::Instant;
+#[cfg(windows)]
+use nyaterm_ui::NyaDialogWindowExt as _;
+use std::time::{Duration, Instant};
 
 /// Cadence for remote-desktop maintenance when no pointer move is waiting.
 ///
@@ -38,6 +26,26 @@ use std::time::Instant;
 pub(super) const MAINTENANCE_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(super) const METRICS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Frame deltas stay ordered, so a full queue must still be drained; entering
+/// the UI every millisecond only moved the same work earlier and uploaded every
+/// intermediate dirty update.
+const HARDWARE_FRAME_DRAIN_INTERVAL: Duration = Duration::from_millis(16);
+
+/// WARP composites the whole window on the CPU, so 60 Hz spends most of the
+/// frame budget presenting rather than delivering new desktop pixels.
+const SOFTWARE_FRAME_DRAIN_INTERVAL: Duration = Duration::from_millis(33);
+
+const MIN_DRAIN_YIELD: Duration = Duration::from_millis(1);
+
+pub(super) fn remote_desktop_drain_delay(elapsed: Duration, software_renderer: bool) -> Duration {
+    let interval = if software_renderer {
+        SOFTWARE_FRAME_DRAIN_INTERVAL
+    } else {
+        HARDWARE_FRAME_DRAIN_INTERVAL
+    };
+    interval.saturating_sub(elapsed).max(MIN_DRAIN_YIELD)
+}
 
 impl NyaTermApp {
     /// Deliver RDP and VNC session events as the helper processes produce them.
@@ -58,26 +66,32 @@ impl NyaTermApp {
         };
         cx.spawn(async move |this, cx| {
             loop {
+                let drain_started_at = Instant::now();
                 // Arm before draining, so a frame enqueued in between still
                 // signals rather than waiting for the next one.
-                let drained = this.update_in(cx, |this, window, cx| {
+                let drained = NyaTermApp::update_in_main_window(&this, cx, |this, window, cx| {
                     this.remote_desktop.arm_event_wake();
                     // Any event means a session exists; the periodic clock is scoped
                     // to that, and every reconnect is scheduled from an event handler.
                     this.ensure_remote_desktop_periodic_clock(cx);
-                    this.drain_remote_desktop_queues(window, cx)
+                    let drained = this.drain_remote_desktop_queues(window, cx);
+                    let software_renderer =
+                        crate::platform::is_software_renderer(this.shell.renderer());
+                    (drained, software_renderer)
                 });
                 match drained {
                     Err(_) => break,
                     // A frame can arrive while the previous one is being applied.
-                    Ok(true) => {
-                        // Bound consecutive UI updates even with continuously full queues.
-                        cx.background_executor()
-                            .timer(Duration::from_millis(1))
-                            .await;
+                    // Keep ordered deltas queued until the next display-frame slot.
+                    Ok((true, software_renderer)) => {
+                        let delay = remote_desktop_drain_delay(
+                            drain_started_at.elapsed(),
+                            software_renderer,
+                        );
+                        cx.background_executor().timer(delay).await;
                         continue;
                     }
-                    Ok(false) => {}
+                    Ok((false, _)) => {}
                 }
                 if wake_rx.next().await.is_none() {
                     break;
@@ -170,6 +184,10 @@ impl NyaTermApp {
                 })
             {
                 self.remote_desktop.routes.remove(&session_id);
+                // Keep the display-only tab, but release its backend ownership.
+                // A full reaper queue retains the record and maintenance retries.
+                let _ = self.remote_desktop.manager.close_detached(&session_id);
+                let _ = self.remote_desktop.vnc_manager.close_detached(&session_id);
             }
             if started.elapsed() >= Duration::from_millis(4) {
                 break;
@@ -212,27 +230,93 @@ impl NyaTermApp {
         cx.spawn(async move |this, cx| {
             loop {
                 let Ok(delay) = this.update(cx, |this, _| {
-                    remote_desktop_periodic_delay(this.remote_desktop.pointer_flush_is_pending())
+                    let cursor_repaint_pending = this
+                        .session
+                        .active_id()
+                        .and_then(|session_id| this.remote_desktop.sessions.get(session_id))
+                        .is_some_and(|session| session.cursor_repaint_pending);
+                    remote_desktop_periodic_delay(
+                        this.remote_desktop.pointer_flush_is_pending(),
+                        cursor_repaint_pending,
+                    )
                 }) else {
                     break;
                 };
                 cx.background_executor().timer(delay).await;
                 // `update_in`: keyboard-capture sync needs the window.
-                let Ok(keep_running) = this.update_in(cx, |this, window, cx| {
-                    if this.drive_remote_desktop_periodic(window, cx) {
-                        cx.notify();
-                    }
-                    let running = this.remote_desktop.has_sessions();
-                    if !running {
-                        this.remote_desktop.set_periodic_clock_armed(false);
-                    }
-                    running
-                }) else {
+                let Ok(keep_running) =
+                    NyaTermApp::update_in_main_window(&this, cx, |this, window, cx| {
+                        if this.drive_remote_desktop_periodic(window, cx) {
+                            cx.notify();
+                        }
+                        this.remote_desktop.has_sessions()
+                    })
+                else {
                     break;
                 };
+                #[cfg(windows)]
+                {
+                    let operations = this
+                        .update(cx, |this, _| {
+                            this.remote_desktop
+                                .sessions
+                                .iter_mut()
+                                .filter_map(|(id, session)| {
+                                    session
+                                        .native_rdp
+                                        .as_mut()
+                                        .and_then(|native| native.take_operation())
+                                        .map(|operation| (id.clone(), operation))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for (id, operation) in operations {
+                        // COM can dispatch nested window messages. There is no
+                        // App/entity/window borrow across this boundary.
+                        let result = operation.run();
+                        let _ = this.update(cx, |this, _| {
+                            if let Some(native) = this
+                                .remote_desktop
+                                .sessions
+                                .get_mut(&id)
+                                .and_then(|session| session.native_rdp.as_mut())
+                            {
+                                native.commit(result);
+                            }
+                        });
+                    }
+                    let retained = nyaterm_windows_rdp::maintain_retired(std::time::Instant::now());
+                    if retained != 0 {
+                        tracing::warn!(
+                            count = retained,
+                            "retained native RDP callback resources after cleanup deadline"
+                        );
+                    }
+                }
                 if !keep_running {
+                    #[cfg(windows)]
+                    if nyaterm_windows_rdp::retired_count() != 0 {
+                        continue;
+                    }
+                    let _ = this.update(cx, |this, _| {
+                        this.remote_desktop.set_periodic_clock_armed(false)
+                    });
                     break;
                 }
+            }
+            // Entity release drops controls without COM. Their creating
+            // foreground task must outlive the weak Entity to drain retirement.
+            #[cfg(windows)]
+            while nyaterm_windows_rdp::retired_count() != 0 {
+                let retained = nyaterm_windows_rdp::maintain_retired(Instant::now());
+                if retained != 0 {
+                    tracing::warn!(
+                        count = retained,
+                        "retained native RDP resources after Entity release"
+                    );
+                }
+                cx.background_executor().timer(Duration::from_secs(1)).await;
             }
         })
         .detach();
@@ -244,14 +328,32 @@ impl NyaTermApp {
         cx: &mut Context<Self>,
     ) -> bool {
         for (id, session) in &self.remote_desktop.sessions {
-            if session.uploads_stopped {
+            if session.uploads_stopped
+                || matches!(
+                    session.state,
+                    RemoteDesktopViewState::Failed | RemoteDesktopViewState::Disconnected
+                )
+            {
                 let _ = self.remote_desktop.manager.close_detached(id);
                 let _ = self.remote_desktop.vnc_manager.close_detached(id);
             }
         }
-        let mut dirty = self.drive_rdp_pointer_flush();
+        self.drive_rdp_pointer_flush();
+        self.flush_pending_remote_cursor_repaint(cx);
+        #[cfg(windows)]
+        let mut dirty = {
+            let dialog_open =
+                window.has_active_nya_dialog(cx) || nyaterm_ui::nya_popup_is_active(window, cx);
+            let overlay = self.native_rdp_overlay_state(dialog_open, cx);
+            let visible_tab_roots = self.native_rdp_visible_tab_roots();
+            self.drive_native_rdp_sessions(window, &visible_tab_roots, overlay.obscured, cx)
+        };
+        #[cfg(not(windows))]
+        let mut dirty = false;
+        dirty |= self.drive_deferred_rdp_starts();
         dirty |= self.drive_rdp_resize_debounce();
         dirty |= self.drive_rdp_reconnects(cx);
+        self.settle_remote_desktop_restore(cx);
         self.sync_rdp_keyboard_capture(window);
         dirty |= self.poll_active_rdp_clipboard(cx);
         self.report_rdp_metrics();
@@ -276,7 +378,7 @@ impl NyaTermApp {
                 if let Some(trust) = self.remote_desktop.vnc_manager.trust_state(session_id) {
                     self.submit_store_request(
                         0,
-                        store_request(StoreDomain::Security, move |store| {
+                        nyaterm_store::store_mutation(StoreDomain::Security, move |store| {
                             trust
                                 .commit_if_current(&request, |current| {
                                     store.remember_vnc_known_host_if_current(
@@ -364,6 +466,17 @@ impl NyaTermApp {
                             | nyaterm_remote_desktop::VncErrorKind::HelperCrashed
                     )
                     && self.schedule_vnc_helper_reconnect(session_id);
+                // A server that asks for credentials the session does not hold is not a
+                // dead end: ask for a password instead of parking a failed session. This
+                // is what keeps an `auto` connection working when the server actually
+                // demands VNC authentication. The helper checks the effective credentials,
+                // including inherited passwords; generic authentication errors never
+                // prompt (NyaTerm issue #1046).
+                let prompt = fatal
+                    && !retry
+                    && error.kind == nyaterm_remote_desktop::VncErrorKind::Authentication
+                    && error.password_required
+                    && self.vnc_auth_failure_accepts_password_prompt(session_id);
                 if let Some(session) = self.remote_desktop.sessions.get_mut(session_id) {
                     session.keys = Default::default();
                     session.modifiers = Default::default();
@@ -371,12 +484,26 @@ impl NyaTermApp {
                     session.vnc_key_request = None;
                     if retry {
                         session.error = Some(error.into());
-                    } else {
+                    } else if !prompt {
                         set_remote_view_error(session, error.into());
                     }
                 }
+                if prompt {
+                    self.prompt_remote_desktop_password(session_id, false, cx);
+                }
             }
         }
+    }
+
+    /// Whether the session is a VNC launch that can still be authenticated by asking.
+    fn vnc_auth_failure_accepts_password_prompt(&self, session_id: &str) -> bool {
+        self.session.metadata(session_id).is_some_and(|metadata| {
+            matches!(
+                &metadata.launch_config,
+                crate::models::SessionLaunchConfig::Vnc(config)
+                    if super::lifecycle::vnc_auth_failure_accepts_password_prompt(config)
+            )
+        })
     }
 
     pub(super) fn report_rdp_metrics(&mut self) {
@@ -562,6 +689,10 @@ impl NyaTermApp {
                     }
                     if fatal && !should_reconnect {
                         session.state = RemoteDesktopViewState::Failed;
+                        // A deadline left over from an earlier transient failure would still
+                        // fire in `drive_rdp_reconnects`, silently reconnecting a session the
+                        // server just refused to keep.
+                        cancel_rdp_reconnect_schedule(session);
                     }
                 }
                 if !should_reconnect {
@@ -617,8 +748,11 @@ pub(super) fn rdp_view_state(state: &RdpSessionState) -> RemoteDesktopViewState 
 /// A waiting pointer move gets `POINTER_MOVE_INTERVAL`, because that is the interval
 /// its own send is budgeted against and a late flush is a visibly late cursor.
 /// Everything else is happy on the coarser maintenance cadence.
-pub(super) fn remote_desktop_periodic_delay(pointer_flush_pending: bool) -> Duration {
-    if pointer_flush_pending {
+pub(super) fn remote_desktop_periodic_delay(
+    pointer_flush_pending: bool,
+    cursor_repaint_pending: bool,
+) -> Duration {
+    if pointer_flush_pending || cursor_repaint_pending {
         POINTER_MOVE_INTERVAL
     } else {
         MAINTENANCE_INTERVAL

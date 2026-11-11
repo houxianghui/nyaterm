@@ -154,7 +154,27 @@ python scripts/release/verify_native_package.py \
   --artifact-version main-snapshot --dist dist
 ```
 
-After validation, a version tag publishes GitHub Release and versioned R2 assets, then triggers the Gitee mirror. AUR and Homebrew no longer run automatically for the Windows-only release pipeline; their manual workflows remain available for maintaining historical macOS/Linux packages. The website reads `downloads.json`; signed `latest.json` exists only to migrate installed Tauri releases to GPUI. Only stable releases replace the root R2 manifests, while prereleases retain versioned manifests. A manual `Main Snapshot` run overwrites the `main-snapshot` prerelease without publishing to downstream channels.
+### External package manager builds
+
+Packagers that build from source (nixpkgs and similar) can declare that they own
+the update channel by setting `NYATERM_PACKAGE_MANAGER` at build time:
+
+```bash
+NYATERM_PACKAGE_MANAGER=nix cargo build -p nyaterm-app --release --locked
+```
+
+The value is baked into the binary at compile time: the application skips the
+startup silent update check, hides the in-app update entries in the title bar and
+tray, and reports the package manager name in the About dialog's support
+information. Leaving it unset keeps the ordinary build behaviour; development
+builds should not set it. Cargo rebuilds the affected crates when the variable
+changes, so no build script is required.
+
+The variable only applies to packages built from source. AUR and the Homebrew
+cask repack the published `.deb` / `.dmg` artifacts, so the application still
+owns their updates and they must not set it.
+
+After validation, a version tag publishes GitHub Release and versioned R2 assets, then triggers the Gitee mirror. AUR and Homebrew no longer run automatically for the Windows-only release pipeline; their manual workflows remain available for maintaining historical macOS/Linux packages. The website reads `downloads.json`; signed `latest.json` exists only to migrate installed Tauri releases to GPUI. Stable releases update the root R2 manifests; prereleases update `channels/preview/`. A manual `Main Snapshot` run overwrites the `main-snapshot` prerelease without publishing to downstream channels.
 
 The Release workflow requires `NYATERM_GITHUB_GIST_CLIENT_ID`, the Gitee/R2 repository variables, and the updater, R2, and Gitee secrets named in the workflows. Manual AUR or Homebrew maintenance still requires the corresponding channel secrets. Missing configuration fails the relevant release step instead of producing an incomplete official release.
 
@@ -163,6 +183,24 @@ The Release workflow requires `NYATERM_GITHUB_GIST_CLIENT_ID`, the Gitee/R2 repo
 Native packaging depends on target-platform tools: Windows uses NSIS and package verification also needs 7-Zip; macOS uses `codesign` and `hdiutil`; Linux uses tools such as `appimagetool`, `dpkg-shlibdeps`, `dpkg-deb`, `rpmbuild`, and `rpm`/`rpm2cpio`. Running only the Python packaging unit tests on a machine without those tools is therefore not a native package build.
 
 Automated verification checks the artifact set, archive paths, application and helper presence, binary architecture, version, and package metadata. It does not prove that the GUI launches, and does not cover real install/upgrade/uninstall flows, shortcuts or `nyaterm:` URL-handler invocation, signing/notarization and Gatekeeper/SmartScreen trust, real RDP/VNC sessions, or GPU, IME, PTY, clipboard, and window lifecycle behavior. Release candidates must be accepted manually on the corresponding target OS, with the actual platform and results recorded truthfully.
+
+## Selective CI jobs
+
+The Rust and Docs workflows start with a lightweight `orchestrate` job that tests the selection rules. PRs compare the base SHA with the tested merge commit; pushes compare before/after; Merge Queue compares base_sha/head_sha. It selects the union of jobs required by all changed paths and explains its choices in the Actions Job Summary. Ordinary Rust changes still run the existing lint and Linux, macOS, and Windows workspace tests; application translation JSON keeps those checks too.
+
+The four tmux compatibility jobs run when transport, terminal, core, the plugin API, the MCP protocol, or shared build/CI configuration changes. The Plugin SDK job follows plugin examples, scripts, and related crates; Python and workflow checks have their own path rules. Documentation-site or root Markdown changes select documentation validation; pure Rust changes skip the documentation build. Shared build configuration and unclassified paths enable the full suite.
+
+Add the `run-tmux` label to a PR to force the full tmux matrix; later commits continue to run it while the label remains. Label events also rerun the other checks selected for that PR's paths, rather than reporting only tmux results. Pushes to `main`, `migration/gpui`, or `gpui` and Merge Queue also select jobs by changes; manual runs execute the full suite. Full regular CI runs on main every Sunday at 03:00 Asia/Shanghai (UTC cron `0 19 * * 6`). The focal Docker build is manual-only and is not part of the fork's Windows-only Release pipeline.
+
+Unclassified paths, new crates, Cargo manifests/lockfiles, and shared build configuration enable all jobs. Missing comparison revisions or a failed Git diff also fall back to the full suite. A selection-script exception or failing regression test fails `Rust gate`. When adding a workspace crate or changing a related crate's dependencies, update the registration and dependency sets in `scripts/ci/select_rust_jobs.py`; manifest checks guard against missing coverage.
+
+`Rust gate` and `Docs gate` remain the unified Required Checks and support Merge Queue. Gates always aggregate dependency results: success and conditional skips pass, while failure or cancellation fails.
+
+Regular CI and packaging share Rust 1.99.1 pinned in the root `rust-toolchain.toml`. `python scripts/ci/test_scripts.py` discovers script regressions automatically. Windows resource, WiX and diagnostic native tests use `--suite windows-resources`, `--suite windows-msi` and `--suite diagnostic`; a selected suite fails if required tools are missing. Job Summary records skipped test counts.
+
+Release and Snapshot share Windows x64/ARM64 packaging. Provenance binds actual source, target/variant, compiler, lockfile, build configuration and package hashes. `release_provenance.py verify --legacy` supports old records; new publication requires complete v2 provenance for both Windows CI targets, otherwise all packages must be rebuilt. Gitee, AUR and Homebrew share structured publication receipts and support independent retries. See the [Release tooling runbook](https://github.com/nyakang/nyaterm/blob/main/scripts/release/README.md) for recovery.
+
+Snapshot builds only the two Windows native packages and retains fixed `main-snapshot` download links. Stable releases generate Windows MSI packages; prereleases and Snapshots do not. The glibc 2.31 focal compatibility workflow remains available for manual maintenance, but is not an artifact gate for Release, Snapshot, or signing rehearsals.
 
 ## Documentation development
 

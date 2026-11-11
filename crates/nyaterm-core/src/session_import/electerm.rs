@@ -98,11 +98,13 @@ fn prepare_electerm_import(file: ElectermBookmarksFile) -> AppResult<PreparedJso
     }
 
     Ok(PreparedJsonImport {
+        warnings: Vec::new(),
         custom_icons: Vec::new(),
         groups,
         passwords: Vec::new(),
         ssh_keys: Vec::new(),
         connections,
+        notices: Vec::new(),
     })
 }
 

@@ -1,5 +1,6 @@
 //! Transfer jobs, transfer options, path prompts and transfer widgets.
 
+pub(in crate::features) mod browser_paths;
 pub(in crate::features) mod clipboard_copy;
 mod cwd_sync;
 mod delete_runtime;
@@ -24,15 +25,15 @@ mod transfer_paths;
 mod transfer_widgets;
 mod tree_runtime;
 
-use std::sync::Arc;
-
-use nyaterm_store::{StoreBlockingClient, StoreDomain};
-use nyaterm_transport::{
-    FileBrowserService, RemoteFileBackendKind, RemoteFileBackendPreference,
-    RemoteFileBackendPreferenceStore, RemoteFileService, SshSessionConfig,
-};
-
 use crate::features::NyaTermApp;
+use nyaterm_files::file_browser::FileBrowserService;
+use nyaterm_files::remote_file::{
+    RemoteFileBackendKind, RemoteFileBackendPreference, RemoteFileBackendPreferenceStore,
+    RemoteFileService,
+};
+use nyaterm_store::{StoreBlockingClient, StoreDomain};
+use nyaterm_transport::SshSessionConfig;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub(in crate::features) struct SftpJobSession {
@@ -149,8 +150,12 @@ impl NyaTermApp {
         let preferences: Arc<dyn RemoteFileBackendPreferenceStore> = Arc::new(
             ConnectionStoreBackendPreferences::new(self.store_blocking_client()),
         );
+        // A tmux pane leaf shares the host's SSH connection — resolve so the
+        // multiplex handle lookup and the remote-files service cache key on
+        // the real session (and all panes reuse the one service).
+        let session_id = self.ssh_scoped_session_id(session_id);
         self.session
-            .remote_file_service_for_session(session_id, config, preferences)
+            .remote_file_service_for_session(&session_id, config, preferences)
     }
 
     pub(in crate::features) fn active_remote_file_service(
@@ -172,10 +177,10 @@ impl NyaTermApp {
         session_id: &str,
     ) -> anyhow::Result<FileBrowserService> {
         match self.session.file_browser_backend_for_session(session_id) {
-            Some(nyaterm_transport::FileBrowserBackendKind::Local) => {
+            Some(nyaterm_files::file_browser::FileBrowserBackendKind::Local) => {
                 Ok(FileBrowserService::local())
             }
-            Some(nyaterm_transport::FileBrowserBackendKind::Remote) => {
+            Some(nyaterm_files::file_browser::FileBrowserBackendKind::Remote) => {
                 let config = self
                     .session
                     .metadata(session_id)

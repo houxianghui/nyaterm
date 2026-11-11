@@ -93,24 +93,6 @@ impl SettingsPanel {
                 let element = element.child(self.window_decorations_section(cx));
                 element
             })
-            .child(settings_form_section(
-                palette,
-                None,
-                None,
-                div().flex().flex_col().gap_5().child(settings_form_row(
-                    palette,
-                    t!("settings.panelMultiOpen"),
-                    Some(SharedString::from(t!("settings.panelMultiOpenDesc"))),
-                    settings_switch(
-                        palette,
-                        "appearance-panel-multi-open",
-                        self.settings.panel_multi_open(),
-                        cx.listener(|this, _, _, cx| {
-                            this.toggle_panel_multi_open(cx);
-                        }),
-                    ),
-                )),
-            ))
             .child(self.appearance_background_image_section(cx))
             .child(self.appearance_font_stack_settings_section(false, cx))
             .child(self.appearance_font_stack_settings_section(true, cx))

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use crate::models::{
@@ -120,6 +121,29 @@ fn terminal_retained_snapshot_matches_view(
 }
 
 fn terminal_paint_window_snapshot_for_view(
+    view: Option<&TerminalViewState>,
+    display_offset: usize,
+    viewport_rows: usize,
+    retained_surface_snapshot: Option<std::sync::Arc<TerminalSnapshot>>,
+) -> Option<std::sync::Arc<TerminalSnapshot>> {
+    let mut snapshot = terminal_paint_window_snapshot_for_view_inner(
+        view,
+        display_offset,
+        viewport_rows,
+        retained_surface_snapshot,
+    )?;
+    if let Some(live) = view.and_then(|view| view.frame_snapshot.as_ref())
+        && (snapshot.command_navigation_revision != live.command_navigation_revision
+            || snapshot.command_navigation_target != live.command_navigation_target)
+    {
+        let snapshot = std::sync::Arc::make_mut(&mut snapshot);
+        snapshot.command_navigation_target = live.command_navigation_target;
+        snapshot.command_navigation_revision = live.command_navigation_revision;
+    }
+    Some(snapshot)
+}
+
+fn terminal_paint_window_snapshot_for_view_inner(
     view: Option<&TerminalViewState>,
     display_offset: usize,
     viewport_rows: usize,
@@ -247,6 +271,9 @@ fn terminal_snapshot_with_newer_edge_row(
         nyaterm_terminal::TerminalSnapshotMeta {
             history: base.history,
             shell_input_anchor: base.shell_input_anchor,
+            command_navigation_target: None,
+            command_navigation_revision: 0,
+            shell_command_prompt: None,
             cols: base.cols,
             viewport_rows: base.viewport_rows,
             cursor: base.cursor,
@@ -255,6 +282,7 @@ fn terminal_snapshot_with_newer_edge_row(
             total_rows: base.total_rows.saturating_add(1),
             display_offset: base.display_offset,
             images: base.images.clone(),
+            line_number_base: base.line_number_base,
         },
         rows,
     ))
@@ -308,6 +336,9 @@ fn terminal_snapshot_with_retained_scroll_window(
         nyaterm_terminal::TerminalSnapshotMeta {
             history: base.history,
             shell_input_anchor: base.shell_input_anchor,
+            command_navigation_target: None,
+            command_navigation_revision: 0,
+            shell_command_prompt: None,
             cols: base.cols,
             viewport_rows: base.viewport_rows,
             cursor: base.cursor,
@@ -316,6 +347,7 @@ fn terminal_snapshot_with_retained_scroll_window(
             total_rows: base.total_rows.saturating_add(newer_count),
             display_offset: base.display_offset,
             images,
+            line_number_base: base.line_number_base,
         },
         rows,
     ))
@@ -447,10 +479,16 @@ fn terminal_scroll_text_first_decorations(
     )
 }
 
-fn terminal_keyword_highlight_updates_allowed(is_active: bool, input_latency_active: bool) -> bool {
-    // Output batches wait for input idle and retain their previous spans.
-    // Live input colors arrive already computed with each worker frame.
-    is_active && !input_latency_active
+/// Rules to hand the surface for this frame.
+///
+/// While the user is typing, the rules must stay in place: dropping them erased
+/// every colour for a frame and painted it back once input went idle, which read
+/// as "everything flashes on each keystroke". Only the recompute is skipped —
+/// see the `schedule_keyword_highlights` guard.
+fn terminal_frame_keyword_rules(
+    configured: &std::sync::Arc<Vec<nyaterm_core::ResolvedKeywordHighlightRule>>,
+) -> std::sync::Arc<Vec<nyaterm_core::ResolvedKeywordHighlightRule>> {
+    configured.clone()
 }
 
 fn terminal_live_action_link_enrichment_allowed(
@@ -672,7 +710,8 @@ impl NyaTermApp {
         let surface = cx.new(|_| {
             let mut surface = TerminalSurface::new(session_id_owned);
             surface.set_layout_cache(layout_cache);
-            surface.set_app(app);
+            let line_roles = self.settings.summary().ui_highlight_line_roles;
+            surface.set_app(app, line_roles);
             surface
         });
         self.terminal
@@ -708,6 +747,13 @@ impl NyaTermApp {
         if session_id.is_empty() {
             return false;
         }
+        self.terminal
+            .view
+            .frame_pipeline
+            .set_logical_line_snapshots(
+                self.settings.summary().terminal_wrap_mode
+                    == nyaterm_core::models::settings::TerminalWrapMode::None,
+            );
         let surface = self.ensure_terminal_surface(session_id, cx);
         let Some(view) = self.terminal.view.views.get(session_id) else {
             return false;
@@ -728,6 +774,9 @@ impl NyaTermApp {
         );
         let input_latency_active =
             terminal_input_latency_active(self.shell.last_terminal_input_at(), now);
+        // Echo over SSH can arrive after the short paint-priority window.
+        // Retain the input token so its cursor movement can still be revealed.
+        let horizontal_input_at = self.shell.last_terminal_input_at();
         let Some(snapshot) = terminal_paint_window_snapshot_for_view(
             Some(view),
             display_offset,
@@ -753,6 +802,8 @@ impl NyaTermApp {
         let show_line_numbers = self.settings.summary().terminal_show_line_numbers;
         let max_line_number_digits = view.max_line_number_digits;
         let show_timestamps = self.settings.summary().terminal_show_timestamps;
+        let wrap_mode = self.settings.summary().terminal_wrap_mode;
+        let show_wrap_markers = self.settings.summary().terminal_show_wrap_markers;
         let timestamp_format = self.settings.summary().terminal_timestamp_format.clone();
         let (cell_w, cell_h) = self
             .terminal
@@ -815,19 +866,8 @@ impl NyaTermApp {
                 &frame_action_links,
             );
         let configured_keyword_rules = self.resolved_keyword_highlight_rules();
-        let input_rules_key = self
-            .terminal
-            .keyword_highlight_rules_key(&configured_keyword_rules);
-        let input_highlights = is_active
-            .then(|| view.frame_input_highlights.clone())
-            .flatten();
         let clear_keyword_highlights = configured_keyword_rules.is_empty();
-        let keyword_rules =
-            if terminal_keyword_highlight_updates_allowed(is_active, input_latency_active) {
-                configured_keyword_rules.clone()
-            } else {
-                std::sync::Arc::new(Vec::new())
-            };
+        let keyword_rules = terminal_frame_keyword_rules(&configured_keyword_rules);
         let keyword_output_pressure = self.runtime_output_pressure_active();
         if needs_scroll_enrichment {
             let _ = self.request_terminal_frame_snapshot_for_scroll_enrichment(
@@ -864,6 +904,8 @@ impl NyaTermApp {
                 show_line_numbers,
                 max_line_number_digits,
                 show_timestamps,
+                wrap_mode,
+                show_wrap_markers,
                 timestamp_format: timestamp_format.clone(),
                 is_active,
             });
@@ -900,9 +942,9 @@ impl NyaTermApp {
                     true,
                 )
             };
-            changed |= surface.set_input_keyword_highlights(input_highlights, input_rules_key);
+            changed |= surface.reveal_input_cursor(horizontal_input_at);
             let selection_changed = surface.set_selection_visual(terminal_selection);
-            if frame_applied || paint_details_changed {
+            if changed || frame_applied || paint_details_changed {
                 surface.schedule_keyword_highlights(
                     clear_keyword_highlights,
                     keyword_output_pressure,
@@ -929,7 +971,8 @@ impl NyaTermApp {
     ) -> (bool, TerminalCursorBlinkBasis, String) {
         let is_active = self.session.active_id() == Some(session_id);
         let is_disconnected = self.session.is_disconnected(session_id);
-        let remote_cursor_visible = snapshot.cursor.visible
+        let remote_cursor_visible = !self.terminal.input.ime.is_active_for(Some(session_id))
+            && snapshot.cursor.visible
             && snapshot.cursor.shape != nyaterm_terminal::CursorShape::Hidden
             && snapshot.cursor.row != usize::MAX;
         let blink_enabled = self.settings.summary().cursor_blink || snapshot.cursor.blinking;
@@ -1004,6 +1047,13 @@ impl NyaTermApp {
         let is_active = self.session.active_id() == Some(session_id);
         let paint_started_at = Instant::now();
         self.ensure_paint_theme_caches();
+        self.terminal
+            .view
+            .frame_pipeline
+            .set_logical_line_snapshots(
+                self.settings.summary().terminal_wrap_mode
+                    == nyaterm_core::models::settings::TerminalWrapMode::None,
+            );
         let surface = self.ensure_terminal_surface(session_id, cx);
         // Read only the lightweight row/column pair for the active surface; no
         // snapshot is cloned, and inactive surfaces do not need this check.
@@ -1028,6 +1078,7 @@ impl NyaTermApp {
         let protocol_state = view.map(|v| v.protocol_state).unwrap_or_default();
         let target_line = view.and_then(|v| v.target_line);
         let zebra_stripes_enabled = self.settings.summary().terminal_zebra_stripes_enabled;
+        let zebra_stripes_by_row = self.settings.summary().terminal_zebra_stripes_by_row;
         let layout_cache = view
             .map(|v| v.render_cache.layout_cache.clone())
             .unwrap_or_else(|| {
@@ -1092,6 +1143,7 @@ impl NyaTermApp {
         );
         let input_latency_active =
             terminal_input_latency_active(self.shell.last_terminal_input_at(), paint_started_at);
+        let horizontal_input_at = self.shell.last_terminal_input_at();
         let render_pressure = render_output_pressure
             || burst > 0
             || mode == TerminalPerformanceMode::Overloaded
@@ -1099,19 +1151,8 @@ impl NyaTermApp {
             || input_latency_active;
         let render_degraded = render_degraded_view || render_pressure;
         let configured_keyword_rules = self.resolved_keyword_highlight_rules();
-        let input_rules_key = self
-            .terminal
-            .keyword_highlight_rules_key(&configured_keyword_rules);
-        let input_highlights = view
-            .filter(|_| is_active)
-            .and_then(|view| view.frame_input_highlights.clone());
         let clear_keyword_highlights = configured_keyword_rules.is_empty();
-        let keyword_rules =
-            if !terminal_keyword_highlight_updates_allowed(is_active, input_latency_active) {
-                std::sync::Arc::new(Vec::new())
-            } else {
-                configured_keyword_rules.clone()
-            };
+        let keyword_rules = terminal_frame_keyword_rules(&configured_keyword_rules);
         let retained_lookup_started_at = Instant::now();
         let retained_surface_snapshot = if display_offset > 0 {
             surface
@@ -1178,6 +1219,8 @@ impl NyaTermApp {
         let show_line_numbers = self.settings.summary().terminal_show_line_numbers;
         let max_line_number_digits = view.map_or(1, |view| view.max_line_number_digits);
         let show_timestamps = self.settings.summary().terminal_show_timestamps;
+        let wrap_mode = self.settings.summary().terminal_wrap_mode;
+        let show_wrap_markers = self.settings.summary().terminal_show_wrap_markers;
         let timestamp_format = self.settings.summary().terminal_timestamp_format.clone();
         let (cell_w, cell_h) = self
             .terminal
@@ -1246,13 +1289,20 @@ impl NyaTermApp {
                     show_line_numbers,
                     max_line_number_digits,
                     show_timestamps,
+                    wrap_mode,
+                    show_wrap_markers,
                     timestamp_format: timestamp_format.clone(),
                     is_active,
                 });
                 changed |= surface.set_protocol_state(protocol_state);
-                changed |= surface.set_zebra_stripes(zebra_stripes_enabled, target_line);
+                changed |= surface.set_zebra_stripes(
+                    zebra_stripes_enabled,
+                    zebra_stripes_by_row,
+                    target_line,
+                );
                 changed |= surface.update_scroll_chrome_without_snapshot(&scroll_state);
                 if changed {
+                    surface.schedule_keyword_highlights(false, false, cx);
                     cx.notify();
                 }
             });
@@ -1475,13 +1525,29 @@ impl NyaTermApp {
                 session_id,
                 &selected_occurrence_matches,
             );
+        let logical_index = (self.settings.summary().terminal_wrap_mode
+            == nyaterm_core::models::settings::TerminalWrapMode::None)
+            .then_some(snapshot.logical_lines.as_ref())
+            .flatten();
+        let mut overview_hasher = std::collections::hash_map::DefaultHasher::new();
+        overview_marker_key.hash(&mut overview_hasher);
+        logical_index
+            .map(std::sync::Arc::as_ptr)
+            .hash(&mut overview_hasher);
+        let overview_marker_key = overview_hasher.finish();
         let overview_markers_dirty = surface.read(cx).overview_marker_key() != overview_marker_key;
         let (overview_markers, overview_total_rows) = if overview_markers_dirty {
-            let (markers, total_rows) = self
+            let (mut markers, mut total_rows) = self
                 .terminal_overview_markers_for_session_with_selected_matches(
                     session_id,
                     &selected_occurrence_matches,
                 );
+            if let Some(index) = logical_index {
+                for marker in &mut markers {
+                    marker.absolute_line = index.logical_row(marker.absolute_line);
+                }
+                total_rows = index.logical_rows();
+            }
             (Some(markers.into()), total_rows)
         } else {
             (None, 1)
@@ -1513,11 +1579,14 @@ impl NyaTermApp {
                 show_line_numbers,
                 max_line_number_digits,
                 show_timestamps,
+                wrap_mode,
+                show_wrap_markers,
                 timestamp_format,
                 is_active,
             });
             changed |= surface.set_protocol_state(protocol_state);
-            changed |= surface.set_zebra_stripes(zebra_stripes_enabled, target_line);
+            changed |=
+                surface.set_zebra_stripes(zebra_stripes_enabled, zebra_stripes_by_row, target_line);
             let had_pending_local_scroll_sync = surface.has_pending_local_scroll_sync();
             let frame_applied = surface.apply_frame_snapshot(
                 TerminalSurfaceFrameSnapshot::new(
@@ -1557,9 +1626,9 @@ impl NyaTermApp {
                     true,
                 )
             };
-            changed |= surface.set_input_keyword_highlights(input_highlights, input_rules_key);
+            changed |= surface.reveal_input_cursor(horizontal_input_at);
             let selection_changed = surface.set_selection_visual(terminal_selection);
-            if frame_applied || paint_details_changed {
+            if changed || frame_applied || paint_details_changed {
                 surface.schedule_keyword_highlights(
                     clear_keyword_highlights,
                     render_output_pressure,
@@ -1622,6 +1691,13 @@ impl NyaTermApp {
             return;
         }
         let notify_started_at = Instant::now();
+        self.terminal
+            .view
+            .frame_pipeline
+            .set_logical_line_snapshots(
+                self.settings.summary().terminal_wrap_mode
+                    == nyaterm_core::models::settings::TerminalWrapMode::None,
+            );
         let surface = self.ensure_terminal_surface(session_id, cx);
         let Some(view) = self.terminal.view.views.get(session_id) else {
             return;
@@ -1651,6 +1727,7 @@ impl NyaTermApp {
         if self.sync_terminal_live_scroll_surface(&surface, &desired_scroll_state, cx) {
             return;
         }
+        surface.update(cx, |surface, _cx| surface.advance_history(history));
         let (can_reuse_snapshot, scroll_state_current) = {
             let surface = surface.read(cx);
             (
@@ -1763,6 +1840,13 @@ impl NyaTermApp {
             return;
         }
         let notify_started_at = Instant::now();
+        self.terminal
+            .view
+            .frame_pipeline
+            .set_logical_line_snapshots(
+                self.settings.summary().terminal_wrap_mode
+                    == nyaterm_core::models::settings::TerminalWrapMode::None,
+            );
         let surface = self.ensure_terminal_surface(session_id, cx);
         let Some(view) = self.terminal.view.views.get(session_id) else {
             return;
@@ -1792,6 +1876,7 @@ impl NyaTermApp {
         if self.sync_terminal_live_scroll_surface(&surface, &desired_scroll_state, cx) {
             return;
         }
+        surface.update(cx, |surface, _cx| surface.advance_history(history));
         let (can_reuse_snapshot, scroll_state_current) = {
             let surface = surface.read(cx);
             (

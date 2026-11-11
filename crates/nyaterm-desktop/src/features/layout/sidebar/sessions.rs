@@ -762,7 +762,7 @@ mod tests {
         cx.run_until_parked();
     }
 
-    fn press_key(cx: &mut VisualTestContext, key: &str) {
+    fn press_key(cx: &mut VisualTestContext, key: &'static str) {
         let keystroke = Keystroke::parse(key).expect("valid test keystroke");
         cx.simulate_event(KeyDownEvent {
             keystroke: keystroke.clone(),

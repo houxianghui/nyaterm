@@ -119,6 +119,8 @@ impl NyaTermApp {
         let palette = self.theme_palette();
         let macos = cfg!(target_os = "macos");
         let chrome = WindowChrome::main(window);
+        let linux_server = cfg!(target_os = "linux")
+            && matches!(window.window_decorations(), gpui::Decorations::Server);
         let compact_layout = !cfg!(target_os = "macos");
         let narrow_left = compact_layout && self.shell.viewport_size().0 < 1024.;
         let narrow_right = compact_layout && self.shell.viewport_size().0 < 768.;
@@ -152,7 +154,7 @@ impl NyaTermApp {
                             on_event,
                         )
                     })
-                    .when(!macos, |this| {
+                    .when(!macos && !linux_server, |this| {
                         this.child(
                             div()
                                 .flex()
@@ -204,7 +206,9 @@ impl NyaTermApp {
                     .flex()
                     .items_center()
                     .justify_center()
+                    .min_w_0()
                     .flex_1()
+                    .overflow_hidden()
                     .map(|this| {
                         let on_event = cx.listener(Self::handle_title_drag_event);
                         title_drag_region(
@@ -334,7 +338,8 @@ impl NyaTermApp {
         ]);
 
         div()
-            .max_w(px(520.))
+            .min_w_0()
+            .max_w(px(680.))
             .flex()
             .items_center()
             .gap_0()
@@ -380,6 +385,10 @@ impl NyaTermApp {
                             .on_trigger(cx.listener(|this, _, _, cx| {
                                 this.shell.close_open_tabs_menu();
                                 this.shell.close_new_session_menu();
+                                cx.notify();
+                            }))
+                            .on_open_change(cx.listener(|this, open, _, cx| {
+                                this.shell.set_header_status_menu_open(*open);
                                 cx.notify();
                             })),
                     ),
@@ -516,11 +525,17 @@ impl NyaTermApp {
         }
 
         if !content.parts.is_empty() {
-            let mut row = div().min_w_0().flex().items_center().gap_1();
+            let mut row = div()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap_1()
+                .whitespace_nowrap();
             for (index, part) in content.parts.into_iter().enumerate() {
                 if index > 0 {
                     row = row.child(
                         div()
+                            .flex_none()
                             .px(px(2.))
                             .text_color(rgb(palette.text_dimmed))
                             .child("-"),
@@ -532,11 +547,12 @@ impl NyaTermApp {
                         .flex()
                         .items_center()
                         .gap_1()
+                        .whitespace_nowrap()
                         .child(connection_type_icon(palette, part.icon, false, 13.))
                         .child(
                             div()
                                 .min_w_0()
-                                .overflow_hidden()
+                                .truncate()
                                 .text_color(rgb(part.text_color.unwrap_or(palette.text_muted)))
                                 .child(part.text),
                         ),
@@ -553,12 +569,29 @@ impl NyaTermApp {
             .when_some(content.icon, |this, icon| {
                 this.child(connection_type_icon(palette, icon, false, 14.))
             })
-            .child(div().min_w_0().overflow_hidden().child(content.label))
+            .whitespace_nowrap()
+            .child(div().min_w_0().truncate().child(content.label))
             .into_any_element()
     }
 
     fn header_status_content(&self) -> HeaderStatusContent {
         let mode = HeaderStatusMode::from_setting(&self.settings.summary().ui_header_status_mode);
+        if matches!(
+            mode,
+            HeaderStatusMode::Resources
+                | HeaderStatusMode::Host
+                | HeaderStatusMode::Gpu
+                | HeaderStatusMode::Npu
+        ) && self
+            .session
+            .active_ssh_config()
+            .is_some_and(|config| config.ssh_compatibility_mode)
+        {
+            return HeaderStatusContent::simple(
+                header_status_mode_icon(mode),
+                t!("panel.sshCompatibilityModeUnavailable").to_string(),
+            );
+        }
         match mode {
             HeaderStatusMode::Session => HeaderStatusContent::simple(
                 self.title_context_icon()
@@ -577,10 +610,16 @@ impl NyaTermApp {
         }
     }
 
+    /// The header shows host metrics for any live terminal: an SSH session or
+    /// a local shell (this machine). Without one it shows the "no session" hint.
+    pub(in crate::features) fn header_status_has_host(&self) -> bool {
+        self.session.active_has_inspectable_host()
+    }
+
     fn gpu_header_content(&self) -> HeaderStatusContent {
         let icon = header_status_mode_icon(HeaderStatusMode::Gpu);
         let fallback = |label| HeaderStatusContent::simple(icon, label);
-        if self.session.active_ssh_config().is_none() {
+        if !self.header_status_has_host() {
             return fallback(t!("gpuMonitor.noSession").to_string());
         }
         let gpu = self.remote_ops.gpu_presentation();
@@ -615,7 +654,7 @@ impl NyaTermApp {
     fn npu_header_content(&self) -> HeaderStatusContent {
         let icon = header_status_mode_icon(HeaderStatusMode::Npu);
         let fallback = |label| HeaderStatusContent::simple(icon, label);
-        if self.session.active_ssh_config().is_none() {
+        if !self.header_status_has_host() {
             return fallback(t!("ascendNpuMonitor.noSession").to_string());
         }
         let npu = self.remote_ops.npu_presentation();
@@ -658,7 +697,7 @@ impl NyaTermApp {
                 self.remote_stats_header_fallback(),
             )
         };
-        if self.session.active_ssh_config().is_none() {
+        if !self.header_status_has_host() {
             return fallback();
         }
         let stats_state = self.remote_ops.stats_presentation();
@@ -822,7 +861,7 @@ impl NyaTermApp {
     }
 
     fn remote_stats_header_fallback(&self) -> String {
-        if self.session.active_ssh_config().is_none() {
+        if !self.header_status_has_host() {
             t!("panel.resourceMonitorNoSession").to_string()
         } else {
             let stats = self.remote_ops.stats_presentation();
@@ -961,7 +1000,18 @@ impl NyaTermApp {
             return Some(IconDef::mono("icons/conn/connect.svg", 0x60a5fa));
         }
         if self.session.start_has_active_failed() {
-            return Some(IconDef::mono("icons/session/disconnect.svg", 0xf87171));
+            let cancelled = self
+                .session
+                .active_failed_request_id()
+                .is_some_and(|id| self.session.start_request_cancelled(id));
+            return Some(IconDef::mono(
+                "icons/session/disconnect.svg",
+                if cancelled {
+                    self.theme_palette().text_muted
+                } else {
+                    0xf87171
+                },
+            ));
         }
         if let Some(session_id) = self.session.active_id()
             && let Some(session) = self.session.session_info(session_id)
@@ -979,7 +1029,19 @@ impl NyaTermApp {
             return Some(IconDef::mono("icons/conn/connect.svg", 0x60a5fa));
         }
         if self.session.start_has_failed() || self.shell.last_connect_failure_name().is_some() {
-            return Some(IconDef::mono("icons/session/disconnect.svg", 0xf87171));
+            let only_cancelled = self.shell.last_connect_failure_name().is_none()
+                && self
+                    .session
+                    .start_failed_entries()
+                    .all(|(id, _)| self.session.start_request_cancelled(id));
+            return Some(IconDef::mono(
+                "icons/session/disconnect.svg",
+                if only_cancelled {
+                    self.theme_palette().text_muted
+                } else {
+                    0xf87171
+                },
+            ));
         }
         None
     }

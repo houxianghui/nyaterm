@@ -1,3 +1,6 @@
+use crate::ssh_authentication::{
+    SshAuthenticationMaterial, SshAuthenticationRequest, SshAuthenticationResponse,
+};
 use nyaterm_core::SecretString;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -121,13 +124,15 @@ pub enum TelnetEnterMode {
     Lf,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct TelnetSessionConfig {
     pub name: String,
     pub host: String,
     pub port: u16,
     pub username: String,
     pub password: Option<SecretString>,
+    pub proxy: Option<SshProxyConfig>,
+    pub proxy_jump: Option<Box<SshSessionConfig>>,
     pub backspace_mode: String,
     pub raw_tcp: bool,
     pub enter_mode: TelnetEnterMode,
@@ -153,6 +158,8 @@ impl std::fmt::Debug for TelnetSessionConfig {
             .field("port", &self.port)
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("proxy", &self.proxy.is_some())
+            .field("proxy_jump", &self.proxy_jump.is_some())
             .field("backspace_mode", &self.backspace_mode)
             .field("raw_tcp", &self.raw_tcp)
             .field("enter_mode", &self.enter_mode)
@@ -267,6 +274,7 @@ impl Default for SftpSettings {
 
 #[derive(Clone)]
 pub struct SshSessionConfig {
+    pub runtime_mode: nyaterm_core::models::ssh_runtime::SshRuntimeMode,
     pub attempt: crate::connection_attempt::ConnectionAttempt,
     pub name: String,
     pub host: String,
@@ -290,6 +298,8 @@ pub struct SshSessionConfig {
     pub allow_none_auth: bool,
     pub backspace_mode: String,
     pub profile: SshSessionProfile,
+    /// Only resource-management services enforce this flag; SSH channels remain available.
+    pub ssh_compatibility_mode: bool,
     pub term: String,
     pub x11_forwarding: bool,
     pub x11_display: String,
@@ -316,7 +326,55 @@ pub struct SshSessionConfig {
     pub otp_provider: Option<Arc<dyn SshOtpProvider>>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Remote resource probes are unavailable because SSH compatibility mode is enabled")]
+pub struct SshResourceProbesDisabled;
+
 impl SshSessionConfig {
+    pub fn ensure_remote_resource_probes_allowed(&self) -> Result<(), SshResourceProbesDisabled> {
+        if self.ssh_compatibility_mode {
+            Err(SshResourceProbesDisabled)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn effective_runtime_mode(&self) -> nyaterm_core::models::ssh_runtime::SshRuntimeMode {
+        use nyaterm_core::models::ssh_runtime::SshRuntimeMode;
+        if self.runtime_mode == SshRuntimeMode::Standard
+            && self.attempt.shell_availability()
+                == crate::connection_attempt::ShellAvailability::Unavailable
+        {
+            SshRuntimeMode::Sftp
+        } else {
+            self.runtime_mode
+        }
+    }
+
+    pub(crate) fn ensure_shell_available(
+        &self,
+    ) -> Result<(), crate::connection_attempt::ShellUnavailable> {
+        if self.runtime_mode == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Sftp {
+            return Err(crate::connection_attempt::ShellUnavailable);
+        }
+        self.attempt.ensure_shell_available()
+    }
+
+    pub fn apply_runtime_policy(&mut self) -> Result<(), String> {
+        use nyaterm_core::models::ssh_runtime::SshRuntimeMode;
+        if self.runtime_mode == SshRuntimeMode::Sftp {
+            if !self.sftp.enabled {
+                return Err("SFTP is disabled for this SSH connection".into());
+            }
+            self.x11_forwarding = false;
+            self.agent_forwarding = false;
+            self.agent_forwarding_config = None;
+            self.post_login = None;
+            self.deferred_pty = false;
+        }
+        Ok(())
+    }
+
     pub fn bind_attempt(&mut self, attempt: crate::connection_attempt::ConnectionAttempt) {
         self.attempt = attempt.clone();
         if let Some(provider) = self
@@ -343,15 +401,24 @@ impl SshSessionConfig {
     }
 
     pub fn remote_file_browser_enabled(&self) -> bool {
-        self.sftp.enabled && !self.is_network_device()
+        self.sftp.enabled
+            && self.runtime_mode != nyaterm_core::models::ssh_runtime::SshRuntimeMode::Terminal
+            && (!self.is_network_device()
+                || self.runtime_mode == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Sftp)
     }
 
     pub fn remote_stats_enabled(&self) -> bool {
-        !self.is_network_device()
+        !self.ssh_compatibility_mode
+            && !self.is_network_device()
+            && self.effective_runtime_mode()
+                == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Standard
     }
 
     pub fn effective_cwd_follow_mode(&self) -> SftpCwdFollowMode {
-        if self.remote_file_browser_enabled() {
+        if self.remote_file_browser_enabled()
+            && self.effective_runtime_mode()
+                == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Standard
+        {
             self.sftp.cwd_follow_mode
         } else {
             SftpCwdFollowMode::Off
@@ -359,7 +426,10 @@ impl SshSessionConfig {
     }
 
     pub fn effective_terminal_shell_integration(&self) -> bool {
-        self.terminal_shell_integration && !self.is_network_device()
+        self.terminal_shell_integration
+            && !self.is_network_device()
+            && self.effective_runtime_mode()
+                == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Standard
     }
 
     pub fn shell_integration_detection_timeout_ms(
@@ -391,7 +461,7 @@ impl std::fmt::Debug for SshProxyConfig {
             .field("protocol", &self.protocol)
             .field("host", &self.host)
             .field("port", &self.port)
-            .field("command", &self.command)
+            .field("command", &self.command.as_ref().map(|_| "<redacted>"))
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .finish()
@@ -421,6 +491,7 @@ impl std::fmt::Debug for SshKeyAuthConfig {
 impl std::fmt::Debug for SshSessionConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SshSessionConfig")
+            .field("runtime_mode", &self.runtime_mode)
             .field("name", &self.name)
             .field("host", &self.host)
             .field("host_key_alias", &self.host_key_alias)
@@ -445,6 +516,7 @@ impl std::fmt::Debug for SshSessionConfig {
             .field("allow_none_auth", &self.allow_none_auth)
             .field("backspace_mode", &self.backspace_mode)
             .field("profile", &self.profile)
+            .field("ssh_compatibility_mode", &self.ssh_compatibility_mode)
             .field("term", &self.term)
             .field("x11_forwarding", &self.x11_forwarding)
             .field("x11_display", &self.x11_display)
@@ -509,10 +581,14 @@ pub enum SshCredentialPromptKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SshCredentialPromptReason {
     MissingPassword,
+    AdditionalPasswordRequired,
     PasswordRejected,
+    PublickeyRequired,
+    PublickeyRejected,
     KeyRejectedPasswordFallback,
     DockerElevation,
     KeyPassphraseRequired,
+    KeyPassphraseRejected,
     KeyboardInteractive,
 }
 
@@ -557,6 +633,26 @@ pub trait SshCredentialProvider: Send + Sync {
     }
 
     fn request_secret(&self, prompt: &SshCredentialPrompt) -> Result<Option<String>, String>;
+
+    fn request_authentication(
+        &self,
+        request: &SshAuthenticationRequest,
+    ) -> Result<Option<SshAuthenticationResponse>, String> {
+        self.request_secret(&request.prompt).map(|secret| {
+            secret.map(|secret| SshAuthenticationResponse {
+                material: if request.prompt.kind == SshCredentialPromptKind::KeyPassphrase {
+                    SshAuthenticationMaterial::KeyPassphrase(secret.into())
+                } else {
+                    SshAuthenticationMaterial::Password(secret.into())
+                },
+                response_id: None,
+            })
+        })
+    }
+
+    /// Called exactly once per authentication, including cancellation. Implementations
+    /// must enqueue any persistence work rather than block this notification.
+    fn authentication_finished(&self, _successful_responses: Option<&[String]>) {}
 
     fn request_keyboard_interactive(
         &self,
@@ -664,6 +760,7 @@ impl Default for SerialSessionConfig {
 impl Default for SshSessionConfig {
     fn default() -> Self {
         Self {
+            runtime_mode: Default::default(),
             attempt: Default::default(),
             name: "SSH".to_string(),
             host: String::new(),
@@ -683,6 +780,7 @@ impl Default for SshSessionConfig {
             allow_none_auth: false,
             backspace_mode: "del".to_string(),
             profile: SshSessionProfile::Standard,
+            ssh_compatibility_mode: false,
             term: "xterm-256color".to_string(),
             x11_forwarding: false,
             x11_display: String::new(),
@@ -715,6 +813,8 @@ impl Default for TelnetSessionConfig {
             port: 23,
             username: String::new(),
             password: None,
+            proxy: None,
+            proxy_jump: None,
             backspace_mode: "del".to_string(),
             raw_tcp: false,
             enter_mode: TelnetEnterMode::Cr,
@@ -754,6 +854,7 @@ mod tests {
     use super::{
         SftpCwdFollowMode, SftpSettings, SshSessionConfig, SshSessionProfile, TelnetSessionConfig,
     };
+    use nyaterm_core::models::ssh_runtime::SshRuntimeMode;
 
     #[test]
     fn telnet_debug_output_redacts_password() {
@@ -766,6 +867,52 @@ mod tests {
 
         assert!(!output.contains(secret));
         assert!(output.contains("<redacted>"));
+    }
+
+    #[test]
+    fn terminal_mode_never_enables_file_follow_or_monitor_services() {
+        let config = SshSessionConfig {
+            runtime_mode: SshRuntimeMode::Terminal,
+            ..Default::default()
+        };
+        assert!(!config.remote_file_browser_enabled());
+        assert!(!config.remote_stats_enabled());
+        assert!(!config.effective_terminal_shell_integration());
+        assert_eq!(config.effective_cwd_follow_mode(), SftpCwdFollowMode::Off);
+        config.attempt.record_shell_reply(false);
+        assert_eq!(config.effective_runtime_mode(), SshRuntimeMode::Terminal);
+    }
+
+    #[test]
+    fn file_only_mode_rejects_disabled_sftp_and_clears_shell_side_effects() {
+        let mut config = SshSessionConfig {
+            runtime_mode: SshRuntimeMode::Sftp,
+            x11_forwarding: true,
+            agent_forwarding: true,
+            deferred_pty: true,
+            ..Default::default()
+        };
+        config.apply_runtime_policy().unwrap();
+        assert!(!config.x11_forwarding);
+        assert!(!config.agent_forwarding);
+        assert!(config.agent_forwarding_config.is_none());
+        assert!(config.post_login.is_none());
+        assert!(!config.deferred_pty);
+        assert!(config.remote_file_browser_enabled());
+        assert!(!config.remote_stats_enabled());
+        config.sftp.enabled = false;
+        assert!(config.apply_runtime_policy().is_err());
+    }
+
+    #[test]
+    fn standard_shell_denial_changes_effective_capabilities_without_changing_saved_mode() {
+        let config = SshSessionConfig::default();
+        config.attempt.record_shell_reply(false);
+        assert_eq!(config.effective_runtime_mode(), SshRuntimeMode::Sftp);
+        assert_eq!(config.runtime_mode, SshRuntimeMode::Standard);
+        assert!(config.remote_file_browser_enabled());
+        assert!(!config.remote_stats_enabled());
+        assert_eq!(config.effective_cwd_follow_mode(), SftpCwdFollowMode::Off);
     }
 
     #[test]
@@ -806,5 +953,52 @@ mod tests {
             config.shell_integration_detection_timeout_ms(SftpCwdFollowMode::ShellIntegration),
             3_000
         );
+    }
+    #[test]
+    fn ssh_compatibility_mode_only_changes_resource_probe_capabilities() {
+        for profile in [
+            SshSessionProfile::Standard,
+            SshSessionProfile::NetworkDevice,
+        ] {
+            for runtime_mode in [
+                SshRuntimeMode::Standard,
+                SshRuntimeMode::Terminal,
+                SshRuntimeMode::Sftp,
+            ] {
+                let original = SshSessionConfig {
+                    profile,
+                    runtime_mode,
+                    ..Default::default()
+                };
+                assert!(!original.ssh_compatibility_mode);
+                assert!(original.ensure_remote_resource_probes_allowed().is_ok());
+                let compatible = SshSessionConfig {
+                    ssh_compatibility_mode: true,
+                    ..original.clone()
+                };
+                assert!(compatible.ensure_remote_resource_probes_allowed().is_err());
+                assert!(!compatible.remote_stats_enabled());
+                assert_eq!(
+                    compatible.remote_file_browser_enabled(),
+                    original.remote_file_browser_enabled()
+                );
+                assert_eq!(
+                    compatible.effective_cwd_follow_mode(),
+                    original.effective_cwd_follow_mode()
+                );
+                assert_eq!(
+                    compatible.effective_terminal_shell_integration(),
+                    original.effective_terminal_shell_integration()
+                );
+                assert_eq!(
+                    compatible.effective_runtime_mode(),
+                    original.effective_runtime_mode()
+                );
+                assert_eq!(
+                    compatible.ensure_shell_available().is_ok(),
+                    original.ensure_shell_available().is_ok()
+                );
+            }
+        }
     }
 }

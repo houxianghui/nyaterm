@@ -1,9 +1,18 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-use gpui::{AppContext as _, KeyDownEvent, MouseButton, TestAppContext};
-use nyaterm_terminal::TerminalScreen;
-
+use super::{
+    TERMINAL_INPUT_LATENCY_WINDOW, TERMINAL_USER_SCROLL_ACTIVE_WINDOW,
+    lost_mouse_report_release_button, mouse_report_allowed_by_alt,
+    terminal_cursor_position_changed, terminal_cursor_visible_for_display_offset,
+    terminal_input_latency_active, terminal_key_bytes_for_mode_and_settings,
+    terminal_live_action_link_enrichment_allowed, terminal_mouse_report_button,
+    terminal_paint_snapshot_for_view, terminal_paint_window_snapshot_for_view,
+    terminal_retained_snapshot_matches_view, terminal_scroll_retained_window_extra_rows,
+    terminal_scroll_snapshot_request_offset, terminal_scroll_text_first_decorations,
+    terminal_selection_for_session, terminal_session_write_failure_log,
+    terminal_should_defer_key_text_to_input_handler_for_state,
+    terminal_should_track_command_suggestion_input, terminal_snapshot_covers_display_offset,
+    terminal_snapshot_with_newer_edge_row, terminal_snapshot_with_retained_scroll_window,
+    terminal_status_changed, terminal_user_scroll_active, terminal_visual_display_offset,
+};
 use crate::features::terminal::terminal_surface_entity::terminal_snapshot_anchor_row_for_display_offset;
 use crate::features::test_support::app_with_visible_local_session;
 use crate::models::{
@@ -11,22 +20,10 @@ use crate::models::{
 };
 use crate::terminal::{TerminalBufferMatch, TerminalKeyMode};
 use crate::test_support::TestConfigDir;
-
-use super::{
-    TERMINAL_INPUT_LATENCY_WINDOW, TERMINAL_USER_SCROLL_ACTIVE_WINDOW,
-    lost_mouse_report_release_button, mouse_report_allowed_by_alt,
-    terminal_cursor_position_changed, terminal_cursor_visible_for_display_offset,
-    terminal_input_latency_active, terminal_key_bytes_for_mode_and_settings,
-    terminal_keyword_highlight_updates_allowed, terminal_live_action_link_enrichment_allowed,
-    terminal_mouse_report_button, terminal_paint_snapshot_for_view,
-    terminal_paint_window_snapshot_for_view, terminal_retained_snapshot_matches_view,
-    terminal_scroll_retained_window_extra_rows, terminal_scroll_snapshot_request_offset,
-    terminal_scroll_text_first_decorations, terminal_selection_for_session,
-    terminal_session_write_failure_log, terminal_should_defer_key_text_to_input_handler_for_state,
-    terminal_should_track_command_suggestion_input, terminal_snapshot_covers_display_offset,
-    terminal_snapshot_with_newer_edge_row, terminal_snapshot_with_retained_scroll_window,
-    terminal_status_changed, terminal_user_scroll_active, terminal_visual_display_offset,
-};
+use gpui::{AppContext as _, KeyDownEvent, MouseButton, TestAppContext};
+use nyaterm_terminal::TerminalScreen;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[test]
 fn terminal_mouse_report_buttons_map_to_their_gpui_capture_button() {
@@ -939,17 +936,6 @@ fn terminal_scroll_text_first_decorations_keep_partially_covered_bottom_links() 
 }
 
 #[test]
-fn terminal_keyword_highlight_updates_stay_enabled_for_active_surface() {
-    assert!(terminal_keyword_highlight_updates_allowed(true, false));
-    assert!(!terminal_keyword_highlight_updates_allowed(true, true));
-}
-
-#[test]
-fn terminal_keyword_highlight_updates_pause_for_inactive_surface() {
-    assert!(!terminal_keyword_highlight_updates_allowed(false, false));
-}
-
-#[test]
 fn live_action_link_enrichment_waits_for_input_and_output_to_calm() {
     assert!(terminal_live_action_link_enrichment_allowed(
         0, true, false, false
@@ -1386,13 +1372,11 @@ fn paste_targets_use_their_own_charset_and_bracketed_mode() {
 
 #[test]
 fn telnet_gpui_enter_submits_locally_edited_text_in_the_session_charset() {
-    use std::io::Read;
-    use std::net::TcpListener;
-
+    use crate::models::SessionLaunchConfig;
     use nyaterm_core::character_encoding::CharacterEncoding;
     use nyaterm_transport::{TelnetEnterMode, TelnetSessionConfig};
-
-    use crate::models::SessionLaunchConfig;
+    use std::io::Read;
+    use std::net::TcpListener;
 
     let root = TestConfigDir::new("nyaterm-telnet-local-input");
     let mut cx = TestAppContext::single();
@@ -1461,14 +1445,12 @@ fn telnet_gpui_enter_submits_locally_edited_text_in_the_session_charset() {
 
 #[test]
 fn reconnect_drops_old_enter_release_and_repeat_even_after_new_kitty_negotiation() {
-    use std::io::Read;
-    use std::net::TcpListener;
-
-    use gpui::KeyUpEvent;
-    use nyaterm_transport::TelnetSessionConfig;
-
     use crate::features::terminal::terminal_runtime::view_io::TerminalMouseReportRequest;
     use crate::models::{SessionLaunchConfig, TerminalProtocolState};
+    use gpui::KeyUpEvent;
+    use nyaterm_transport::TelnetSessionConfig;
+    use std::io::Read;
+    use std::net::TcpListener;
 
     let root = TestConfigDir::new("nyaterm-reconnect-key-wire");
     let mut cx = TestAppContext::single();
@@ -1709,6 +1691,45 @@ fn encoding_failures_write_nothing_and_mouse_and_protocol_bytes_bypass_charset()
 }
 
 #[test]
+fn pasted_line_breaks_are_cr_outside_bracketed_paste_and_untouched_inside_it() {
+    let root = TestConfigDir::new("nyaterm-paste-line-breaks");
+    let mut cx = TestAppContext::single();
+    let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+    let app = app_with_visible_local_session(&mut cx, root.path(), "bracketed");
+    cx.update_entity(&app, |app, _| {
+        let metadata = app
+            .session
+            .metadata_entries()
+            .find(|(id, _)| *id == "bracketed")
+            .unwrap()
+            .1
+            .clone();
+        app.session.register_session_metadata("plain", metadata);
+        app.terminal
+            .seed_session_view("plain".into(), String::new(), "UTF-8");
+        app.terminal
+            .view
+            .views
+            .get_mut("bracketed")
+            .unwrap()
+            .protocol_state
+            .bracketed_paste = true;
+        // A program without bracketed paste (nano 3.x) must receive Enter, not Ctrl+J.
+        assert_eq!(
+            app.wrap_terminal_paste_bytes_for_session("plain", "one\ntwo\n三")
+                .unwrap(),
+            "one\rtwo\r三".as_bytes()
+        );
+        // Inside bracketed paste the text is delivered verbatim.
+        assert_eq!(
+            app.wrap_terminal_paste_bytes_for_session("bracketed", "one\ntwo")
+                .unwrap(),
+            b"\x1b[200~one\ntwo\x1b[201~"
+        );
+    });
+}
+
+#[test]
 fn sync_paste_encodes_each_live_target_and_stops_when_primary_cannot_encode() {
     use crate::models::SessionLaunchConfig;
     use nyaterm_transport::TelnetSessionConfig;
@@ -1814,10 +1835,11 @@ fn sync_paste_encodes_each_live_target_and_stops_when_primary_cannot_encode() {
 #[test]
 fn recording_sensitive_prompts_are_session_local_for_sync_keyboard_paste_and_raw_input() {
     use crate::models::SessionLaunchConfig;
-    use nyaterm_transport::{
+    use nyaterm_recording::recording::{
         ExistingFileBehavior, RecordingContext, RecordingMode, RecordingProfile,
-        RecordingRotationPolicy, TelnetSessionConfig,
+        RecordingRotationPolicy,
     };
+    use nyaterm_transport::TelnetSessionConfig;
     use std::io::Read;
     use std::net::TcpListener;
 
@@ -1940,4 +1962,196 @@ fn retained_snapshot_from_before_history_rotation_is_not_painted() {
     view.append_text("11\r\n");
     assert!(!terminal_retained_snapshot_matches_view(&old, &view, 3, 3));
     assert!(terminal_paint_window_snapshot_for_view(Some(&view), 3, 3, Some(old)).is_none());
+}
+
+#[test]
+fn cached_mouse_drag_targets_cannot_bypass_target_exclusion() {
+    use super::TerminalMouseReportRequest;
+    use crate::models::SessionLaunchConfig;
+    use nyaterm_transport::TelnetSessionConfig;
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let root = TestConfigDir::new("nyaterm-sync-mouse-exclusion");
+    let mut cx = TestAppContext::single();
+    let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+    let app = app_with_visible_local_session(&mut cx, root.path(), "fixture");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let (manager, ids) = cx.update_entity(&app, |app, _| {
+        let manager = app.session.manager_handle();
+        let metadata = app.session.metadata("fixture").unwrap().clone();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let config = TelnetSessionConfig {
+                host: "127.0.0.1".into(),
+                port: listener.local_addr().unwrap().port(),
+                raw_tcp: true,
+                ..Default::default()
+            };
+            let info = manager.create_telnet_session(config.clone()).unwrap();
+            let mut metadata = metadata.clone();
+            metadata.launch_config = SessionLaunchConfig::Telnet(config);
+            app.session.register_session_metadata(&info.id, metadata);
+            app.terminal
+                .seed_session_view(info.id.clone(), String::new(), "UTF-8");
+            ids.push(info.id);
+        }
+        app.session.metadata_mut("fixture").unwrap().disconnected = true;
+        app.session.select_active_session(&ids[0]);
+        (manager, ids)
+    });
+    let mut streams = (0..2)
+        .map(|_| {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            stream
+        })
+        .collect::<Vec<_>>();
+    cx.update_entity(&app, |app, cx| {
+        app.sync_input.toggle_broadcast_to_all();
+        let mut settings = app.settings.summary().clone();
+        settings.interaction_mouse_events_require_alt = false;
+        app.settings.replace_summary(settings);
+        for id in &ids {
+            let protocol = &mut app.terminal.view.views.get_mut(id).unwrap().protocol_state;
+            protocol.mouse_reporting = true;
+            protocol.mouse_sgr = true;
+            protocol.mouse_drag_reporting = true;
+        }
+        let source = &ids[0];
+        assert!(app.maybe_send_mouse_report_for_session(
+            TerminalMouseReportRequest {
+                session_id: source,
+                button: 0,
+                col: 1,
+                row: 1,
+                press: true,
+                motion: false,
+                modifiers: Default::default()
+            },
+            cx
+        ));
+        assert_eq!(
+            app.terminal.selection.mouse_report_peer_session_ids,
+            [ids[1].clone()]
+        );
+        app.set_sessions_receive_sync_input(&[ids[1].clone()], false, cx);
+        assert!(app.maybe_send_mouse_report_for_session(
+            TerminalMouseReportRequest {
+                session_id: source,
+                button: 0,
+                col: 2,
+                row: 2,
+                press: true,
+                motion: true,
+                modifiers: Default::default()
+            },
+            cx
+        ));
+        assert!(app.maybe_send_mouse_report_for_session(
+            TerminalMouseReportRequest {
+                session_id: source,
+                button: 0,
+                col: 2,
+                row: 2,
+                press: false,
+                motion: false,
+                modifiers: Default::default()
+            },
+            cx
+        ));
+        app.write_session_protocol_response(&ids[1], b"END")
+            .unwrap();
+    });
+    let expected = b"\x1b[<0;2;2MEND";
+    let mut actual = vec![0; expected.len()];
+    streams[1].read_exact(&mut actual).unwrap();
+    assert_eq!(actual, expected);
+    for id in ids {
+        let _ = manager.close(&id);
+    }
+}
+
+#[test]
+fn option_arrows_follow_meta_setting_and_target_session_kitty_flags() {
+    let root = TestConfigDir::new("nyaterm-option-arrow-encoding");
+    let mut cx = TestAppContext::single();
+    let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+    let session_id = "option-arrows";
+    let app = app_with_visible_local_session(&mut cx, root.path(), session_id);
+    cx.update_entity(&app, |app, _| {
+        for alt_as_meta in [false, true] {
+            let mut settings = app.settings.summary().clone();
+            settings.interaction_alt_as_meta = alt_as_meta;
+            app.settings.replace_summary(settings);
+
+            for flags in 0..=31 {
+                let output = format!("\x1b[={flags}u");
+                app.terminal.view.views.insert(
+                    session_id.to_string(),
+                    TerminalViewState::from_output(output),
+                );
+                // Give the fallback screen a different protocol state to ensure
+                // session encoding uses the target view's negotiated flags.
+                let fallback_flags = if flags == 0 { 2 } else { 0 };
+                app.terminal
+                    .view
+                    .screen
+                    .advance(format!("\x1b[={fallback_flags}u").as_bytes());
+                for (key, word_motion, arrow) in [
+                    ("left", b"\x1bb", b"\x1b[1;3D"),
+                    ("right", b"\x1bf", b"\x1b[1;3C"),
+                ] {
+                    let event = key_event(key, None, gpui::Modifiers::alt());
+                    for (target, target_flags) in [
+                        (Some(session_id), flags),
+                        (None, fallback_flags),
+                        (Some("missing-session"), 0),
+                    ] {
+                        let expected = if alt_as_meta && target_flags == 0 {
+                            word_motion.as_slice()
+                        } else {
+                            arrow.as_slice()
+                        };
+                        assert_eq!(
+                            app.terminal_key_bytes_for_event_for_session(target, &event),
+                            Some(expected.to_vec()),
+                            "Option+{key}, meta={alt_as_meta}, flags={target_flags}, target={target:?}"
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn cached_history_rows_use_the_latest_navigation_target_after_reset() {
+    use nyaterm_terminal::command_navigation::CommandNavigationAction;
+    let mut view = TerminalViewState::new();
+    view.screen.resize(20, 3);
+    for _ in 0..5 {
+        view.screen.advance(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07echo\r\n\x1b]133;C\x07out\r\n\x1b]133;D;0\x07",
+        );
+    }
+    view.screen
+        .navigate_command(CommandNavigationAction::Previous)
+        .unwrap();
+    let result = view
+        .screen
+        .navigate_command(CommandNavigationAction::Previous)
+        .unwrap();
+    let old = Arc::new(view.screen.viewport_snapshot(result.display_offset));
+    view.scrollback_snapshots
+        .insert(result.display_offset, old.clone());
+    view.screen.reset_command_navigation();
+    view.frame_snapshot = Some(Arc::new(view.screen.snapshot()));
+    let painted =
+        terminal_paint_window_snapshot_for_view(Some(&view), result.display_offset, 3, None)
+            .unwrap();
+    assert_eq!(painted.command_navigation_target, None);
+    assert!(Arc::ptr_eq(&painted.row_data, &old.row_data));
 }

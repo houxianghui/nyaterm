@@ -93,6 +93,8 @@ def write_source(staging: Path, output: Path, version: str, architecture: str) -
                 Name=relative.name, KeyPath="yes")
         element(feature, "ComponentRef", Id=component_id)
         if relative.as_posix() == "NyaTerm.exe":
+            element(component, "RemoveFile", Id="RemoveLegacyActiveXHelper",
+                    Name="nyaterm-activex-helper.exe", On="install")
             for shortcut_id, directory in (("StartMenuShortcut", "ApplicationProgramsFolder"),
                                             ("DesktopShortcut", "DesktopFolder")):
                 element(component, "Shortcut", Id=shortcut_id, Directory=directory,
@@ -100,13 +102,17 @@ def write_source(staging: Path, output: Path, version: str, architecture: str) -
                         Icon="NyaTermIcon")
             element(component, "RemoveFolder", Id="RemoveStartMenuFolder",
                     Directory="ApplicationProgramsFolder", On="uninstall")
-            for suffix, name, value in (
-                ("", "", "URL:NyaTerm Protocol"), ("", "URL Protocol", ""),
-                (r"\DefaultIcon", "", "[INSTALLDIR]NyaTerm.exe,0"),
-                (r"\shell\open\command", "", '"[INSTALLDIR]NyaTerm.exe" "%1"'),
-            ):
-                element(component, "RegistryValue", Root="HKLM", Key=r"Software\Classes\nyaterm" + suffix,
-                        Type="string", Value=value, **({"Name": name} if name else {}))
+            # Native helper commands perform ownership-aware registration/cleanup;
+            # Registry rows would blindly remove another app's replacement values.
+            element(package, "CustomAction", Id="RegisterUrlProtocols", FileRef=file_id,
+                    ExeCommand="--register-url-protocols", Execute="deferred", Impersonate="no", Return="check")
+            element(package, "CustomAction", Id="UnregisterUrlProtocols", FileRef=file_id,
+                    ExeCommand="--unregister-url-protocols", Execute="deferred", Impersonate="no", Return="check")
+            sequence = element(package, "InstallExecuteSequence")
+            element(sequence, "Custom", Action="RegisterUrlProtocols", After="InstallFiles",
+                    Condition='NOT REMOVE~="ALL"')
+            element(sequence, "Custom", Action="UnregisterUrlProtocols", Before="RemoveFiles",
+                    Condition='REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE')
     ET.indent(root)
     ET.ElementTree(root).write(output, encoding="utf-8", xml_declaration=True)
 

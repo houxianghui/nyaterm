@@ -18,7 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import prepare_conpty
+import linux_icons
 import windows_msi
+import windows_portable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -31,17 +33,22 @@ APP_NAME = "NyaTerm"
 APP_BIN = "nyaterm"
 # Helper processes the application spawns at runtime. `resolve_helper_path()`
 # in nyaterm-remote-desktop only looks beside the running executable, so each
-# of these must be packaged next to the application binary in every format.
-HELPER_BINS = ("nyaterm-rdp-helper", "nyaterm-vnc-helper", "nyaterm-mcp")
+# supported helper must be packaged next to the application binary.
+HELPER_BINS = tuple(Path(name).stem for name in windows_portable.LAYOUT["helper_files"])
 CONPTY_LICENSE = Path(__file__).with_name("conpty-license.txt")
 
 
+def helper_bins(target: str) -> tuple[str, ...]:
+    return HELPER_BINS
+
+
 def conpty_files(target: str) -> tuple[Path, ...]:
-    if target == "x86_64-pc-windows-msvc":
-        return (Path("x64/conpty.dll"), Path("x64/x64/OpenConsole.exe"), Path("x64/arm64/OpenConsole.exe"))
-    if target == "aarch64-pc-windows-msvc":
-        return (Path("arm64/conpty.dll"), Path("arm64/arm64/OpenConsole.exe"))
-    raise ValueError(f"ConPTY is only packaged for Windows targets: {target}")
+    if target not in windows_portable.LAYOUT["conpty_files"]:
+        raise ValueError(f"ConPTY is only packaged for Windows targets: {target}")
+    return tuple(
+        Path(name).relative_to("conpty")
+        for name in windows_portable.LAYOUT["conpty_files"][target]
+    )
 
 
 def copy_conpty(destination: Path, target: str) -> list[Path]:
@@ -61,7 +68,7 @@ def copy_conpty(destination: Path, target: str) -> list[Path]:
     return copied
 
 
-PORTABLE_MARKER = "nyaterm-portable"
+PORTABLE_MARKER = windows_portable.LAYOUT["marker"]
 
 
 @dataclass(frozen=True)
@@ -70,6 +77,10 @@ class PackageIdentity:
     macos_identifier: str
     windows_registry_name: str
     desktop_id: str
+
+    @property
+    def url_schemes(self) -> tuple[str, ...]:
+        return (self.desktop_id, "ssh", "telnet") if self.desktop_id == "nyaterm" else (self.desktop_id,)
 
     @property
     def macos_bundle_name(self) -> str:
@@ -254,24 +265,26 @@ def release_binary_path(target: str, name: str = APP_BIN) -> Path:
 
 
 def helper_binary_paths(target: str) -> list[Path]:
-    return [release_binary_path(target, name) for name in HELPER_BINS]
+    return [release_binary_path(target, name) for name in helper_bins(target)]
 
 
 def build_binary(package: str, name: str, target: str) -> Path:
-    run(
-        [
-            "cargo",
-            "build",
-            "-p",
-            package,
-            "--bin",
-            name,
-            "--release",
-            "--target",
-            target,
-            "--locked",
-        ]
-    )
+    command = [
+        "cargo", "build", "-p", package, "--bin", name,
+        "--release", "--target", target, "--locked",
+    ]
+    environment = None
+    if target.endswith("-windows-msvc"):
+        # Keep Rust and every C/C++ dependency on the same static CRT. The ATL
+        # shim must not make portable packages require a VC++ redistributable.
+        environment = os.environ.copy()
+        flags = environment.get("CARGO_ENCODED_RUSTFLAGS")
+        if flags is None:
+            flags = "\x1f".join(environment.get("RUSTFLAGS", "").split())
+        environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(
+            filter(None, [flags, "-C", "target-feature=+crt-static"])
+        )
+    run(command, env=environment)
     binary = release_binary_path(target, name)
     if not binary.is_file():
         raise FileNotFoundError(f"release executable not found: {binary}")
@@ -280,7 +293,7 @@ def build_binary(package: str, name: str, target: str) -> Path:
 
 def build_application(target: str) -> Path:
     binary = build_binary("nyaterm-app", APP_BIN, target)
-    for name in HELPER_BINS:
+    for name in helper_bins(target):
         build_binary(name, name, target)
     return binary
 
@@ -303,7 +316,9 @@ def copy_helpers(destination: Path, target: str) -> list[Path]:
 
 def copy_release_documents(destination: Path, version: str) -> None:
     destination.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(LICENSE_PATH, destination / "LICENSE")
+    completion_licenses = ROOT_DIR / "crates/nyaterm-core/assets/completion"
+    documents = [LICENSE_PATH, completion_licenses / "NOTICE.txt", completion_licenses / "LICENSE.carapace", completion_licenses / "LICENSE.nucleo"]
+    (destination / "LICENSE").write_text("\n\n".join(path.read_text(encoding="utf-8") for path in documents), encoding="utf-8")
     (destination / "VERSION").write_text(f"{version}\n", encoding="utf-8")
 
 
@@ -358,15 +373,23 @@ def create_windows_packages(
     identity = release_identity(version)
     if includes_windows_msi(artifact_version):
         windows_msi_version(version)
-    portable_root = WORK_DIR / "NyaTerm-portable"
+    portable_root = WORK_DIR / windows_portable.LAYOUT["root"]
     portable_root.mkdir()
     shutil.copy2(binary, portable_root / "NyaTerm.exe")
     copy_helpers(portable_root, info.target)
     copy_conpty(portable_root, info.target)
     (portable_root / PORTABLE_MARKER).touch()
-    (portable_root / "data").mkdir()
-    (portable_root / "data" / ".keep").touch()
+    placeholder = portable_root / windows_portable.LAYOUT["data_placeholder"]
+    placeholder.parent.mkdir()
+    placeholder.touch()
     copy_release_documents(portable_root, version)
+    expected = set(windows_portable.payload_files(info.target)) | {
+        windows_portable.LAYOUT["data_placeholder"]
+    }
+    actual = {path.relative_to(portable_root).as_posix()
+              for path in portable_root.rglob("*") if path.is_file()}
+    if actual != expected:
+        raise RuntimeError(f"portable payload differs from contract: {actual ^ expected}")
     portable_output = (
         DIST_DIR / f"{APP_NAME}_{artifact_version}_{info.label}_portable.zip"
     )
@@ -408,6 +431,23 @@ def create_windows_packages(
 
     output = DIST_DIR / f"{APP_NAME}_{artifact_version}_{info.label}-setup.exe"
     script = WORK_DIR / "nyaterm-installer.nsi"
+    protocol_command = r'$\"$INSTDIR\NyaTerm.exe$\" $\"%1$\"'
+    protocol_install = "\n".join(
+        f'WriteRegStr HKCU "Software\\Classes\\{scheme}{suffix}" "{name}" "{value}"'
+        for scheme in identity.url_schemes
+        for suffix, name, value in (
+            ("", "", f"URL:{identity.display_name} Protocol"), ("", "URL Protocol", ""),
+            (r"\DefaultIcon", "", r"$INSTDIR\NyaTerm.exe,0"),
+            (r"\shell\open\command", "", protocol_command),
+        )
+    )
+    protocol_uninstall = "\n".join(
+        f'ReadRegStr $0 HKCU "Software\\Classes\\{scheme}\\shell\\open\\command" ""\n'
+        f'StrCmp $0 "{protocol_command}" 0 protocol_skip_{scheme}\n'
+        f'DeleteRegKey HKCU "Software\\Classes\\{scheme}"\nprotocol_skip_{scheme}:'
+        for scheme in identity.url_schemes
+    )
+
     script.write_text(
         textwrap.dedent(
             rf"""
@@ -443,6 +483,7 @@ def create_windows_packages(
 
             Section "{identity.display_name}" SecMain
               SetOutPath "$INSTDIR"
+              Delete "$INSTDIR\nyaterm-activex-helper.exe"
               File "{nsis_path(installer_root / 'NyaTerm.exe')}"
               {helper_install}
               File "{nsis_path(installer_root / 'LICENSE')}"
@@ -451,10 +492,7 @@ def create_windows_packages(
               {conpty_install}
               WriteUninstaller "$INSTDIR\Uninstall.exe"
               WriteRegStr HKCU "{identity.windows_registry_key}" "InstallDir" "$INSTDIR"
-              WriteRegStr HKCU "Software\Classes\{identity.desktop_id}" "" "URL:{identity.display_name} Protocol"
-              WriteRegStr HKCU "Software\Classes\{identity.desktop_id}" "URL Protocol" ""
-              WriteRegStr HKCU "Software\Classes\{identity.desktop_id}\DefaultIcon" "" "$INSTDIR\NyaTerm.exe,0"
-              WriteRegStr HKCU "Software\Classes\{identity.desktop_id}\shell\open\command" "" "$\"$INSTDIR\NyaTerm.exe$\" $\"%1$\""
+              {protocol_install}
               WriteRegStr HKCU "{identity.windows_uninstall_key}" "DisplayName" "{identity.display_name}"
               WriteRegStr HKCU "{identity.windows_uninstall_key}" "DisplayVersion" "{version}"
               WriteRegStr HKCU "{identity.windows_uninstall_key}" "DisplayIcon" "$INSTDIR\NyaTerm.exe"
@@ -477,7 +515,7 @@ def create_windows_packages(
               Delete "$INSTDIR\icon.ico"
               Delete "$INSTDIR\Uninstall.exe"
               RMDir "$INSTDIR"
-              DeleteRegKey HKCU "Software\Classes\{identity.desktop_id}"
+              {protocol_uninstall}
               DeleteRegKey HKCU "{identity.windows_uninstall_key}"
               DeleteRegKey HKCU "{identity.windows_registry_key}"
             SectionEnd
@@ -532,7 +570,7 @@ def create_macos_packages(
             {
                 "CFBundleTypeRole": "Viewer",
                 "CFBundleURLName": identity.macos_identifier,
-                "CFBundleURLSchemes": [identity.desktop_id],
+                "CFBundleURLSchemes": list(identity.url_schemes),
             }
         ],
         "CFBundleVersion": version,
@@ -619,28 +657,20 @@ def write_desktop_file(
             Comment=Native GPUI terminal and SSH client
             Exec={executable} %U
             Icon={identity.desktop_id}
-            StartupWMClass={identity.desktop_id}
+            StartupWMClass={identity.display_name}
             Terminal=false
             Categories=Development;TerminalEmulator;Network;
-            MimeType=x-scheme-handler/{identity.desktop_id};
+            MimeType={"".join(f"x-scheme-handler/{scheme};" for scheme in identity.url_schemes)}
             StartupNotify=true
             """
         ).lstrip(),
         encoding="utf-8",
     )
+    path.chmod(0o644)
 
 
 def copy_linux_icons(root: Path, identity: PackageIdentity = STABLE_IDENTITY) -> None:
-    icons = {
-        "32x32": "32x32.png",
-        "64x64": "64x64.png",
-        "128x128": "128x128.png",
-        "256x256": "256x256.png",
-    }
-    for size, source in icons.items():
-        destination = root / "usr" / "share" / "icons" / "hicolor" / size / "apps"
-        destination.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ICON_DIR / source, destination / f"{identity.desktop_id}.png")
+    linux_icons.copy_icons(root, ICON_DIR, identity.desktop_id)
 
 
 def parse_dpkg_dependencies(output: str) -> str:
@@ -685,6 +715,7 @@ def create_linux_appimage(
     write_desktop_file(applications / identity.linux_desktop_file, APP_BIN, identity)
     shutil.copy2(applications / identity.linux_desktop_file, appdir / identity.linux_desktop_file)
     shutil.copy2(ICON_DIR / "128x128.png", appdir / f"{identity.desktop_id}.png")
+    (appdir / f"{identity.desktop_id}.png").chmod(0o644)
     copy_linux_icons(appdir, identity)
 
     apprun = appdir / "AppRun"
@@ -694,6 +725,7 @@ def create_linux_appimage(
         encoding="utf-8",
     )
     make_executable(apprun)
+    linux_icons.normalize_permissions(appdir)
 
     output = DIST_DIR / f"{APP_NAME}_{artifact_version}_{info.label}.AppImage"
     env = os.environ.copy()
@@ -723,6 +755,7 @@ def create_linux_deb(
 
     control_dir = root / "DEBIAN"
     control_dir.mkdir()
+    linux_icons.write_postinst(control_dir / "postinst", identity.desktop_id)
     dependencies = linux_deb_dependencies([app_binary, *helper_binaries])
     (control_dir / "control").write_text(
         textwrap.dedent(
@@ -742,6 +775,7 @@ def create_linux_deb(
         encoding="utf-8",
     )
     output = DIST_DIR / f"{APP_NAME}_{artifact_version}_{info.label}.deb"
+    linux_icons.normalize_permissions(root)
     run([require_tool("dpkg-deb"), "--build", "--root-owner-group", str(root), str(output)])
 
 
@@ -767,6 +801,7 @@ def create_linux_rpm(
     applications.mkdir(parents=True)
     write_desktop_file(applications / identity.linux_desktop_file, f"/opt/{identity.desktop_id}/nyaterm", identity)
     copy_linux_icons(payload, identity)
+    linux_icons.normalize_permissions(payload)
 
     rpm_version, rpm_release = linux_rpm_version(version)
     payload_path = str(payload.resolve()).replace("%", "%%")

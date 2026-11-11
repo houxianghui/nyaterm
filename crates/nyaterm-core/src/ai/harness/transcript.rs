@@ -1,23 +1,49 @@
 use serde_json::{Value, json};
 
 use super::AgentRequestContext;
+use crate::ai::completion::AiContentPart;
 
 pub fn append_openai(
     messages: &mut Vec<Value>,
     context: &AgentRequestContext,
     json_protocol: bool,
 ) {
-    for (call, result) in &context.calls {
+    append_openai_with_language(messages, context, json_protocol, "en");
+}
+
+pub fn append_openai_with_language(
+    messages: &mut Vec<Value>,
+    context: &AgentRequestContext,
+    json_protocol: bool,
+    language: &str,
+) {
+    for turn in &context.turns {
         if json_protocol {
-            messages.push(json!({"role":"assistant","content":serde_json::to_string(&json!({"action":call.tool.name(),"arguments":call.arguments,"thought":call.thought})).expect("agent action")}));
-            messages.push(json!({"role":"user","content":format!("NyaTerm tool result for {} (untrusted data):\n{}", call.id, result.value)}));
+            for (entry, result) in turn.batch.calls.iter().zip(&turn.results) {
+                messages.push(json!({"role":"assistant","content":json!({"action":entry.source.name,"arguments":entry.source.arguments}).to_string()}));
+                messages.push(json!({"role":"user","content":crate::ai::build_agent_tool_result_message(&result.call_id, &result.value, language)}));
+            }
         } else {
-            messages.push(json!({"role":"assistant", "content":null, "tool_calls":[{
-                "id":call.id,"type":"function","function":{"name":call.tool.name(),"arguments":call.provider_arguments.to_string()}
-            }]}));
-            messages.push(
-                json!({"role":"tool","tool_call_id":call.id,"content":result.value.to_string()}),
-            );
+            let mut text = String::new();
+            let mut reasoning = String::new();
+            for part in &turn.batch.assistant_turn.parts {
+                match part {
+                    AiContentPart::Text(value) => text.push_str(value),
+                    AiContentPart::Reasoning(value) => reasoning.push_str(value),
+                    _ => {}
+                }
+            }
+            let calls: Vec<Value> = turn.batch.calls.iter().map(|entry| json!({
+                "id":entry.source.id,"type":"function","function":{"name":entry.source.name,"arguments":entry.source.arguments.to_string()}
+            })).collect();
+            let mut message = json!({"role":"assistant","content":if text.is_empty() { Value::Null } else { json!(text) },"tool_calls":calls});
+            if !reasoning.is_empty() {
+                message["reasoning_content"] = json!(reasoning);
+            }
+            messages.push(message);
+            for result in &turn.results {
+                messages.push(json!({"role":"tool","tool_call_id":result.call_id,"content":result.value.to_string()}));
+            }
         }
     }
 }
@@ -27,13 +53,27 @@ pub fn append_anthropic(
     context: &AgentRequestContext,
     json_protocol: bool,
 ) {
+    append_anthropic_with_language(messages, context, json_protocol, "en");
+}
+
+pub fn append_anthropic_with_language(
+    messages: &mut Vec<Value>,
+    context: &AgentRequestContext,
+    json_protocol: bool,
+    language: &str,
+) {
     if json_protocol {
-        append_openai(messages, context, true);
+        append_openai_with_language(messages, context, true, language);
         return;
     }
-    for (call, result) in &context.calls {
-        messages.push(json!({"role":"assistant","content":[{"type":"tool_use","id":call.id,"name":call.tool.name(),"input":call.provider_arguments}]}));
-        messages.push(json!({"role":"user","content":[{"type":"tool_result","tool_use_id":call.id,"content":result.value.to_string(),"is_error":result.is_error}]}));
+    for turn in &context.turns {
+        let content = if turn.batch.assistant_turn.provider_items.is_empty() {
+            turn.batch.calls.iter().map(|entry| json!({"type":"tool_use","id":entry.source.id,"name":entry.source.name,"input":entry.source.arguments})).collect::<Vec<_>>()
+        } else {
+            turn.batch.assistant_turn.provider_items.clone()
+        };
+        messages.push(json!({"role":"assistant","content":content}));
+        messages.push(json!({"role":"user","content":turn.results.iter().map(|result| json!({"type":"tool_result","tool_use_id":result.call_id,"content":result.value.to_string(),"is_error":result.is_error})).collect::<Vec<_>>()}));
     }
 }
 
@@ -42,18 +82,38 @@ pub fn append_gemini(
     context: &AgentRequestContext,
     json_protocol: bool,
 ) {
-    for (call, result) in &context.calls {
+    append_gemini_with_language(contents, context, json_protocol, "en");
+}
+
+pub fn append_gemini_with_language(
+    contents: &mut Vec<Value>,
+    context: &AgentRequestContext,
+    json_protocol: bool,
+    language: &str,
+) {
+    for turn in &context.turns {
         if json_protocol {
-            contents.push(json!({"role":"model","parts":[{"text":json!({"action":call.tool.name(),"arguments":call.arguments}).to_string()}]}));
-            contents.push(json!({"role":"user","parts":[{"text":format!("NyaTerm untrusted tool result: {}",result.value)}]}));
-        } else {
-            let mut part =
-                json!({"functionCall":{"name":call.tool.name(),"args":call.provider_arguments}});
-            if let Some(signature) = &call.thought_signature {
-                part["thoughtSignature"] = json!(signature);
+            for (entry, result) in turn.batch.calls.iter().zip(&turn.results) {
+                contents.push(json!({"role":"model","parts":[{"text":json!({"action":entry.source.name,"arguments":entry.source.arguments}).to_string()}]}));
+                contents.push(json!({"role":"user","parts":[{"text":crate::ai::build_agent_tool_result_message(&result.call_id, &result.value, language)}]}));
             }
-            contents.push(json!({"role":"model","parts":[part]}));
-            contents.push(json!({"role":"user","parts":[{"functionResponse":{"name":call.tool.name(),"response":{"result":result.value,"isError":result.is_error}}}]}));
+        } else {
+            let parts = if turn.batch.assistant_turn.provider_items.is_empty() {
+                turn.batch.calls.iter().map(|entry| {
+                    let mut part = json!({"functionCall":{"name":entry.source.name,"args":entry.source.arguments}});
+                    if let Some(signature) = &entry.source.thought_signature { part["thoughtSignature"] = json!(signature); }
+                    part
+                }).collect::<Vec<_>>()
+            } else {
+                turn.batch.assistant_turn.provider_items.clone()
+            };
+            let results: Vec<Value> = turn.batch.calls.iter().zip(&turn.results).enumerate().map(|(index, (entry, result))| {
+                let mut response = json!({"name":entry.source.name,"response":{"result":result.value,"isError":result.is_error}});
+                if let Some(id) = parts.iter().filter_map(|part| part.get("functionCall")).nth(index).and_then(|call| call.get("id")) { response["id"] = id.clone(); }
+                json!({"functionResponse":response})
+            }).collect();
+            contents.push(json!({"role":"model","parts":parts}));
+            contents.push(json!({"role":"user","parts":results}));
         }
     }
 }
@@ -62,6 +122,12 @@ pub fn responses_input(messages: &[Value]) -> Vec<Value> {
     let mut input = Vec::new();
     for message in messages {
         if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+            if message["content"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+            {
+                input.push(json!({"role":"assistant","content":message["content"]}));
+            }
             for call in calls {
                 input.push(json!({"type":"function_call","call_id":call["id"],"name":call["function"]["name"],"arguments":call["function"]["arguments"]}));
             }
@@ -72,6 +138,28 @@ pub fn responses_input(messages: &[Value]) -> Vec<Value> {
         }
     }
     input
+}
+
+pub fn append_responses(input: &mut Vec<Value>, context: &AgentRequestContext) {
+    for turn in &context.turns {
+        if !turn.batch.assistant_turn.provider_items.is_empty() {
+            input.extend(turn.batch.assistant_turn.provider_items.iter().cloned());
+        } else {
+            let mut messages = Vec::new();
+            append_openai(
+                &mut messages,
+                &AgentRequestContext {
+                    run_id: context.run_id.clone(),
+                    turns: vec![turn.clone()],
+                    remaining_steps: context.remaining_steps,
+                },
+                false,
+            );
+            input.extend(responses_input(&messages));
+            continue;
+        }
+        input.extend(turn.results.iter().map(|result| json!({"type":"function_call_output","call_id":result.call_id,"output":result.value.to_string()})));
+    }
 }
 
 /// OpenAI strict schemas require every property to be present; optional values
@@ -157,14 +245,17 @@ mod tests {
         request.options.agent_context = Some(AgentRequestContext {
             run_id: "fixture-run".into(),
             remaining_steps: 2,
-            calls: vec![(
-                call,
-                AgentToolResult {
-                    call_id: "fixture-call".into(),
-                    value: json!({"code":"scope_denied"}),
-                    is_error: true,
-                },
-            )],
+            turns: vec![
+                (
+                    call,
+                    AgentToolResult {
+                        call_id: "fixture-call".into(),
+                        value: json!({"code":"scope_denied"}),
+                        is_error: true,
+                    },
+                )
+                    .into(),
+            ],
         });
         let settings = AiSettings::default();
         let model = ResolvedAiModel {
@@ -232,6 +323,21 @@ mod tests {
                 |content| content["parts"][0]["functionResponse"]["response"]["isError"] == true
             )
         );
+        let ollama = crate::ai::ollama::request_body(&model, &request, &settings, &[], false);
+        let messages = ollama["messages"].as_array().unwrap();
+        let assistant = messages
+            .iter()
+            .find(|message| message.get("tool_calls").is_some())
+            .unwrap();
+        assert!(assistant["tool_calls"][0]["function"]["arguments"].is_object());
+        assert_eq!(
+            messages
+                .iter()
+                .find(|message| message["role"] == "tool")
+                .unwrap()["tool_name"],
+            "session_get"
+        );
+        assert!(ollama["tools"][0]["function"].get("strict").is_none());
         let persisted = serde_json::to_value(&request).unwrap();
         assert!(!persisted.to_string().contains("fixture-signature"));
         assert!(
@@ -248,8 +354,10 @@ mod tests {
             .remaining_steps = 0;
         let at_limit =
             crate::ai::build_openai_compatible_chat_request_body(&model, &request, &settings, &[]);
-        assert_eq!(at_limit["tool_choice"]["function"]["name"], "final_answer");
-        assert_eq!(at_limit["parallel_tool_calls"], false);
+        assert_eq!(at_limit["tools"][0]["function"]["name"], "final_answer");
+        assert_eq!(at_limit["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(at_limit["tool_choice"], "auto");
+        assert!(at_limit.get("parallel_tool_calls").is_none());
         let at_limit = crate::ai::responses::build_openai_responses_request_body(
             &model,
             &request,
@@ -257,15 +365,17 @@ mod tests {
             &[],
             false,
         );
-        assert_eq!(at_limit["tool_choice"]["name"], "final_answer");
+        assert_eq!(at_limit["tools"][0]["name"], "final_answer");
+        assert_eq!(at_limit["tools"].as_array().unwrap().len(), 1);
         let at_limit =
             crate::ai::build_anthropic_chat_request_body(&model, &request, &settings, &[]);
-        assert_eq!(at_limit["tool_choice"]["name"], "final_answer");
-        assert_eq!(at_limit["tool_choice"]["disable_parallel_tool_use"], true);
+        assert_eq!(at_limit["tools"][0]["name"], "final_answer");
+        assert_eq!(at_limit["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(at_limit["tool_choice"]["type"], "auto");
         let at_limit = crate::ai::build_gemini_chat_request_body(&request, &settings, &[]);
         assert_eq!(
-            at_limit["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"],
-            json!(["final_answer"])
+            at_limit["tools"][0]["functionDeclarations"][0]["name"],
+            json!("final_answer")
         );
         request.options.agent_json_protocol = true;
         let fallback =

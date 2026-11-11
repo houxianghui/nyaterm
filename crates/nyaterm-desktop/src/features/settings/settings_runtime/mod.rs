@@ -3,15 +3,14 @@ use gpui::Context;
 use crate::features::NyaTermApp;
 
 mod helpers;
-#[cfg(target_os = "windows")]
-mod native_frame;
 
 mod draft;
 mod general_interaction;
+mod quit;
 mod recording_transfer;
 mod search_engines;
+mod tab;
 mod terminal_remote;
-mod window;
 
 pub(in crate::features) use general_interaction::SettingsSaveKind;
 

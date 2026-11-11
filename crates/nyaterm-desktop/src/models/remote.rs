@@ -97,12 +97,6 @@ impl DockerTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MainMode {
-    Workspace,
-    Page,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
     General,
     Appearance,
@@ -135,21 +129,6 @@ impl SettingsTab {
             Self::AiModels => "ai.models",
             Self::AiRules => "ai.rules",
             Self::AiAgents => "ai.localAgents",
-            Self::Transfer => "settings.groupTransfer",
-            Self::Security => "settings.groupSecurity",
-            Self::SyncBackup => "settings.groupSyncBackup",
-        }
-    }
-
-    pub(crate) fn group_i18n_key(self) -> &'static str {
-        match self {
-            Self::General | Self::Appearance | Self::Interaction | Self::Keybindings => {
-                "settings.groupWorkspace"
-            }
-            Self::TerminalGeneral | Self::RemoteMonitoring | Self::Search | Self::Translation => {
-                "settings.groupTerminalSession"
-            }
-            Self::AiGeneral | Self::AiModels | Self::AiRules | Self::AiAgents => "ai.title",
             Self::Transfer => "settings.groupTransfer",
             Self::Security => "settings.groupSecurity",
             Self::SyncBackup => "settings.groupSyncBackup",

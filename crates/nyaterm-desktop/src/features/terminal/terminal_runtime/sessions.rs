@@ -42,12 +42,23 @@ impl NyaTermApp {
         .detach();
     }
 
-    pub(in crate::features) fn close_active_session(&mut self, cx: &mut Context<Self>) {
-        if let Some(key) = self.active_workspace_tab()
-            && !crate::models::WorkspaceTabId::from_layout_key(&key).is_session()
-        {
-            self.request_workspace_tabs_close(vec![key], None, cx);
-            return;
+    pub(in crate::features) fn close_active_session(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(key) = self.active_workspace_tab() {
+            match crate::models::WorkspaceTabId::from_layout_key(&key) {
+                crate::models::WorkspaceTabId::Settings => {
+                    self.request_settings_tab_close(window, cx);
+                    return;
+                }
+                id if !id.is_session() => {
+                    self.request_workspace_tabs_close(vec![key], None, cx);
+                    return;
+                }
+                _ => {}
+            }
         }
         let Some(session_id) = self.session.active_id_owned() else {
             self.shell.set_status("no active session".to_string());
@@ -86,7 +97,7 @@ impl NyaTermApp {
         });
         // Tauri: closing a strip tab closes the whole tab tree; closing a secondary leaf
         // only removes that pane. Strip close uses the tab-root id.
-        let close_ids = if !self.is_secondary_pane_session(&session_id) {
+        let mut close_ids = if !self.is_secondary_pane_session(&session_id) {
             if let Some(root) = self.shell.workspace_pane_root(&session_id) {
                 root.session_ids()
             } else {
@@ -95,6 +106,11 @@ impl NyaTermApp {
         } else {
             vec![session_id.clone()]
         };
+        // A tmux tab projects pane leaves, but the host SSH worker still owns
+        // the control client. Closing the tab releases that host as well.
+        if self.tmux.has_host(&session_id) && !close_ids.contains(&session_id) {
+            close_ids.insert(0, session_id.clone());
+        }
         let was_active = self
             .session
             .active_id()
@@ -186,6 +202,15 @@ impl NyaTermApp {
             return;
         }
         let pane_id = self.active_pane_for_tab_root(tab_root_id);
+        if self.tmux.pane_for_session(&pane_id).is_some() {
+            // Pane-close is destructive; tab-close, detach and teardown are not.
+            // Let the confirmed remote layout remove the local terminal state.
+            if let Err(error) = self.session.manager().tmux_close_pane(&pane_id) {
+                self.shell.set_status(format!("close failed: {error}"));
+            }
+            cx.notify();
+            return;
+        }
         if self.tab_tree_session_ids(tab_root_id).len() <= 1 {
             self.close_session(tab_root_id.to_string(), cx);
             return;
@@ -269,9 +294,22 @@ impl NyaTermApp {
     pub(in crate::features) fn handle_window_minimize(
         &mut self,
         window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        window.minimize_window();
+    }
+
+    pub(crate) fn handle_window_close_request(
+        &mut self,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.settings.summary().minimize_to_tray {
+        let workspace_count = self
+            .desktop_controller
+            .as_ref()
+            .and_then(gpui::WeakEntity::upgrade)
+            .map_or(1, |controller| controller.read(cx).workspace_count());
+        if self.settings.summary().minimize_to_tray && workspace_count == 1 {
             if self.minimize_to_system_tray(window, cx) {
                 return;
             }
@@ -281,15 +319,13 @@ impl NyaTermApp {
                 rust_i18n::t!("tray.unavailable").to_string(),
                 cx,
             );
+            // Keep the window recoverable from the taskbar when the tray cannot
+            // hide it. Explicit Quit still uses the normal shutdown path.
+            // GPUI's test window does not implement native minimization.
+            #[cfg(not(test))]
+            window.minimize_window();
+            return;
         }
-        window.minimize_window();
-    }
-
-    pub(crate) fn handle_window_close_request(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
         self.handle_window_close_request_with_count(
             self.session.ordered_sessions().len(),
             window,
@@ -308,11 +344,15 @@ impl NyaTermApp {
             return;
         }
         if self.settings.theme_designer().dirty() {
-            self.activate_settings_window(cx);
+            self.begin_settings_draft(cx);
+            self.open_settings_workspace_tab(cx);
             self.theme_designer_action(
                 crate::features::settings::theme_designer::ThemeIntent::Quit(open_sessions),
                 cx,
             );
+            return;
+        }
+        if self.request_settings_quit_confirmation(open_sessions, window, cx) {
             return;
         }
         if self.settings.summary().confirm_on_close && open_sessions > 0 {
@@ -466,10 +506,16 @@ impl NyaTermApp {
         cx: &mut Context<Self>,
     ) {
         if let Some(session_id) = self.session.active_id_owned() {
-            self.terminal
-                .view
-                .frame_pipeline
-                .navigate_command(session_id, action);
+            self.terminal.view.frame_pipeline.navigate_command(
+                session_id.clone(),
+                action,
+                self.terminal_display_offset_for_session(Some(&session_id)),
+                self.terminal
+                    .view
+                    .views
+                    .get(&session_id)
+                    .map_or_else(Default::default, |view| view.history_state()),
+            );
             self.terminal.view.frame_pipeline.arm_event_wakes();
         }
         cx.notify();
@@ -489,9 +535,143 @@ impl NyaTermApp {
         }
         cx.notify();
     }
+}
 
-    pub(in crate::features) fn append_terminal_log(&mut self, text: impl AsRef<str>) {
-        let session_id = self.session.active_id_owned();
-        self.append_terminal_log_for_session(session_id.as_deref(), text.as_ref(), false);
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui::{AppContext as _, EmptyView, TestAppContext};
+    use nyaterm_core::test_support::TestTempDir;
+
+    use crate::features::AppLifecycleEvent;
+    use crate::features::test_support::app_with_visible_local_session;
+
+    #[derive(Clone, Copy)]
+    enum CloseRequest {
+        Window,
+        ExplicitQuit,
+    }
+
+    fn close_request_outcome(
+        workspace_count: usize,
+        minimize_to_tray: bool,
+        confirm_on_close: bool,
+        request: CloseRequest,
+    ) -> (usize, bool) {
+        let root = TestTempDir::new("nyaterm-close-to-tray");
+        let controller_root = TestTempDir::new("nyaterm-close-workspaces");
+        let mut cx = TestAppContext::single();
+        let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app_with_visible_local_session(&mut cx, root.path(), "session");
+        app.update(&mut cx, |app, cx| {
+            let mut summary = app.settings.summary().clone();
+            summary.minimize_to_tray = minimize_to_tray;
+            summary.confirm_on_close = confirm_on_close;
+            summary.startup_restore = false;
+            app.settings.replace_summary(summary);
+            app.sync_component_theme(cx);
+        });
+
+        let runtime = nyaterm_core::AppRuntime::from_parts_for_test(
+            nyaterm_core::RuntimeMode::Portable,
+            controller_root.path().into(),
+            controller_root.join("config"),
+            controller_root.join("logs"),
+            controller_root.join("cache"),
+            None,
+        );
+        let startup = crate::app_shell::AppShellStartup::prepare(&runtime);
+        let controller =
+            cx.new(|cx| crate::app_shell::DesktopController::new(runtime, startup, cx));
+        controller.update(&mut cx, |controller, cx| {
+            for _ in 0..workspace_count {
+                controller
+                    .open_workspace(nyaterm_core::OpenWorkspaceRequest::default(), cx)
+                    .unwrap();
+            }
+        });
+        if workspace_count > 0 {
+            app.update(&mut cx, |app, _| {
+                app.desktop_controller = Some(controller.downgrade())
+            });
+        }
+
+        let shutdown_requests = Rc::new(Cell::new(0));
+        let observed = Rc::clone(&shutdown_requests);
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&app, move |_, event, _| {
+                if matches!(event, AppLifecycleEvent::ShutdownRequested) {
+                    observed.set(observed.get() + 1);
+                }
+            })
+        });
+
+        let (_, window_cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| EmptyView);
+            nyaterm_ui::nya_root(content, window, cx)
+        });
+        window_cx.update(|window, cx| {
+            app.update(cx, |app, cx| match request {
+                CloseRequest::Window => app.handle_window_close_request(window, cx),
+                CloseRequest::ExplicitQuit => {
+                    app.handle_window_close_request_with_count(0, window, cx)
+                }
+            });
+        });
+        cx.run_until_parked();
+        let confirming = cx.read(|cx| app.read(cx).session.dialog_should_quit_after_close_all());
+        (shutdown_requests.get(), confirming)
+    }
+
+    #[test]
+    fn last_workspace_close_keeps_running_when_minimize_to_tray_is_enabled() {
+        for count in [0, 1] {
+            assert_eq!(
+                close_request_outcome(count, true, true, CloseRequest::Window),
+                (0, false)
+            );
+        }
+    }
+
+    #[test]
+    fn close_request_shuts_down_when_minimize_to_tray_is_disabled() {
+        assert_eq!(
+            close_request_outcome(1, false, false, CloseRequest::Window),
+            (1, false)
+        );
+    }
+
+    #[test]
+    fn close_request_preserves_session_confirmation_when_minimize_to_tray_is_disabled() {
+        assert_eq!(
+            close_request_outcome(1, false, true, CloseRequest::Window),
+            (0, true)
+        );
+    }
+
+    #[test]
+    fn multiple_workspaces_close_normally_even_when_minimize_to_tray_is_enabled() {
+        for count in [2, 3] {
+            assert_eq!(
+                close_request_outcome(count, true, false, CloseRequest::Window),
+                (1, false)
+            );
+            assert_eq!(
+                close_request_outcome(count, true, true, CloseRequest::Window),
+                (0, true)
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_quit_bypasses_minimize_to_tray() {
+        for count in [1, 2] {
+            assert_eq!(
+                close_request_outcome(count, true, true, CloseRequest::ExplicitQuit),
+                (1, false)
+            );
+        }
     }
 }

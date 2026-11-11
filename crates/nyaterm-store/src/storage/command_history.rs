@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use redb::ReadableTable;
+use redb::{ReadTransaction, ReadableDatabase, ReadableTable};
 use sha2::{Digest, Sha256};
 
 use super::{
@@ -47,54 +47,33 @@ impl ConnectionStore {
         &self,
         limit: usize,
     ) -> Result<Vec<CommandHistoryEntry>, StorageError> {
-        let mut entries: Vec<(String, CommandHistoryEntry)> =
-            self.list_keyed_json_by_prefix(COMMAND_HISTORY_TABLE, COMMAND_HISTORY_PREFIX)?;
-        entries.sort_by(|left, right| right.0.cmp(&left.0));
-        let mut history = Vec::new();
-        let mut positions = HashMap::new();
-        for (_, entry) in entries {
-            if let Some(command) = sanitize_history_command(&entry.command) {
-                if let Some(&index) = positions.get(&command) {
-                    let existing: &mut CommandHistoryEntry = &mut history[index];
-                    existing.last_used_at_ms = existing.last_used_at_ms.max(entry.last_used_at_ms);
-                    existing.use_count = existing.use_count.saturating_add(entry.use_count.max(1));
-                } else {
-                    positions.insert(command.clone(), history.len());
-                    history.push(CommandHistoryEntry {
-                        command,
-                        last_used_at_ms: entry.last_used_at_ms,
-                        use_count: entry.use_count.max(1),
-                    });
-                }
-            }
-        }
-        history.sort_by_key(|entry| std::cmp::Reverse(entry.last_used_at_ms));
-        history.truncate(limit);
-        Ok(history)
+        list_command_history_in_txn(&self.db.begin_read()?, limit)
     }
 
     pub fn delete_command_history(&self, command: &str) -> Result<(), StorageError> {
         let Some(command) = sanitize_history_command(command) else {
             return Ok(());
         };
-        let keys = self
-            .list_keyed_json_by_prefix::<CommandHistoryEntry>(
-                COMMAND_HISTORY_TABLE,
-                COMMAND_HISTORY_PREFIX,
-            )?
-            .into_iter()
-            .filter_map(|(key, entry)| {
-                (sanitize_history_command(&entry.command).as_deref() == Some(command.as_str()))
-                    .then_some(key)
-            })
-            .collect::<Vec<_>>();
         let txn = self.db.begin_write()?;
         let mut table = txn.open_table(COMMAND_HISTORY_TABLE)?;
+        let mut keys = Vec::new();
+        for row in table.iter()? {
+            let (key, value) = row?;
+            if !key.value().starts_with(COMMAND_HISTORY_PREFIX) {
+                continue;
+            }
+            let entry: CommandHistoryEntry = serde_json::from_slice(value.value())?;
+            if sanitize_history_command(&entry.command).as_deref() == Some(command.as_str()) {
+                keys.push(key.value().to_string());
+            }
+        }
         for key in keys {
             table.remove(key.as_str())?;
         }
         drop(table);
+        super::completion_history::delete_completion_command_in_txn(&txn, &command)?;
         txn.commit()?;
+        self.invalidate_completion();
         Ok(())
     }
 
@@ -105,21 +84,69 @@ impl ConnectionStore {
         let txn = self.db.begin_write()?;
         replace_command_history_in_txn(&txn, entries)?;
         txn.commit()?;
+        self.invalidate_completion();
         Ok(())
     }
 
     fn save_command_history_entry(&self, entry: &CommandHistoryEntry) -> Result<(), StorageError> {
         let txn = self.db.begin_write()?;
         save_command_history_entry_in_txn(&txn, entry)?;
+        super::completion_history::bump_revision(&txn)?;
         txn.commit()?;
+        self.invalidate_completion();
         Ok(())
     }
+}
+
+pub(super) fn list_command_history_in_txn(
+    txn: &ReadTransaction,
+    limit: usize,
+) -> Result<Vec<CommandHistoryEntry>, StorageError> {
+    let table = match txn.open_table(COMMAND_HISTORY_TABLE) {
+        Ok(table) => table,
+        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut entries = Vec::new();
+    for row in table.range(COMMAND_HISTORY_PREFIX..)? {
+        let (key, value) = row?;
+        if !key.value().starts_with(COMMAND_HISTORY_PREFIX) {
+            break;
+        }
+        entries.push((
+            key.value().to_string(),
+            serde_json::from_slice::<CommandHistoryEntry>(value.value())?,
+        ));
+    }
+    entries.sort_by(|left, right| right.0.cmp(&left.0));
+    let mut history = Vec::new();
+    let mut positions = HashMap::new();
+    for (_, entry) in entries {
+        if let Some(command) = sanitize_history_command(&entry.command) {
+            if let Some(&index) = positions.get(&command) {
+                let existing: &mut CommandHistoryEntry = &mut history[index];
+                existing.last_used_at_ms = existing.last_used_at_ms.max(entry.last_used_at_ms);
+                existing.use_count = existing.use_count.saturating_add(entry.use_count.max(1));
+            } else {
+                positions.insert(command.clone(), history.len());
+                history.push(CommandHistoryEntry {
+                    command,
+                    last_used_at_ms: entry.last_used_at_ms,
+                    use_count: entry.use_count.max(1),
+                });
+            }
+        }
+    }
+    history.sort_by_key(|entry| std::cmp::Reverse(entry.last_used_at_ms));
+    history.truncate(limit);
+    Ok(history)
 }
 
 pub(super) fn replace_command_history_in_txn(
     txn: &redb::WriteTransaction,
     entries: &[CommandHistoryEntry],
 ) -> Result<(), StorageError> {
+    super::completion_history::reset_completion_history_in_txn(txn, entries)?;
     clear_prefix_in_txn(txn, COMMAND_HISTORY_TABLE, COMMAND_HISTORY_PREFIX)?;
     let mut normalized = Vec::new();
     for entry in entries {
@@ -223,7 +250,7 @@ fn command_history_id(command: &str) -> String {
     lower_hex(&digest[..16])
 }
 
-fn sanitize_history_command(input: &str) -> Option<String> {
+pub(super) fn sanitize_history_command(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return None;
@@ -312,4 +339,45 @@ fn strip_windows_prompt(input: &str) -> Option<&str> {
         return None;
     }
     Some(input[marker_idx + 1..].trim_start_matches([' ', '\t']))
+}
+
+/// Update the canonical global document without discarding extension fields.
+pub(super) fn append_global_history_in_txn(
+    txn: &redb::WriteTransaction,
+    command: &str,
+    now: u64,
+) -> Result<(), StorageError> {
+    let table = txn.open_table(COMMAND_HISTORY_TABLE)?;
+    let mut document =
+        serde_json::json!({"command": command, "use_count": 0, "last_used_at_ms": 0});
+    for row in table.iter()? {
+        let (_, value) = row?;
+        let raw: serde_json::Value = serde_json::from_slice(value.value())?;
+        if raw.get("command").and_then(serde_json::Value::as_str) == Some(command) {
+            document = raw;
+            break;
+        }
+    }
+    drop(table);
+    let count = document
+        .get("use_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default()
+        .saturating_add(1)
+        .min(u32::MAX as u64) as u32;
+    document["use_count"] = serde_json::json!(count);
+    document["last_used_at_ms"] = serde_json::json!(now);
+    let id = command_history_id(command);
+    remove_command_history_id_in_txn(txn, &id)?;
+    let entry = CommandHistoryEntry {
+        command: command.into(),
+        use_count: count,
+        last_used_at_ms: now,
+    };
+    write_json_in_txn(
+        txn,
+        COMMAND_HISTORY_TABLE,
+        &command_history_key(&entry, &id),
+        &document,
+    )
 }

@@ -1,23 +1,5 @@
-use rust_i18n::t;
-
-use crate::models::{
-    ActivityBarLayoutState, BottomPanelMode, NavItem, PanelSide, SessionEventBridge,
-    TerminalFramePipeline,
-};
-use crate::terminal::initial_terminal_screen;
-use gpui::{AppContext as _, Context};
-use nyaterm_core::{AppRuntime, WorkspaceUiState, uuid};
-use nyaterm_store::BootstrapSnapshot;
-#[cfg(test)]
-use nyaterm_store::{LoadBootstrap, StoreConfig, StoreRuntime};
-use nyaterm_terminal::TerminalOutputDecoder;
-use nyaterm_transport::SftpDuplicatePolicy;
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use crate::app_shell::session_hub::SessionHub;
-
 use super::{NyaTermApp, NyaTermProcessEntities, NyaTermStoreClients};
+use crate::app_shell::session_hub::SessionHub;
 use crate::features::ai::{
     AiFeatureFocus, AiFeatureInit, AiFeatureState, AiPanel, ai_active_profile_drafts,
 };
@@ -52,7 +34,22 @@ use crate::features::transfers::{TransferFeatureFocus, TransferFeatureState};
 use crate::features::translation::TranslationFeatureState;
 use crate::features::tunnels::{TunnelCatalogState, TunnelFeatureState};
 use crate::models::panel_collapsed_from_persistence;
+use crate::models::{
+    ActivityBarLayoutState, BottomPanelMode, NavItem, PanelSide, SessionEventBridge,
+    TerminalFramePipeline,
+};
 use crate::terminal::INITIAL_TERMINAL_BANNER;
+use crate::terminal::initial_terminal_screen;
+use gpui::{AppContext as _, Context};
+use nyaterm_core::{AppRuntime, WorkspaceUiState, uuid};
+use nyaterm_files::sftp_transfer_types::SftpDuplicatePolicy;
+use nyaterm_store::BootstrapSnapshot;
+#[cfg(test)]
+use nyaterm_store::{LoadBootstrap, StoreConfig, StoreRuntime};
+use nyaterm_terminal::TerminalOutputDecoder;
+use rust_i18n::t;
+use std::collections::HashMap;
+use std::sync::Arc;
 impl NyaTermApp {
     pub(crate) fn from_bootstrap(
         runtime: AppRuntime,
@@ -67,6 +64,7 @@ impl NyaTermApp {
             process_state,
             update,
             plugins,
+            sync_operations,
         } = process_entities;
         let session_manager = session_hub.manager();
         let ssh_connections = session_hub.ssh_connections();
@@ -156,6 +154,7 @@ impl NyaTermApp {
         let transfer_panel_height = settings.ui_transfer_height as f32;
         let quick_cmd_height = settings.ui_quick_cmd_height as f32;
         let serial_send_height = settings.ui_serial_send_height as f32;
+        ActivityBarLayoutState::complete_settings_layout(&mut settings);
         let mut activity_bar_layout = ActivityBarLayoutState {
             left_top: settings.ui_activity_bar_left_top.clone(),
             left_bottom: settings.ui_activity_bar_left_bottom.clone(),
@@ -166,6 +165,10 @@ impl NyaTermApp {
         };
         activity_bar_layout.ensure_plugin_entry();
         activity_bar_layout.ensure_remote_monitor_entries();
+        activity_bar_layout.ensure_host_tool_entries();
+        settings.ui_activity_bar_left_top = activity_bar_layout.left_top.clone();
+        settings.ui_activity_bar_right_bottom = activity_bar_layout.right_bottom.clone();
+        settings.ui_activity_bar_hidden_items = activity_bar_layout.hidden_items.clone();
         settings.ui_activity_bar_right_top = activity_bar_layout.right_top.clone();
         settings.ui_activity_bar_left_bottom = activity_bar_layout.left_bottom.clone();
         let mut active_left_panel = settings
@@ -258,6 +261,11 @@ impl NyaTermApp {
         crate::shortcuts::rebuild_keymap(&settings.keybindings, cx);
 
         let blocking_jobs = crate::blocking_jobs::BlockingJobScheduler::new();
+        let host_tool_panels = crate::features::remote::HostToolPanels::new(
+            app_entity.downgrade(),
+            blocking_jobs.clone(),
+            cx,
+        );
         let send_command = SendCommandFeatureState::new(cx);
         cx.observe(&send_command.presentation(cx).hex, |_, _, cx| cx.notify())
             .detach();
@@ -289,7 +297,6 @@ impl NyaTermApp {
             start_workspace,
             connection_panel,
             settings_panel,
-            native_settings_panel: None,
             transfer_panel,
             notes: NotesFeatureState::new(),
             notes_panel,
@@ -372,14 +379,17 @@ impl NyaTermApp {
             ),
             remote_ops: RemoteOpsFeatureState::new(RemoteOpsFeatureFocus {}),
             remote_panels,
+            host_tool_panels,
             remote_desktop: RemoteDesktopFeatureState::new(cx.focus_handle()),
             translation: TranslationFeatureState::new(translation_settings),
             update,
-            cloud_sync: CloudSyncFeatureState::new(
-                cloud_sync_settings,
-                cloud_sync_state,
-                Vec::new(),
-            ),
+            cloud_sync: {
+                let mut state =
+                    CloudSyncFeatureState::new(cloud_sync_settings, cloud_sync_state, Vec::new());
+                state.operations = sync_operations;
+                state
+            },
+            activation: Default::default(),
             session: SessionFeatureState::new(
                 session_manager,
                 ssh_connections,
@@ -437,6 +447,7 @@ impl NyaTermApp {
                 },
             ),
             recording,
+            tmux: crate::features::tmux::TmuxFeatureState::default(),
             tunnel_state: TunnelFeatureState::new(TunnelCatalogState::new(
                 tunnels,
                 tunnel_groups,
@@ -472,6 +483,9 @@ impl NyaTermApp {
         stores: crate::entities::UiStoreHandles,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Tests bypass main(), which preloads the catalog on a dedicated worker
+        // before any view translates on the smaller Windows UI thread stack.
+        crate::preload_i18n().expect("preload translations for test app");
         let test_config_dir =
             crate::test_support::TestConfigDir::from_path(runtime.data_dir().to_path_buf());
         let store_runtime = StoreRuntime::spawn(StoreConfig {
@@ -501,6 +515,7 @@ impl NyaTermApp {
                 process_state,
                 update,
                 cx.new(|_| crate::features::plugins::PluginProcess::empty()),
+                Default::default(),
             ),
             workspace_init,
             NyaTermStoreClients::new(store_ui, store_blocking),

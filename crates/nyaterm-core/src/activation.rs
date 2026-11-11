@@ -1,8 +1,11 @@
+mod dedup;
 mod deep_link;
+pub use dedup::RecentConnectionRequests;
 
 pub use deep_link::{
     ActivationAction, ActivationParseError, ExternalConnectionRequest, MAX_ACTIVATION_ACTIONS,
-    MAX_DEEP_LINK_BYTES, parse_activation_request, parse_deep_link,
+    MAX_DEEP_LINK_BYTES, normalize_external_host, parse_activation_batch, parse_activation_request,
+    parse_deep_link,
 };
 
 use std::ffi::OsString;
@@ -26,10 +29,26 @@ const HEADER_LEN: usize = 12;
 const REQUEST_KIND: u8 = 1;
 const ACK_KIND: u8 = 2;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum RawActivationArg {
     Bytes(Vec<u8>),
     Wide(Vec<u16>),
+}
+
+impl std::fmt::Debug for RawActivationArg {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RawActivationArg(<redacted>)")
+    }
+}
+
+impl Drop for RawActivationArg {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        match self {
+            Self::Bytes(bytes) => bytes.zeroize(),
+            Self::Wide(units) => units.zeroize(),
+        }
+    }
 }
 
 impl RawActivationArg {
@@ -75,21 +94,33 @@ impl ActivationRequest {
         }
     }
 
-    pub fn open_behavior(&self) -> crate::ActivationOpenBehavior {
-        if self.args.iter().any(|arg| arg.matches("--reuse-window")) {
-            crate::ActivationOpenBehavior::ReuseMostRecent
-        } else {
-            crate::ActivationOpenBehavior::NewWindow
+    pub fn parse(&self) -> ParsedActivationRequest {
+        let (open_behavior, actions) = deep_link::parse_activation_with_behavior(self);
+        ParsedActivationRequest {
+            request_id: self.request_id,
+            actions,
+            open_behavior,
         }
+    }
+
+    pub fn open_behavior(&self) -> crate::ActivationOpenBehavior {
+        self.parse().open_behavior
     }
 }
 
-impl RawActivationArg {
-    fn matches(&self, expected: &str) -> bool {
-        match self {
-            Self::Bytes(bytes) => String::from_utf8_lossy(bytes) == expected,
-            Self::Wide(units) => String::from_utf16_lossy(units) == expected,
-        }
+/// Parsed once at the process boundary and shared by routing and execution.
+/// Secret-bearing actions deliberately have no serialization implementation.
+#[derive(Clone, Debug)]
+pub struct ParsedActivationRequest {
+    pub request_id: [u8; 16],
+    pub actions: Vec<Result<ActivationAction, ActivationParseError>>,
+    pub open_behavior: crate::ActivationOpenBehavior,
+}
+
+impl ParsedActivationRequest {
+    pub fn has_conflicting_window_options(&self) -> bool {
+        self.actions
+            .contains(&Err(ActivationParseError::ConflictingWindowOptions))
     }
 }
 

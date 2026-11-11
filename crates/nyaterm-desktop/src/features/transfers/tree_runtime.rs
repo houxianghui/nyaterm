@@ -1,33 +1,45 @@
-use std::sync::Arc;
-
-use gpui::{Context, KeyDownEvent, Window};
-use nyaterm_transport::{FileBrowserBackendKind, RemoteFilePath, SftpFileEntry, file_browser_join};
-
+use super::transfer_jobs::submit_transfer_cancellable_blocking_job;
 use crate::features::NyaTermApp;
 use crate::models::{
     TransferBrowserContextTarget, TransferJobEvent, TransferJobKind, TransferJobOutput,
     TransferJobResult, TransferJobState, TransferJobStatus,
 };
+use gpui::{Context, KeyDownEvent, Window};
+use nyaterm_files::file_browser::{FileBrowserBackendKind, file_browser_join};
+use nyaterm_files::sftp::{RemoteFilePath, SftpFileEntry};
+use std::sync::Arc;
 
 impl NyaTermApp {
-    pub(super) fn request_missing_expanded_tree_listings(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::features) fn request_missing_expanded_tree_listings(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
         if self.settings.summary().ui_file_explorer_view_mode
             != nyaterm_core::TransferBrowserViewMode::Tree
         {
             return;
         }
-        let Some(session) = self.session.active_id_owned() else {
+        if !self.transfer_browser_is_visible() {
             return;
-        };
-        for path in self.transfer.missing_expanded_tree_paths(&session) {
-            self.request_transfer_tree_listing(path, cx);
         }
-    }
-    fn request_transfer_tree_listing(&mut self, path: RemoteFilePath, cx: &mut Context<Self>) {
         let Some(session_id) = self.session.active_id_owned() else {
             return;
         };
         let Some(backend) = self.session.active_file_browser_backend() else {
+            return;
+        };
+        if self.session.is_disconnected(&session_id) {
+            return;
+        }
+        let navigation_path = (self.transfer.browser_view().loading
+            && self
+                .transfer
+                .browser_navigation_job_running_for_session(&session_id))
+        .then(|| self.transfer_tree_current_path(backend));
+        let Some(path) = self
+            .transfer
+            .next_tree_listing_path(&session_id, navigation_path.as_ref())
+        else {
             return;
         };
         let service = match self.active_file_browser_service() {
@@ -41,6 +53,13 @@ impl NyaTermApp {
             return;
         };
         let id = self.transfer.next_transfer_job_id("sftp-tree");
+        self.transfer.track_tree_listing(
+            session_id.clone(),
+            backend,
+            path.clone(),
+            generation,
+            id.clone(),
+        );
         self.transfer.enqueue_transfer_job(TransferJobState {
             id: id.clone(),
             session_id: Some(session_id),
@@ -65,17 +84,39 @@ impl NyaTermApp {
             return;
         }
         let tx = self.transfer.transfer_event_sender();
-        self.submit_transfer_blocking_job("sftp-tree-listing", id.clone(), tx.clone(), move || {
-            let result = service
-                .list_dir_path(&path)
-                .map(TransferJobOutput::TreeEntries)
-                .map_err(|error| error.to_string());
-            let _ = tx.unbounded_send(TransferJobResult {
-                id,
-                event: TransferJobEvent::Finished(result),
-            });
-        });
+        let handle = submit_transfer_cancellable_blocking_job(
+            &self.blocking_jobs,
+            "sftp-tree-listing",
+            id.clone(),
+            tx.clone(),
+            move || {
+                let result = service
+                    .list_dir_path(&path)
+                    .map(TransferJobOutput::TreeEntries)
+                    .map_err(|error| error.to_string());
+                let _ = tx.unbounded_send(TransferJobResult {
+                    id,
+                    event: TransferJobEvent::Finished(result),
+                });
+            },
+        );
+        self.transfer.bind_tree_listing_handle(handle);
         cx.notify();
+    }
+
+    fn transfer_tree_current_path(&self, backend: FileBrowserBackendKind) -> RemoteFilePath {
+        let mut path = self.transfer.browser_remote_file_path();
+        if backend == FileBrowserBackendKind::Remote && !path.display_path.starts_with('/') {
+            let home = self.transfer.browser_view().home_dir;
+            if home.starts_with('/') && path.raw_path_token.is_none() {
+                path = RemoteFilePath::new(if path.display_path == "." {
+                    home.to_string()
+                } else {
+                    file_browser_join(backend, home, &path.display_path)
+                });
+            }
+        }
+        path
     }
 
     pub(in crate::features) fn reveal_transfer_tree_current_path(
@@ -93,21 +134,9 @@ impl NyaTermApp {
         let Some(backend) = self.session.active_file_browser_backend() else {
             return;
         };
-        let mut path = self.transfer.browser_remote_file_path();
-        if backend == FileBrowserBackendKind::Remote && !path.display_path.starts_with('/') {
-            let home = self.transfer.browser_view().home_dir;
-            if home.starts_with('/') && path.raw_path_token.is_none() {
-                path = RemoteFilePath::new(if path.display_path == "." {
-                    home.to_string()
-                } else {
-                    file_browser_join(backend, home, &path.display_path)
-                });
-            }
-        }
-        let missing = self.transfer.reveal_tree_path(&session_id, backend, path);
-        for path in missing {
-            self.request_transfer_tree_listing(path, cx);
-        }
+        let path = self.transfer_tree_current_path(backend);
+        self.transfer.reveal_tree_path(&session_id, backend, path);
+        self.request_missing_expanded_tree_listings(cx);
     }
 
     pub(in crate::features) fn select_transfer_tree_row(
@@ -135,9 +164,8 @@ impl NyaTermApp {
         let Some(session) = self.session.active_id_owned() else {
             return;
         };
-        if let Some(path) = self.transfer.toggle_tree_node(&session, key, expand) {
-            self.request_transfer_tree_listing(path, cx);
-        }
+        self.transfer.toggle_tree_node(&session, key, expand);
+        self.request_missing_expanded_tree_listings(cx);
         cx.notify();
     }
 
@@ -208,8 +236,8 @@ impl NyaTermApp {
         let Some(row) = self.transfer.selected_tree_row(&session) else {
             return;
         };
-        if row.directory && row.expanded {
-            self.expand_transfer_tree_row(&row.key, Some(false), cx);
+        if row.expandable {
+            self.expand_transfer_tree_row(&row.key, None, cx);
         } else {
             self.navigate_transfer_tree_row(window, cx);
         }
@@ -332,7 +360,7 @@ impl NyaTermApp {
             } => {
                 self.transfer
                     .invalidate_tree_path(session, &RemoteFilePath::new(old_path), true);
-                let parent = nyaterm_transport::file_browser_parent(backend, new_path);
+                let parent = nyaterm_files::file_browser::file_browser_parent(backend, new_path);
                 self.transfer
                     .invalidate_tree_path(session, &RemoteFilePath::new(parent), false);
                 seed(self, parent_path, entries);

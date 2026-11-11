@@ -1,6 +1,6 @@
 [workspace]
-# The application spawns three helpers at runtime and looks for them beside its own
-# executable, so a bare `cargo build` must produce all four binaries.
+# The application resolves its helpers beside its executable. Include the Windows
+# ActiveX host in development builds; release packaging filters it by platform.
 default-members = [
     "crates/nyaterm-app",
     "crates/nyaterm-mcp",
@@ -9,20 +9,30 @@ default-members = [
 ]
 members = [
     "crates/nyaterm-app",
+    "crates/nyaterm-ai-client",
+    "crates/nyaterm-cloud-storage",
     "crates/nyaterm-core",
     "crates/nyaterm-desktop",
     "crates/nyaterm-mcp",
     "crates/nyaterm-mcp-protocol",
     "crates/nyaterm-otp",
+    "crates/nyaterm-preview",
+    "crates/nyaterm-translation-client",
     "crates/nyaterm-plugin-api",
     "crates/nyaterm-plugin-host",
     "crates/nyaterm-rdp-helper",
     "crates/nyaterm-remote-desktop",
+    "crates/nyaterm-windows-rdp",
     "crates/nyaterm-store",
+    "crates/nyaterm-sync",
     "crates/nyaterm-terminal",
     "crates/nyaterm-terminal-gpui",
+    "crates/nyaterm-recording",
+    "crates/nyaterm-remote-ops",
+    "crates/nyaterm-files",
     "crates/nyaterm-transport",
     "crates/nyaterm-ui",
+    "crates/nyaterm-updater",
     "crates/nyaterm-vnc-helper",
 ]
 resolver = "3"
@@ -35,15 +45,23 @@ resolver = "3"
 exclude = ["temp", "examples/plugins/guests"]
 
 [workspace.package]
-version = "2.0.0"
+version = "2.0.4"
 edition = "2024"
 authors = ["Kang"]
 license = "Apache-2.0"
 repository = "https://github.com/nyakang/nyaterm"
 
 [workspace.dependencies]
+nucleo-matcher = "0.3.1"
+automerge = "=0.12.0"
 httpdate = "1.0"
+http = "1"
+opendal = { version = "=0.59.5", default-features = false, features = ["executors-tokio", "services-webdav", "services-s3", "services-gdrive", "services-onedrive", "services-aliyun-drive", "layers-timeout", "layers-retry"] }
 aes-gcm = "0.11"
+aes = { version = "0.8", features = ["zeroize"] }
+cbc = "0.1"
+pbkdf2 = "0.12"
+sha3 = "0.10"
 argon2 = { version = "0.5.3", features = ["zeroize"] }
 alacritty_terminal = "0.26.1-dev"
 anyhow = "1"
@@ -54,14 +72,17 @@ crypto_secretbox = "0.1"
 digest = "0.11.0-rc.5"
 dirs = "6"
 encoding_rs = "0.8"
+flate2 = "1.1"
 futures = "0.3"
+genai = { version = "=0.7.3", default-features = false, features = ["rustls-tls", "system-proxy"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "stream", "socks", "system-proxy"] }
 same-file = "1"
 tempfile = "3"
 glob = "0.3.4"
-gpui = { version = "=0.2.2", git = "https://github.com/nyakang/zed", rev = "c054331114f9abdc44e5d587cd23314db6ac5aff" }
-gpui-base = { git = "https://github.com/nyakang/gpui-kit", rev = "5aca244fdcfbeeb3243e41cdbfa954e8be4a39f5" }
-gpui-kit = { git = "https://github.com/nyakang/gpui-kit", rev = "5aca244fdcfbeeb3243e41cdbfa954e8be4a39f5" }
-gpui_platform = { git = "https://github.com/nyakang/zed", rev = "c054331114f9abdc44e5d587cd23314db6ac5aff" }
+gpui = { version = "=0.2.2", git = "https://github.com/nyakang/zed", rev = "a45a77c08a7cd5ed364778eb84961e1bde650b73" }
+gpui-base = { git = "https://github.com/nyakang/gpui-kit", rev = "c7410026f06bb07e56eeb619d8c0037c89e05682" }
+gpui-kit = { git = "https://github.com/nyakang/gpui-kit", rev = "c7410026f06bb07e56eeb619d8c0037c89e05682" }
+gpui_platform = { git = "https://github.com/nyakang/zed", rev = "a45a77c08a7cd5ed364778eb84961e1bde650b73" }
 # Pure-Rust, `#![forbid(unsafe)]` PDF rasterizer (MIT OR Apache-2.0). Pinned
 # exactly: the crate is pre-1.0 and explicitly experimental, so a caret range
 # could pull in a breaking 0.8 without review. `embed-fonts` bundles the 14
@@ -70,7 +91,7 @@ gpui_platform = { git = "https://github.com/nyakang/zed", rev = "c054331114f9abd
 hayro = { version = "=0.7.1", features = ["embed-fonts"] }
 hex = "0.4"
 hmac = "0.13"
-ironrdp-input = "0.8.0"
+ironrdp-input = "0.9.0"
 jsonc-parser = { version = "0.34", features = ["serde"] }
 keyring = { version = "3.6", features = [
     "apple-native",
@@ -83,15 +104,25 @@ md5 = "0.8"
 nyaterm-core = { path = "crates/nyaterm-core" }
 nyaterm-mcp-protocol = { path = "crates/nyaterm-mcp-protocol" }
 nyaterm-desktop = { path = "crates/nyaterm-desktop" }
+nyaterm-ai-client = { path = "crates/nyaterm-ai-client" }
+nyaterm-cloud-storage = { path = "crates/nyaterm-cloud-storage" }
 nyaterm-otp = { path = "crates/nyaterm-otp" }
+nyaterm-preview = { path = "crates/nyaterm-preview" }
+nyaterm-translation-client = { path = "crates/nyaterm-translation-client" }
 nyaterm-plugin-api = { path = "crates/nyaterm-plugin-api" }
 nyaterm-plugin-host = { path = "crates/nyaterm-plugin-host" }
 nyaterm-remote-desktop = { path = "crates/nyaterm-remote-desktop" }
+nyaterm-windows-rdp = { path = "crates/nyaterm-windows-rdp" }
 nyaterm-store = { path = "crates/nyaterm-store" }
+nyaterm-sync = { path = "crates/nyaterm-sync" }
 nyaterm-terminal = { path = "crates/nyaterm-terminal" }
 nyaterm-terminal-gpui = { path = "crates/nyaterm-terminal-gpui" }
+nyaterm-recording = { path = "crates/nyaterm-recording" }
+nyaterm-remote-ops = { path = "crates/nyaterm-remote-ops" }
+nyaterm-files = { path = "crates/nyaterm-files" }
 nyaterm-transport = { path = "crates/nyaterm-transport" }
 nyaterm-ui = { path = "crates/nyaterm-ui" }
+nyaterm-updater = { path = "crates/nyaterm-updater" }
 percent-encoding = "=2.3.2"
 portable-pty = { git = "https://github.com/nyakang/portable-pty", rev = "1ececcf9a10437f2fe04d0756735cd0847219a26" }
 quick-xml = "0.40"
@@ -100,7 +131,7 @@ redb = "4.1.0"
 regex = "1.11.1"
 rmcp = "=3.1.4"
 rustls = { version = "0.23.43", default-features = false, features = ["aws_lc_rs", "std"] }
-russh = { git = "https://github.com/nyakang/russh", rev = "3092e06cc827fc0f8d4c991280478f6e53c121a3", features = ["des", "dsa"] }
+russh = { git = "https://github.com/nyakang/russh", rev = "831c8ddd2898f472fb88e80a93cbf9beb40a0fe2", features = ["des", "dsa"] }
 russh-sftp = { git = "https://github.com/nyakang/russh-sftp", rev = "b638b4896de6a0efd699e4c3833873221b3b3f01" }
 rusty-leveldb = "4.0"
 rust-embed = { version = "8.11", features = ["include-exclude", "debug-embed"] }
@@ -129,7 +160,7 @@ url = "=2.5.8"
 unicode-normalization = "0.1"
 unicode-segmentation = "1.12"
 uuid = { version = "1", features = ["v4", "serde"] }
-vnc = { package = "vnc-rs", git = "https://github.com/nyakang/vnc-rs", rev = "ff1f60518247362dd763bfc84e60f8478d9cc18e" }
+vnc = { package = "vnc-rs", git = "https://github.com/nyakang/vnc-rs", rev = "7f9f0e5b57eec212f0926c54cdc7ae579dfe322a" }
 vte = "0.14"
 zeroize = "1"
 zmodem2 = { git = "https://github.com/nyakang/zmodem2", rev = "87a80216179f29d90e0b8c06ee5b4a6a0132c763" }
@@ -170,10 +201,10 @@ inherits = "dev"
 debug = "full"
 
 [patch.crates-io]
-alacritty_terminal = { git = "https://github.com/nyakang/alacritty", rev = "3b60b2ed9544cad2cbba9e92fa0785e885cb4af1" }
-ironrdp-client = { git = "https://github.com/nyakang/IronRDP", rev = "b10cd243bc9442a07fcd776568a5fdaf1c64492f" }
-ironrdp-connector = { git = "https://github.com/nyakang/IronRDP", rev = "b10cd243bc9442a07fcd776568a5fdaf1c64492f" }
-sspi = { git = "https://github.com/nyakang/sspi-rs", rev = "d2b04e63ca9a72f2a70b456186e2472b27f0d45d" }
+alacritty_terminal = { git = "https://github.com/nyakang/alacritty", rev = "eff8dffbd4c6063387c97c9c74a6428f329eee47" }
+ironrdp-client = { git = "https://github.com/nyakang/IronRDP", rev = "a15d5faa54192ad0eb2a1f9f4c9d8e1f06295970" }
+ironrdp-connector = { git = "https://github.com/nyakang/IronRDP", rev = "a15d5faa54192ad0eb2a1f9f4c9d8e1f06295970" }
+sspi = { git = "https://github.com/nyakang/sspi-rs", rev = "582bd37e355d710a0888faded5f4f6da4667c3c8" }
 # The published ironrdp-client and ironrdp-connector packages declare their
 # sibling crates as registry dependencies, but in the IronRDP repository those
 # are path dependencies, so patching the two above to git pulls the siblings
@@ -182,13 +213,13 @@ sspi = { git = "https://github.com/nyakang/sspi-rs", rev = "d2b04e63ca9a72f2a70b
 # are identical on both sides. `ironrdp-tls` is here for the same reason:
 # `nyaterm-rdp-helper` names its certificate-validation types directly, because
 # ironrdp-client does not re-export them.
-ironrdp-cliprdr = { git = "https://github.com/nyakang/IronRDP", rev = "b10cd243bc9442a07fcd776568a5fdaf1c64492f" }
-ironrdp-core = { git = "https://github.com/nyakang/IronRDP", rev = "b10cd243bc9442a07fcd776568a5fdaf1c64492f" }
-ironrdp-error = { git = "https://github.com/nyakang/IronRDP", rev = "b10cd243bc9442a07fcd776568a5fdaf1c64492f" }
-ironrdp-input = { git = "https://github.com/nyakang/IronRDP", rev = "b10cd243bc9442a07fcd776568a5fdaf1c64492f" }
-ironrdp-pdu = { git = "https://github.com/nyakang/IronRDP", rev = "b10cd243bc9442a07fcd776568a5fdaf1c64492f" }
-ironrdp-svc = { git = "https://github.com/nyakang/IronRDP", rev = "b10cd243bc9442a07fcd776568a5fdaf1c64492f" }
-ironrdp-tls = { git = "https://github.com/nyakang/IronRDP", rev = "b10cd243bc9442a07fcd776568a5fdaf1c64492f" }
+ironrdp-cliprdr = { git = "https://github.com/nyakang/IronRDP", rev = "a15d5faa54192ad0eb2a1f9f4c9d8e1f06295970" }
+ironrdp-core = { git = "https://github.com/nyakang/IronRDP", rev = "a15d5faa54192ad0eb2a1f9f4c9d8e1f06295970" }
+ironrdp-error = { git = "https://github.com/nyakang/IronRDP", rev = "a15d5faa54192ad0eb2a1f9f4c9d8e1f06295970" }
+ironrdp-input = { git = "https://github.com/nyakang/IronRDP", rev = "a15d5faa54192ad0eb2a1f9f4c9d8e1f06295970" }
+ironrdp-pdu = { git = "https://github.com/nyakang/IronRDP", rev = "a15d5faa54192ad0eb2a1f9f4c9d8e1f06295970" }
+ironrdp-svc = { git = "https://github.com/nyakang/IronRDP", rev = "a15d5faa54192ad0eb2a1f9f4c9d8e1f06295970" }
+ironrdp-tls = { git = "https://github.com/nyakang/IronRDP", rev = "a15d5faa54192ad0eb2a1f9f4c9d8e1f06295970" }
 
 # gpui-kit takes zed-reqwest from git while this workspace uses the
 # published crate; without this both end up in the graph.

@@ -6,6 +6,7 @@ use super::save_editor_connection;
 use crate::features::connections::connection_runtime::helpers::{
     build_saved_connection_from_editor, connection_editor_from_saved,
 };
+use crate::models::{ConnectionEditorPasswordSource, ConnectionPasswordEdit};
 
 fn connection(id: &str, group_id: Option<&str>, sort_order: i32) -> SavedConnection {
     // The older saved format omits timestamps and optional editor metadata.
@@ -23,6 +24,80 @@ fn edited(connection: SavedConnection) -> SavedConnection {
 }
 
 #[test]
+fn telnet_network_settings_survive_edit_save_reload_and_raw_tcp_changes() {
+    let root = TestTempDir::new("nyaterm-telnet-network");
+    let store = ConnectionStore::open(&root).unwrap();
+    let original: SavedConnection = serde_json::from_value(json!({
+        "id":"telnet", "name":"Telnet", "type":"telnet", "host":"device.internal",
+        "network":{"proxy_id":"proxy", "proxy_jump_id":"jump", "host_key_alias":"retained-alias"}
+    }))
+    .unwrap();
+    store.save_connection(&original).unwrap();
+    for raw in [false, true, false] {
+        let stored = store.get_connection("telnet").unwrap().unwrap();
+        let mut editor = connection_editor_from_saved(stored, false);
+        editor.raw_tcp_cli = raw;
+        editor.description = "Edited".into();
+        let built = build_saved_connection_from_editor(&editor).unwrap();
+        assert_eq!(built.network, original.network);
+        save_editor_connection(&store, built, None, Some(ConnectionPasswordEdit::Keep)).unwrap();
+        let reloaded = store.get_connection("telnet").unwrap().unwrap();
+        assert_eq!(reloaded.network, original.network);
+        assert!(
+            matches!(reloaded.config, nyaterm_core::ConnectionType::Telnet { raw_tcp_cli, .. } if raw_tcp_cli == raw)
+        );
+    }
+    let mut editor =
+        connection_editor_from_saved(store.get_connection("telnet").unwrap().unwrap(), false);
+    editor.proxy_id = None;
+    editor.proxy_jump_id = None;
+    editor.host_key_alias = None;
+    assert!(
+        build_saved_connection_from_editor(&editor)
+            .unwrap()
+            .network
+            .is_none()
+    );
+}
+
+#[test]
+fn saving_mstsc_preserves_stored_authentication_and_unused_options() {
+    let root = TestTempDir::new("nyaterm-mstsc-preserve");
+    let store = ConnectionStore::open(&root).unwrap();
+    for mode in ["password", "future-auth"] {
+        let original: SavedConnection = serde_json::from_value(json!({
+            "id":"rdp", "name":"RDP", "type":"rdp", "host":"example.test", "backend":"windows",
+            "auth":{"mode":mode,"password":"sample","has_password":false,"password_id":"missing"},
+            "security":{"certificate_policy":"future-policy"},
+            "display":{"width":900,"height":700},
+            "clipboard":{"mode":"future-clipboard"}, "reconnect":{"enabled":false,"max_attempts":21}
+        }))
+        .unwrap();
+        store.save_connection(&original).unwrap();
+        let previous = store.get_connection("rdp").unwrap().unwrap();
+        let mut editor = connection_editor_from_saved(previous.clone(), false);
+        editor.rdp_backend = "mstsc".into();
+        editor.username.clear();
+        editor.name = "External RDP".into();
+        let built = build_saved_connection_from_editor(&editor).unwrap();
+        save_editor_connection(
+            &store,
+            built.clone(),
+            None,
+            Some(ConnectionPasswordEdit::Keep),
+        )
+        .unwrap();
+        let saved = store.get_connection("rdp").unwrap().unwrap();
+        assert!(
+            saved.auth == previous.auth,
+            "hidden authentication must be preserved"
+        );
+        assert_eq!(saved.config, built.config);
+        assert_eq!(saved.name, "External RDP");
+    }
+}
+
+#[test]
 fn editing_middle_connection_preserves_custom_order_after_reloading() {
     for group_id in [None, Some("group")] {
         let root = TestTempDir::new("nyaterm-editor-order");
@@ -33,7 +108,9 @@ fn editing_middle_connection_preserves_custom_order_after_reloading() {
                 .unwrap();
         }
         let built = edited(store.get_connection("b").unwrap().unwrap());
-        let sessions = save_editor_connection(&store, built, None).unwrap();
+        let sessions =
+            save_editor_connection(&store, built, None, Some(ConnectionPasswordEdit::Keep))
+                .unwrap();
         assert_eq!(
             sessions
                 .connections
@@ -79,7 +156,7 @@ fn editor_save_preserves_latest_usage_order_and_unexposed_metadata() {
     let previous = store.get_connection("b").unwrap().unwrap();
     assert!(previous.last_used_at_ms.is_some());
 
-    save_editor_connection(&store, built, None).unwrap();
+    save_editor_connection(&store, built, None, Some(ConnectionPasswordEdit::Keep)).unwrap();
     let saved = store.get_connection("b").unwrap().unwrap();
     assert_eq!(saved.sort_order, previous.sort_order);
     assert_eq!(saved.last_used_at_ms, previous.last_used_at_ms);
@@ -116,7 +193,9 @@ fn changing_group_appends_after_destination_siblings_and_preserves_usage() {
         let mut editor = connection_editor_from_saved(previous.clone(), false);
         editor.group_id = target.map(str::to_owned);
         let built = build_saved_connection_from_editor(&editor).unwrap();
-        let loaded = save_editor_connection(&store, built, None).unwrap();
+        let loaded =
+            save_editor_connection(&store, built, None, Some(ConnectionPasswordEdit::Keep))
+                .unwrap();
         let destination = loaded
             .connections
             .iter()
@@ -157,7 +236,7 @@ fn new_connection_appends_to_its_group_without_inheriting_usage() {
         editor.id = None;
         let built = build_saved_connection_from_editor(&editor).unwrap();
         let new_id = built.id.clone();
-        save_editor_connection(&store, built, None).unwrap();
+        save_editor_connection(&store, built, None, Some(ConnectionPasswordEdit::Keep)).unwrap();
         let saved = store.get_connection(&new_id).unwrap().unwrap();
         assert_eq!(saved.sort_order, 9);
         assert_eq!(saved.last_used_at_ms, None);
@@ -183,11 +262,287 @@ fn editor_save_into_new_group_starts_at_zero_and_saves_group() {
             editor.id = None;
         }
         let built = build_saved_connection_from_editor(&editor).unwrap();
-        let loaded = save_editor_connection(&store, built, Some(&group)).unwrap();
+        let loaded = save_editor_connection(
+            &store,
+            built,
+            Some(&group),
+            Some(ConnectionPasswordEdit::Keep),
+        )
+        .unwrap();
         assert_eq!(loaded.groups.len(), 1);
         assert_eq!(loaded.groups[0].id, group.id);
         assert_eq!(loaded.connections.len(), 1);
         assert_eq!(loaded.connections[0].group_id.as_deref(), Some("new-group"));
         assert_eq!(loaded.connections[0].sort_order, 0);
+    }
+}
+
+#[test]
+fn password_save_preserves_latest_secret_after_lock_and_round_trips_replace_and_clear() {
+    for kind in ["ssh", "telnet", "rdp", "vnc"] {
+        let root = TestTempDir::new("nyaterm-single-password-save");
+        let store = ConnectionStore::open(&root).unwrap();
+        let original: SavedConnection = serde_json::from_value(json!({
+            "id": "password", "name": "Password", "type": kind,
+            "host": "example.test", "username": "user",
+            "auth": {"mode": "password", "password_source": "connection", "password": "old"}
+        }))
+        .unwrap();
+        store.save_connection(&original).unwrap();
+        let mut editor =
+            connection_editor_from_saved(store.get_connection("password").unwrap().unwrap(), false);
+        // A lock releases all plaintext; Keep must fetch the latest database value.
+        editor.password = Default::default();
+        editor.existing_password = None;
+        let mut latest = store.get_connection("password").unwrap().unwrap();
+        latest.auth.as_mut().unwrap().password = Some("latest".into());
+        store.save_connection(&latest).unwrap();
+        let built = build_saved_connection_from_editor(&editor).unwrap();
+        save_editor_connection(&store, built, None, Some(ConnectionPasswordEdit::Keep)).unwrap();
+        assert_eq!(
+            store
+                .get_connection("password")
+                .unwrap()
+                .unwrap()
+                .auth
+                .unwrap()
+                .password
+                .as_deref(),
+            Some("latest")
+        );
+
+        editor.password = " new ".into();
+        editor.password_edit = ConnectionPasswordEdit::Replace;
+        let built = build_saved_connection_from_editor(&editor).unwrap();
+        save_editor_connection(&store, built, None, Some(editor.password_edit)).unwrap();
+        assert_eq!(
+            store
+                .get_connection("password")
+                .unwrap()
+                .unwrap()
+                .auth
+                .unwrap()
+                .password
+                .as_deref(),
+            Some(" new ")
+        );
+        editor.password = Default::default();
+        editor.password_edit = ConnectionPasswordEdit::Remove;
+        let built = build_saved_connection_from_editor(&editor).unwrap();
+        save_editor_connection(&store, built, None, Some(editor.password_edit)).unwrap();
+        drop(store);
+        let reopened = ConnectionStore::open(&root).unwrap();
+        assert!(
+            reopened
+                .get_connection("password")
+                .unwrap()
+                .unwrap()
+                .auth
+                .unwrap()
+                .password
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn keeping_unreadable_ciphertext_survives_saving_and_reopening() {
+    for kind in ["ssh", "telnet", "rdp", "vnc"] {
+        let root = TestTempDir::new("nyaterm-editor-unreadable-password");
+        let store = ConnectionStore::open(&root).unwrap();
+        let original: SavedConnection = serde_json::from_value(json!({
+            "id":"locked", "name":"Locked", "type":kind, "host":"example.test", "username":"user",
+            "auth":{"mode":"password", "password":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "has_password":true}
+        }))
+        .unwrap();
+        store.save_connection(&original).unwrap();
+        let mut editor =
+            connection_editor_from_saved(store.get_connection("locked").unwrap().unwrap(), false);
+        assert!(editor.password.is_empty());
+        editor.name = "Renamed".into();
+        editor.existing_password = None;
+        let built = build_saved_connection_from_editor(&editor).unwrap();
+        save_editor_connection(&store, built, None, Some(ConnectionPasswordEdit::Keep)).unwrap();
+        drop(store);
+        let reopened = ConnectionStore::open(&root).unwrap();
+        let saved = reopened.get_connection("locked").unwrap().unwrap();
+        assert_eq!(saved.name, "Renamed");
+        let auth = saved.auth.unwrap();
+        assert!(auth.has_password);
+        assert_eq!(
+            auth.password.as_deref(),
+            Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        );
+    }
+}
+
+#[test]
+fn ssh_authentication_tabs_preserve_password_sources_keys_and_agent_settings_after_restart() {
+    for auth in [
+        json!({"mode":"password", "password":" fixture password "}),
+        json!({"mode":"password", "password":"   ", "account_id":"account", "password_source":"connection", "username_source":"connection"}),
+        json!({"mode":"password", "account_id":"account", "password_source":"account"}),
+        json!({"mode":"password", "password_id":"account"}),
+    ] {
+        let root = TestTempDir::new("nyaterm-ssh-auth-retention");
+        let mut store = ConnectionStore::open(&root).unwrap();
+        store.save_password(serde_json::from_value(json!({
+            "id":"account", "name":"Fixture account", "username":"account-user", "password":"fixture-account-password"
+        })).unwrap()).unwrap();
+        let original: SavedConnection = serde_json::from_value(json!({
+            "id":"ssh", "name":"SSH", "type":"ssh", "host":"example.test", "username":"user", "auth":auth
+        })).unwrap();
+        store.save_connection(&original).unwrap();
+        let expected_password = original.auth.as_ref().unwrap().password.clone();
+        let mut editor =
+            connection_editor_from_saved(store.get_connection("ssh").unwrap().unwrap(), false);
+        let expected_source = editor.password_source;
+        let expected_account = editor.account_id.clone();
+        let expected_username_source = editor.username_source;
+        let endpoint = nyaterm_core::SshAgentEndpoint::Environment {
+            variable: "FIXTURE_SSH_AGENT".into(),
+        };
+        editor.key_id = Some("fixture-key".into());
+        editor.agent_endpoint = endpoint.clone();
+        for mode in ["key", "agent", "none", "password", "key", "password"] {
+            editor.auth_mode = mode.into();
+            let built = build_saved_connection_from_editor(&editor).unwrap();
+            let password_edit = (editor.password_source == ConnectionEditorPasswordSource::Direct)
+                .then_some(editor.password_edit);
+            save_editor_connection(&store, built, None, password_edit).unwrap();
+            drop(store);
+            store = ConnectionStore::open(&root).unwrap();
+            let saved = store.get_connection("ssh").unwrap().unwrap();
+            assert_eq!(saved.auth.as_ref().unwrap().mode, mode);
+            assert_eq!(saved.auth.as_ref().unwrap().password, expected_password);
+            editor = connection_editor_from_saved(saved, false);
+            assert_eq!(editor.password_source, expected_source);
+            assert_eq!(editor.account_id, expected_account);
+            assert_eq!(editor.username_source, expected_username_source);
+            assert_eq!(editor.key_id.as_deref(), Some("fixture-key"));
+            assert_eq!(editor.agent_endpoint, endpoint);
+            if expected_source == ConnectionEditorPasswordSource::Direct {
+                assert_eq!(Some(&editor.password), expected_password.as_ref());
+            }
+        }
+        editor.key_id = None;
+        let built = build_saved_connection_from_editor(&editor).unwrap();
+        save_editor_connection(
+            &store,
+            built,
+            None,
+            (expected_source == ConnectionEditorPasswordSource::Direct)
+                .then_some(ConnectionPasswordEdit::Keep),
+        )
+        .unwrap();
+        assert!(
+            store
+                .get_connection("ssh")
+                .unwrap()
+                .unwrap()
+                .auth
+                .unwrap()
+                .key_id
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn inactive_ssh_password_keeps_latest_or_unreadable_secret_and_honors_replace_and_remove() {
+    for mode in ["key", "agent", "none"] {
+        for unreadable in [false, true] {
+            let root = TestTempDir::new("nyaterm-inactive-ssh-password");
+            let mut store = ConnectionStore::open(&root).unwrap();
+            let mut original: SavedConnection = serde_json::from_value(json!({
+                "id":"ssh", "name":"SSH", "type":"ssh", "host":"example.test", "username":"user",
+                "auth":{"mode":"password", "password_source":"connection", "password":"fixture-old-password"}
+            })).unwrap();
+            store.save_connection(&original).unwrap();
+            let mut editor =
+                connection_editor_from_saved(store.get_connection("ssh").unwrap().unwrap(), false);
+            editor.auth_mode = mode.into();
+            editor.key_id = Some("fixture-key".into());
+            // Model locking after opening the editor and a newer database credential.
+            editor.password = Default::default();
+            editor.existing_password = None;
+            let latest = if unreadable {
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+            } else {
+                " fixture-latest-password "
+            };
+            original.auth.as_mut().unwrap().password = Some(latest.into());
+            original.auth.as_mut().unwrap().has_password = unreadable;
+            store.save_connection(&original).unwrap();
+            let built = build_saved_connection_from_editor(&editor).unwrap();
+            save_editor_connection(&store, built, None, Some(ConnectionPasswordEdit::Keep))
+                .unwrap();
+            drop(store);
+            store = ConnectionStore::open(&root).unwrap();
+            let saved = store.get_connection("ssh").unwrap().unwrap();
+            let auth = saved.auth.unwrap();
+            assert_eq!(auth.mode, mode);
+            assert_eq!(auth.password.as_deref(), Some(latest));
+            assert_eq!(auth.has_password, unreadable);
+
+            editor.password = " fixture-replacement ".into();
+            editor.password_edit = ConnectionPasswordEdit::Replace;
+            let built = build_saved_connection_from_editor(&editor).unwrap();
+            save_editor_connection(&store, built, None, Some(editor.password_edit)).unwrap();
+            assert_eq!(
+                store
+                    .get_connection("ssh")
+                    .unwrap()
+                    .unwrap()
+                    .auth
+                    .unwrap()
+                    .password
+                    .as_deref(),
+                Some(" fixture-replacement ")
+            );
+
+            editor.password = Default::default();
+            editor.password_edit = ConnectionPasswordEdit::Remove;
+            let built = build_saved_connection_from_editor(&editor).unwrap();
+            save_editor_connection(&store, built, None, Some(editor.password_edit)).unwrap();
+            drop(store);
+            store = ConnectionStore::open(&root).unwrap();
+            let auth = store.get_connection("ssh").unwrap().unwrap().auth.unwrap();
+            assert_eq!(auth.mode, mode);
+            assert!(auth.password.is_none());
+            assert!(!auth.has_password);
+            assert_eq!(auth.key_id.as_deref(), Some("fixture-key"));
+        }
+    }
+}
+
+#[test]
+fn ssh_compatibility_mode_survives_editor_save_reload_and_profile_changes() {
+    let root = TestTempDir::new("nyaterm-ssh-compatibility-editor");
+    let store = ConnectionStore::open(&root).unwrap();
+    let original = connection("ssh-compatibility", None, 0);
+    assert!(!connection_editor_from_saved(original.clone(), false).ssh_compatibility_mode);
+    store.save_connection(&original).unwrap();
+    for profile in [
+        nyaterm_core::SshProfile::Standard,
+        nyaterm_core::SshProfile::NetworkDevice,
+    ] {
+        for enabled in [true, false] {
+            let stored = store.get_connection(&original.id).unwrap().unwrap();
+            let mut editor = connection_editor_from_saved(stored, false);
+            editor.ssh_profile = profile;
+            editor.ssh_compatibility_mode = enabled;
+            let built = build_saved_connection_from_editor(&editor).unwrap();
+            assert_eq!(built.ssh_compatibility_mode, enabled);
+            save_editor_connection(&store, built, None, Some(ConnectionPasswordEdit::Keep))
+                .unwrap();
+            let reloaded = store.get_connection(&original.id).unwrap().unwrap();
+            assert_eq!(reloaded.ssh_profile, profile);
+            assert_eq!(reloaded.ssh_compatibility_mode, enabled);
+            assert_eq!(
+                connection_editor_from_saved(reloaded, false).ssh_compatibility_mode,
+                enabled
+            );
+        }
     }
 }

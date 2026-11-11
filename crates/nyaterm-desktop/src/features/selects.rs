@@ -4,21 +4,6 @@
 //! component entity owns focus and popup state, and emits only committed value
 //! changes back to the application.
 
-use std::collections::HashMap;
-
-use gpui::{
-    App, AppContext, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, Subscription, Window, div, px,
-};
-use nyaterm_core::{
-    AiAgentKind, AiPermissionMode, CodexThreadMode, ExistingFileBehavior, ExternalMcpSessionScope,
-    McpTerminalDisplayMode, RecordingMode, RecordingRotationPolicy, RiskLevel,
-};
-use nyaterm_transport::SftpDuplicatePolicy;
-use nyaterm_ui::{
-    NYA_FORM_CONTROL_HEIGHT_PX, NyaSelect, NyaSelectEvent, NyaSelectOption, NyaSelectState,
-};
-
 use super::NyaTermApp;
 use super::ai::AiFullAccessSetting;
 use crate::features::shell::TabMouseActionTarget;
@@ -27,6 +12,19 @@ use crate::send_command::{
     SendCommandDataType, SendCommandLineEnding, SendCommandMode, SendCommandTarget,
 };
 use crate::temporary_ssh_link::TemporaryLinkProtocol;
+use gpui::{
+    App, AppContext, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, Styled as _, Subscription, Window, div, px,
+};
+use nyaterm_core::{
+    AiAgentKind, AiPermissionMode, CodexThreadMode, ExistingFileBehavior, ExternalMcpSessionScope,
+    McpTerminalDisplayMode, RecordingMode, RecordingRotationPolicy, RiskLevel,
+};
+use nyaterm_files::sftp_transfer_types::SftpDuplicatePolicy;
+use nyaterm_ui::{
+    NYA_FORM_CONTROL_HEIGHT_PX, NyaSelect, NyaSelectEvent, NyaSelectOption, NyaSelectState,
+};
+use std::collections::HashMap;
 
 pub(in crate::features) const FOLLOW_UI_THEME_VALUE: &str = "__nya_follow_ui_theme__";
 pub(in crate::features) const NO_SELECTION_VALUE: &str = "__nya_no_selection__";
@@ -192,8 +190,28 @@ impl NyaTermApp {
     where
         I: Into<SharedString>,
     {
+        self.form_select_control_with_search(id, options, selected_value, disabled, None, cx)
+    }
+
+    pub(in crate::features) fn form_select_control_with_search<I>(
+        &mut self,
+        id: I,
+        options: Vec<NyaSelectOption>,
+        selected_value: Option<String>,
+        disabled: bool,
+        search_placeholder: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<I>
+    where
+        I: Into<SharedString>,
+    {
         let id = id.into();
         let select = self.select_entity(id.clone(), options, selected_value, disabled, cx);
+        let searchable = search_placeholder.is_some();
+        select.update(cx, |select, cx| {
+            select.set_searchable(searchable, cx);
+            select.set_search_placeholder(search_placeholder, cx);
+        });
 
         div()
             .id(id)
@@ -211,6 +229,15 @@ impl NyaTermApp {
         let Some(value) = value else {
             return;
         };
+
+        if id.starts_with("asset-batch.select.") {
+            self.apply_asset_batch_select(id, value, cx);
+            return;
+        }
+
+        if self.change_runtime_auth_select(id, value, cx) {
+            return;
+        }
 
         if id == "connection-editor-kind" {
             if let Some(kind) = [
@@ -286,6 +313,15 @@ impl NyaTermApp {
                     self.set_diagnostics_retention_days(days, cx);
                 }
             }
+            "settings.general.diagnostics-shard-size" => {
+                if let Ok(bytes) = value.parse::<u64>() {
+                    self.set_diagnostics_log_shard_bytes(bytes, cx);
+                }
+            }
+            "settings.terminal.wrap-mode" => self.set_terminal_wrap_mode(
+                nyaterm_core::models::settings::TerminalWrapMode::from_compat_value(value),
+                cx,
+            ),
             "settings.terminal.keep-alive-mode" => match value {
                 "strict" => self.set_terminal_keep_alive_mode("strict", cx),
                 "disabled" => self.set_terminal_keep_alive_mode("disabled", cx),
@@ -553,13 +589,11 @@ impl NyaTermApp {
                     "connection-editor-ssh-terminal-type" => {
                         ConnectionEditorSelect::SshTerminalType
                     }
+                    "connection-editor-rdp-backend" => ConnectionEditorSelect::RdpBackend,
                     "connection-editor-rdp-certificate-policy" => {
                         ConnectionEditorSelect::RdpCertificatePolicy
                     }
                     "connection-editor-rdp-display-mode" => ConnectionEditorSelect::RdpDisplayMode,
-                    "connection-editor-rdp-clipboard-mode" => {
-                        ConnectionEditorSelect::RdpClipboardMode
-                    }
                     "connection-editor-vnc-security-mode" => {
                         ConnectionEditorSelect::VncSecurityMode
                     }

@@ -15,10 +15,12 @@ mod input;
 mod input_focus;
 mod markdown;
 mod menu;
+mod native_overlay;
 pub mod notification;
 mod number_input;
 pub mod plot;
 mod popover;
+pub mod resize_handle;
 mod root;
 mod segmented;
 mod selectable_text;
@@ -27,6 +29,7 @@ mod settings;
 mod sizing;
 pub mod tab_close;
 mod tabs;
+pub mod text;
 mod theme;
 mod theme_bridge;
 mod tooltip;
@@ -36,7 +39,10 @@ pub mod window_chrome;
 pub use app_menu_bar::{NyaAppMenu, NyaAppMenuBar};
 pub use button::{NyaButton, NyaButtonVariant, NyaIconButton};
 pub use child_window::{ChildWindowSlot, activate_child_window};
-pub use command::{NyaCommand, NyaCommandIndex, NyaCommandItem, NyaCommandState};
+pub use command::{
+    NyaCommand, NyaCommandIndex, NyaCommandItem, NyaCommandState, command_row_highlight_index,
+    command_row_selection_wash,
+};
 pub use dialog::{
     NyaConfirmDialog, NyaDialog, NyaDialogFooter, NyaDialogHandle, NyaDialogWindowExt,
 };
@@ -63,12 +69,18 @@ pub use input::{
     NyaSearchInput, NyaTextArea, set_nya_input_label_provider,
 };
 pub use markdown::NyaMarkdown;
-pub use menu::{NyaContextMenu, NyaDropdownMenu, NyaMenuAnchor, NyaMenuItem};
+pub use menu::{
+    NyaContextMenu, NyaDropdownMenu, NyaMenuAnchor, NyaMenuItem, nya_popup_is_active,
+    nya_popup_menu_is_active,
+};
+pub use native_overlay::{
+    enable_native_child_overlays, nya_modal_overlay, nya_passive_overlay, nya_region_overlay,
+};
 pub use number_input::{
     NyaNumberInput, NyaNumberInputEvent, NyaNumberInputOptions, NyaNumberInputState, NyaNumberStep,
 };
 pub use popover::{NyaPopover, NyaPopoverAlign, NyaPopoverPlacement};
-pub use root::{NyaRoot, NyaWindowHandle, nya_root, set_nya_root_transparent};
+pub use root::{NyaRoot, NyaWindowHandle, init_components, nya_root, set_nya_root_transparent};
 pub use segmented::NyaSegmentedControl;
 pub use selectable_text::NyaSelectableText;
 pub use selection::{
