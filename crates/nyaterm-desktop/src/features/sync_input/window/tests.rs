@@ -252,6 +252,9 @@ fn escape_dismisses_delete_confirmation_before_closing_groups_window(cx: &mut Te
         });
     });
     draw_dialog_with_focus(&mut visual);
+    // Confirm dialogs deliberately focus Cancel first; move to the danger
+    // action before using Enter, matching the keyboard path a user must take.
+    visual.update(|window, cx| window.focus_next(cx));
     visual.simulate_keystrokes("enter");
     draw(&mut visual);
     assert!(app.read_with(cx, |app, _| app.sync_input.groups().is_empty()));
