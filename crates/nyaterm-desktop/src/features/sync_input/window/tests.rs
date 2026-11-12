@@ -58,6 +58,14 @@ fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
+fn draw_dialog_with_focus(cx: &mut VisualTestContext) {
+    draw(cx);
+    // Native windows run this one-shot callback after drawing; the test host
+    // must advance it explicitly before keyboard input reaches the dialog.
+    cx.update(|window, cx| window.simulate_next_frame(cx));
+    draw(cx);
+}
+
 fn scroll_to_end(cx: &mut VisualTestContext, selector: &'static str) {
     let viewport = cx.debug_bounds(selector).unwrap();
     cx.simulate_mouse_move(viewport.center(), None, Modifiers::default());
@@ -231,7 +239,7 @@ fn escape_dismisses_delete_confirmation_before_closing_groups_window(cx: &mut Te
             app.request_delete_selected_sync_group(window, cx);
         });
     });
-    draw(&mut visual);
+    draw_dialog_with_focus(&mut visual);
     visual.update(|window, cx| assert!(window.has_active_nya_dialog(cx)));
     visual.simulate_keystrokes("escape");
     draw(&mut visual);
@@ -243,7 +251,7 @@ fn escape_dismisses_delete_confirmation_before_closing_groups_window(cx: &mut Te
             app.request_delete_selected_sync_group(window, cx)
         });
     });
-    draw(&mut visual);
+    draw_dialog_with_focus(&mut visual);
     visual.simulate_keystrokes("enter");
     draw(&mut visual);
     assert!(app.read_with(cx, |app, _| app.sync_input.groups().is_empty()));

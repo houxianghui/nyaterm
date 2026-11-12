@@ -15,6 +15,7 @@ use nyaterm_core::truncate_preview;
 
 use crate::features::NyaTermApp;
 use crate::features::pages::remote::HostToolKind;
+use crate::features::root::{SHELL_INSET_PX, TITLE_WORKSPACE_GAP_PX};
 use crate::features::view_widgets::{
     conversation_panel_header_with_actions, panel_header_with_actions,
 };
@@ -227,9 +228,8 @@ impl NyaTermApp {
 
     /// Window-coordinate rectangle of an open floating overlay.
     ///
-    /// Derived from the same fixed offsets the render code uses
-    /// (`top_0/left(px(40.))` inside the surface that starts below the 40px
-    /// title bar), so the input path never reads layout.
+    /// Derived from the same fixed offsets and shell inset the render code
+    /// uses, so the input path never reads layout.
     fn floating_panel_window_bounds(&self, side: PanelSide) -> Option<Bounds<Pixels>> {
         if !self.shell.panel_is_floating() {
             return None;
@@ -244,12 +244,15 @@ impl NyaTermApp {
             PanelSide::Right => self.shell.right_panel_width(),
         };
         let left = match side {
-            PanelSide::Left => FLOATING_PANEL_ACTIVITY_BAR_WIDTH,
-            PanelSide::Right => viewport_width - FLOATING_PANEL_ACTIVITY_BAR_WIDTH - panel_width,
+            PanelSide::Left => SHELL_INSET_PX + FLOATING_PANEL_ACTIVITY_BAR_WIDTH,
+            PanelSide::Right => {
+                viewport_width - SHELL_INSET_PX - FLOATING_PANEL_ACTIVITY_BAR_WIDTH - panel_width
+            }
         };
-        let height = (viewport_height - FLOATING_PANEL_TITLE_BAR_HEIGHT).max(0.);
+        let top = SHELL_INSET_PX + FLOATING_PANEL_TITLE_BAR_HEIGHT + TITLE_WORKSPACE_GAP_PX;
+        let height = (viewport_height - top - SHELL_INSET_PX).max(0.);
         Some(Bounds::new(
-            point(px(left), px(FLOATING_PANEL_TITLE_BAR_HEIGHT)),
+            point(px(left), px(top)),
             size(px(panel_width), px(height)),
         ))
     }

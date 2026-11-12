@@ -859,8 +859,8 @@ mod tests {
                 "{id}: hover fill should be the theme hover token",
             );
         }
-        // Light and dark appearances must resolve different selected fills.
-        assert_ne!(
+        // The fork intentionally uses macOS system blue in both appearances.
+        assert_eq!(
             quick_command_category_choice_fill(theme_palette("github-dark"), true, false),
             quick_command_category_choice_fill(theme_palette("github-light"), true, false),
         );

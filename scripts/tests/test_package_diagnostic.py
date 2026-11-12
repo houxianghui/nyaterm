@@ -17,6 +17,9 @@ import diagnostic_source  # noqa: E402
 import package_diagnostic  # noqa: E402
 
 
+# Resolve the historical release even in forks that do not copy upstream tags.
+V2_0_1_REVISION = "0fd62c9d601cee0703b72ddbaf9b0680251a06e8"
+
 SOURCE_FILES = [
     "crates/nyaterm-core/src/lib.rs",
     "crates/nyaterm-app/src/lib.rs",
@@ -48,7 +51,7 @@ def populate(source: Path, revision: str | None = None) -> None:
 
 class DiagnosticSourceTests(unittest.TestCase):
     def test_overlay_supports_original_release_and_current_source_without_manifest_changes(self) -> None:
-        for revision in ["v2.0.1", None]:
+        for revision in [V2_0_1_REVISION, None]:
             with self.subTest(revision=revision), tempfile.TemporaryDirectory() as directory:
                 source = Path(directory)
                 populate(source, revision)
@@ -100,7 +103,7 @@ class DiagnosticSourceTests(unittest.TestCase):
                 path = source / "scripts/release" / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(subprocess.check_output(
-                    ["git", "show", f"v2.0.1:scripts/release/{name}"], cwd=ROOT))
+                    ["git", "show", f"{V2_0_1_REVISION}:scripts/release/{name}"], cwd=ROOT))
             contract = package_diagnostic.portable_contract(source)
             self.assertIn("nyaterm-activex-helper.exe", contract["helper_files"])
             self.assertIn("conpty/x64/arm64/OpenConsole.exe", contract["conpty_files"][package_diagnostic.TARGET])

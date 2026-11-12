@@ -23,6 +23,8 @@ use crate::theme::ThemePalette;
 
 const WALLPAPER_TILE_ELEMENT_LIMIT: usize = 8192;
 const WALLPAPER_TILE_MIN_SIZE: f32 = 8.;
+pub(in crate::features) const SHELL_INSET_PX: f32 = 6.;
+pub(in crate::features) const TITLE_WORKSPACE_GAP_PX: f32 = 3.;
 const SSH_AUTH_PROMPT_PRIORITY: usize = usize::MAX;
 pub(in crate::features) const SSH_AUTH_OVERLAY_PADDING_PX: f32 = 12.;
 
@@ -544,8 +546,8 @@ impl NyaTermApp {
                     .size_full()
                     // React AppLayout keeps the chrome inside a 6px shell inset
                     // with 3px between the title bar and workspace surfaces.
-                    .p_1p5()
-                    .gap(px(3.))
+                    .p(px(SHELL_INSET_PX))
+                    .gap(px(TITLE_WORKSPACE_GAP_PX))
                     .child(self.title_bar(window, cx))
                     .child(self.workspace_surface(palette, window, cx)),
             );
