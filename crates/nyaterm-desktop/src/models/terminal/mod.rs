@@ -1,4 +1,5 @@
 //! Application terminal state and frame-worker facade.
+pub(crate) mod command_blocks;
 
 use crate::terminal::terminal_screen_from_output;
 use nyaterm_core::{TerminalBackendResize, terminal_backend_resize_changed};
@@ -174,6 +175,7 @@ fn merge_terminal_effects(target: &mut TerminalEffects, mut incoming: TerminalEf
 }
 
 pub(crate) struct TerminalViewState {
+    pub(crate) command_blocks: command_blocks::TerminalCommandBlockState,
     /// Bounded tail of decoded session output, control sequences included.
     /// Kept current for every session whatever its visibility or render mode:
     /// AI context, MCP recent output, and CLI prompt detection read it, and
@@ -207,6 +209,8 @@ pub(crate) struct TerminalViewState {
     pub(crate) protocol_state: TerminalProtocolState,
     /// Physical keys routed to this connection; never carried across reconnect.
     pub(crate) pressed_keys: HashSet<String>,
+    /// Tab actions omit the platform repeat flag, including locally consumed presses.
+    pub(crate) tab_action_pressed: bool,
     pub(crate) output_decoder: TerminalOutputDecoder,
     pub(crate) recording_decoder: TerminalOutputDecoder,
     pub(crate) screen_revision: u64,
@@ -249,6 +253,7 @@ pub(crate) struct TerminalFrameParts<'a> {
 impl TerminalViewState {
     pub(crate) fn new() -> Self {
         Self {
+            command_blocks: Default::default(),
             output: String::new(),
             screen: TerminalScreen::default(),
             max_line_number_digits: 1,
@@ -273,6 +278,7 @@ impl TerminalViewState {
             pending_selected_occurrence_visible_key: None,
             protocol_state: TerminalProtocolState::default(),
             pressed_keys: HashSet::new(),
+            tab_action_pressed: false,
             output_decoder: TerminalOutputDecoder::default(),
             recording_decoder: TerminalOutputDecoder::default(),
             screen_revision: 0,
@@ -302,6 +308,7 @@ impl TerminalViewState {
         let screen = terminal_screen_from_output(&output);
         let protocol_state = TerminalProtocolState::from_screen(&screen);
         Self {
+            command_blocks: Default::default(),
             output,
             screen,
             max_line_number_digits: 1,
@@ -326,6 +333,7 @@ impl TerminalViewState {
             pending_selected_occurrence_visible_key: None,
             protocol_state,
             pressed_keys: HashSet::new(),
+            tab_action_pressed: false,
             output_decoder: TerminalOutputDecoder::default(),
             recording_decoder: TerminalOutputDecoder::default(),
             screen_revision: 0,
@@ -448,6 +456,7 @@ impl TerminalViewState {
             ..TerminalProtocolState::default()
         };
         self.pressed_keys.clear();
+        self.tab_action_pressed = false;
         self.output_decoder.reset_decoder();
         self.recording_decoder.reset_decoder();
         self.set_encoding(encoding);
@@ -649,6 +658,9 @@ impl TerminalViewState {
         append_terminal_ui_output_tail(&mut self.output, visible_text);
         let previous_history = self.history_state();
         self.observe_line_number_digits(&snapshot);
+        if !snapshot.history.alternate_screen {
+            self.command_blocks.retain(&snapshot.command_blocks);
+        }
         let preserved_action_links = action_links.or_else(|| {
             self.frame_action_links
                 .take()
@@ -679,6 +691,9 @@ impl TerminalViewState {
     ) {
         let previous_history = self.history_state();
         self.observe_line_number_digits(&snapshot);
+        if !snapshot.history.alternate_screen {
+            self.command_blocks.retain(&snapshot.command_blocks);
+        }
         let preserved_action_links = action_links.or_else(|| {
             self.frame_action_links
                 .take()
@@ -713,6 +728,9 @@ impl TerminalViewState {
         // viewport snapshot until the surface becomes visible again.
         if let Some(snapshot) = snapshot {
             self.observe_line_number_digits(&snapshot);
+            if !snapshot.history.alternate_screen {
+                self.command_blocks.retain(&snapshot.command_blocks);
+            }
             self.detached_history = None;
             self.frame_snapshot = Some(snapshot);
             self.frame_action_links = action_links;
@@ -782,6 +800,9 @@ impl TerminalViewState {
             return;
         }
         self.observe_line_number_digits(&snapshot);
+        if offset == 0 && !snapshot.history.alternate_screen {
+            self.command_blocks.retain(&snapshot.command_blocks);
+        }
         if offset == 0 {
             self.detached_history = None;
             self.frame_snapshot = Some(snapshot);

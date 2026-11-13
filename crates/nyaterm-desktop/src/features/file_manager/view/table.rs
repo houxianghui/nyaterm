@@ -42,6 +42,7 @@ impl FileManagerWorkspace {
         let endpoint = state.endpoint.clone();
         let directory = state.path.clone();
         let drop_directory = directory.clone();
+        let external_directory = directory.clone();
         let can_write = !state.disconnected;
         let count = entries.len();
         let selected = state.selected_paths.len();
@@ -156,10 +157,12 @@ impl FileManagerWorkspace {
                         cx.notify();
                     }))
                     .can_drop(move |drag, _, _| {
-                        drag.downcast_ref::<FileManagerDragPayload>()
-                            .is_some_and(|payload| {
-                                accepts_drop(payload, &drop_endpoint, &directory, can_write)
-                            })
+                        drag.is::<gpui::ExternalPaths>()
+                            || drag.downcast_ref::<FileManagerDragPayload>().is_some_and(
+                                |payload| {
+                                    accepts_drop(payload, &drop_endpoint, &directory, can_write)
+                                },
+                            )
                     })
                     .on_drag_move(cx.listener(
                         move |this, event: &DragMoveEvent<FileManagerDragPayload>, window, cx| {
@@ -196,6 +199,19 @@ impl FileManagerWorkspace {
                             cx.stop_propagation();
                         },
                     ))
+                    .on_drop(
+                        cx.listener(move |this, paths: &gpui::ExternalPaths, window, cx| {
+                            this.drop_external_files(
+                                paths,
+                                pane,
+                                external_directory.clone(),
+                                can_write,
+                                window,
+                                cx,
+                            );
+                            cx.stop_propagation();
+                        }),
+                    )
                     .child(table)
                     .child(
                         div()
@@ -369,6 +385,10 @@ impl FileManagerWorkspace {
         let payload = FileManagerDragPayload {
             manager_id: self.id.clone(),
             pane_id: pane,
+            access_generation: state
+                .endpoint
+                .session_id()
+                .and_then(|session| self.read_app(cx, |app| app.file_access_generation(session))),
             endpoint: state.endpoint.clone(),
             entries: state.drag_entries(&entry),
             feedback: Rc::new(Cell::new(FileTransferOperation::Copy)),
@@ -498,15 +518,22 @@ impl FileManagerWorkspace {
             row = row.child(cell);
         }
         let drop_directory = entry.remote_path();
+        let external_directory = drop_directory.clone();
+        let external_is_directory = entry.is_directory();
         let hover_directory = drop_directory.clone();
         let writable = entry.is_directory()
             && !entry.is_symlink()
             && !state.disconnected
-            && entry
+            && (state.endpoint.session_id().is_some_and(|session| {
+                self.read_app(cx, |app| app.file_sudo_status(session).is_sudo())
+            }) || !entry
                 .permissions
-                .is_none_or(|permissions| permissions & 0o222 != 0);
+                .is_some_and(|permissions| permissions & 0o222 == 0));
         row = row
-            .can_drop(move |drag, _, _| drag.downcast_ref::<FileManagerDragPayload>().is_some())
+            .can_drop(move |drag, _, _| {
+                drag.is::<gpui::ExternalPaths>()
+                    || drag.downcast_ref::<FileManagerDragPayload>().is_some()
+            })
             .drag_over::<FileManagerDragPayload>(move |style, _, _, _| style.bg(rgb(palette.hover)))
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<FileManagerDragPayload>, window, cx| {
@@ -537,6 +564,21 @@ impl FileManagerWorkspace {
                     cx.stop_propagation();
                 }),
             );
+        row = row.on_drop(
+            cx.listener(move |this, paths: &gpui::ExternalPaths, window, cx| {
+                if external_is_directory {
+                    this.drop_external_files(
+                        paths,
+                        pane,
+                        external_directory.clone(),
+                        writable,
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }
+            }),
+        );
         let workspace = cx.weak_entity();
         NyaContextMenu::new_dynamic(row, move |window, cx| {
             workspace

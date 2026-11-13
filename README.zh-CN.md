@@ -41,7 +41,7 @@
   <a href="LICENSE">
     <img
       alt="License"
-      src="https://img.shields.io/badge/License-MIT-0EA5E9.svg?style=flat-square&logo=readthedocs&labelColor=334155&label=%E5%8D%8F%E8%AE%AE&v=2"
+      src="https://img.shields.io/badge/License-Apache%202.0-0EA5E9.svg?style=flat-square&logo=readthedocs&labelColor=334155&label=%E5%8D%8F%E8%AE%AE&v=2"
     >
   </a>
 </p>
@@ -108,7 +108,6 @@
 - **NyaTerm 是** 支持标签页、横向分屏和纵向分屏的终端工作区
 - **NyaTerm 是** 带传输队列和“本地编辑后回传”流程的 SFTP 文件浏览器
 - **NyaTerm 支持** SSH、本地终端、Telnet、串口、RDP 和 VNC 会话
-- **NyaTerm 不是** Shell 替代品；它用于连接远程 Shell、本地 Shell、Telnet 端点和串口设备
 
 ---
 
@@ -406,4 +405,4 @@ cargo run -p nyaterm-app --bin nyaterm
 <a name="license"></a>
 # 许可证
 
-本项目基于 [MIT 许可证](LICENSE) 开源。
+本项目基于 [Apache License 2.0](LICENSE) 开源。

@@ -23,7 +23,7 @@ use crate::features::{
     runtime_jobs::submit_session_start_job, session::PendingSessionStart,
     session::SavedConnectionStartOptions, session::SessionStartEventRequest,
 };
-use crate::models::{NavItem, SessionLaunchConfig, SessionRuntimeMetadata};
+use crate::models::{NavItem, SessionLaunchConfig, SessionRuntimeMetadata, WorkspaceTabId};
 
 struct BackgroundSessionStartRequest {
     connection_name: String,
@@ -34,11 +34,29 @@ struct BackgroundSessionStartRequest {
 }
 
 impl NyaTermApp {
+    pub(in crate::features::session) fn session_start_should_activate(
+        &self,
+        was_active: bool,
+    ) -> bool {
+        // Editors, files and settings can own the selected tab without an active
+        // terminal. The first-session fallback must respect that selection too.
+        let fallback_allowed = self.session.active_id().is_none()
+            && self.active_workspace_tab().is_none_or(|tab| {
+                matches!(
+                    WorkspaceTabId::from_layout_key(&tab),
+                    WorkspaceTabId::Session(_)
+                )
+            });
+        self.session
+            .start
+            .complete_success(was_active, fallback_allowed)
+    }
+
     pub(in crate::features) fn prepare_session_start_options(
         &mut self,
         mut options: SavedConnectionStartOptions,
     ) -> SavedConnectionStartOptions {
-        if let Some(request_id) = options.retry_request_id.as_ref()
+        if let Some(request_id) = options.request_id.as_ref()
             && let Some((_, pending)) = self
                 .session
                 .start
@@ -119,6 +137,26 @@ impl NyaTermApp {
         cx.notify();
     }
 
+    pub(in crate::features) fn wake_startup_restore_after_preparation(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session.restore_is_complete() {
+            return;
+        }
+        let Some(window) = self.shell.main_window() else {
+            return;
+        };
+        let app = cx.weak_entity();
+        cx.defer(move |cx| {
+            let _ = gpui::AnyWindowHandle::from(window).update(cx, |_, window, cx| {
+                let _ = app.update(cx, |app, cx| {
+                    app.pump_startup_restore_queue_if_ready(window, cx);
+                });
+            });
+        });
+    }
+
     pub(in crate::features) fn close_pending_session_start(
         &mut self,
         request_id: String,
@@ -132,6 +170,7 @@ impl NyaTermApp {
             pending_session_start_display_name(&pending)
         ));
         self.settle_session_start_tab_placements_if_idle();
+        self.wake_startup_restore_after_preparation(cx);
         cx.notify();
     }
 
@@ -165,6 +204,7 @@ impl NyaTermApp {
             failed_session_start_display_name(&failed)
         ));
         self.settle_session_start_tab_placements_if_idle();
+        self.wake_startup_restore_after_preparation(cx);
         cx.notify();
     }
 
@@ -173,13 +213,9 @@ impl NyaTermApp {
         registration: PendingSessionStartRegistration,
         cx: &mut Context<Self>,
     ) -> String {
-        let request_id = self
-            .session
-            .start
-            .preparing_retry_request(registration.tab_placement)
-            .map(str::to_string)
-            .unwrap_or_else(uuid);
+        let request_id = registration.request_id.clone().unwrap_or_else(uuid);
         let PendingSessionStartRegistration {
+            request_id: _,
             mcp_open_operation_id,
             requested_ssh_runtime_mode,
             connection_name,
@@ -201,7 +237,6 @@ impl NyaTermApp {
             status_message,
             append_start_log,
         } = registration;
-        self.session.start.finish_retry_preparation(&request_id);
         let requested_at = self
             .session
             .start
@@ -214,6 +249,7 @@ impl NyaTermApp {
         let reconnecting = self.session.start.register_pending(
             request_id.clone(),
             PendingSessionStart {
+                preparing: false,
                 mcp_open_operation_id,
                 requested_ssh_runtime_mode,
                 attempt: Default::default(),
@@ -311,6 +347,7 @@ impl NyaTermApp {
         if !matches!(launch_config, SessionLaunchConfig::Local(_))
             && self.remote_start_blocked_by_configuration_replacement(cx)
         {
+            self.fail_start_preparation(&options, "configuration replacement".into(), cx);
             return;
         }
 
@@ -318,17 +355,18 @@ impl NyaTermApp {
             && let Err(error) = nyaterm_core::character_encoding::CharacterEncoding::parse(label)
         {
             let error = crate::features::terminal::encoding_error_text(error);
-            self.fail_retry_preparation(&options, error.clone(), cx);
+            self.fail_start_preparation(&options, error.clone(), cx);
             self.shell.set_status(error);
             cx.notify();
             return;
         }
 
-        if !self.session.start.retry_is_pending(&options) {
+        if !self.session.start.request_can_start(&options) {
             return;
         }
         let options = self.prepare_session_start_options(options);
         let SavedConnectionStartOptions {
+            android_view: _,
             mcp_open_operation_id,
             ssh_runtime_mode: _,
             custom_name,
@@ -341,13 +379,14 @@ impl NyaTermApp {
             reconnect_session_id,
             workspace_split,
             tab_placement,
-            retry_request_id: _,
+            request_id,
         } = options;
         let kind = session_kind_for_launch_config(&launch_config);
         let multiplex_key = matches!(launch_config, SessionLaunchConfig::Ssh(_))
             .then(|| format!("ssh-session:{}", uuid()));
         let request_id = self.register_pending_session_start(
             PendingSessionStartRegistration {
+                request_id,
                 mcp_open_operation_id,
                 requested_ssh_runtime_mode: None,
                 connection_name: connection_name.clone(),
@@ -366,7 +405,11 @@ impl NyaTermApp {
                 reconnect_session_id,
                 workspace_split,
                 tab_placement,
-                status_message: format!("connecting to {connection_name}"),
+                status_message: if kind == nyaterm_transport::SessionKind::AdbShell {
+                    rust_i18n::t!("android.connecting", name = connection_name).into_owned()
+                } else {
+                    format!("connecting to {connection_name}")
+                },
                 append_start_log: true,
             },
             cx,
@@ -376,6 +419,14 @@ impl NyaTermApp {
         if let SessionLaunchConfig::Ssh(config) = &mut launch_config {
             config.bind_attempt(attempt.clone());
         }
+        let android_runtime = if let SessionLaunchConfig::AdbShell(config) = &launch_config {
+            self.android
+                .file_service(&config.device_key)
+                .ok()
+                .map(|files| files.runtime.clone())
+        } else {
+            None
+        };
         let session_manager = self.session.manager_handle();
         let ssh_connections = self.session.ssh_connection_pool();
         let session_start_tx = self.session.start.sender();
@@ -401,13 +452,35 @@ impl NyaTermApp {
                     session_manager
                         .create_telnet_session_with_attempt(config.clone(), attempt.clone())
                         .map(|session_info| {
-                            SessionStartSuccess::telnet(
+                            SessionStartSuccess::channel(
                                 Arc::clone(&session_manager),
                                 session_info,
                                 None,
                             )
                         })
                         .map_err(|error| error.to_string())
+                } else if let SessionLaunchConfig::AdbShell(config) = &launch_config {
+                    let runtime =
+                        android_runtime.ok_or_else(|| "AndroidDeviceDisconnected".to_string())?;
+                    session_manager
+                        .create_adb_session_with_cancel(
+                            nyaterm_transport::adb_shell::AdbShellConfig {
+                                name: config.name.clone(),
+                                binding: config.binding.clone(),
+                                cols: config.cols,
+                                rows: config.rows,
+                            },
+                            || {
+                                attempt
+                                    .check()
+                                    .map_err(|_| nyaterm_android::error::AdbError::Cancelled)?;
+                                runtime.check()
+                            },
+                        )
+                        .map(|info| {
+                            SessionStartSuccess::channel(Arc::clone(&session_manager), info, None)
+                        })
+                        .map_err(crate::features::android::labels::session_start_error_message)
                 } else {
                     create_session_from_launch_config(
                         &session_manager,
@@ -436,10 +509,11 @@ impl NyaTermApp {
         cx: &mut Context<Self>,
     ) {
         if self.remote_start_blocked_by_configuration_replacement(cx) {
+            self.fail_start_preparation(&options, "configuration replacement".into(), cx);
             return;
         }
 
-        if !self.session.start.retry_is_pending(&options) {
+        if !self.session.start.request_can_start(&options) {
             return;
         }
         config.runtime_mode = config.effective_runtime_mode();
@@ -459,6 +533,7 @@ impl NyaTermApp {
         }
         let options = self.prepare_session_start_options(options);
         let SavedConnectionStartOptions {
+            android_view: _,
             mcp_open_operation_id,
             ssh_runtime_mode,
             custom_name,
@@ -471,7 +546,7 @@ impl NyaTermApp {
             reconnect_session_id,
             workspace_split,
             tab_placement,
-            retry_request_id: _,
+            request_id,
         } = options;
         config.deferred_pty = true;
         let geometry_session_hint = after_session_id
@@ -488,6 +563,7 @@ impl NyaTermApp {
         let multiplex_key = format!("ssh-session:{}", uuid());
         let request_id = self.register_pending_session_start(
             PendingSessionStartRegistration {
+                request_id,
                 mcp_open_operation_id,
                 requested_ssh_runtime_mode: None,
                 connection_name: connection_name.clone(),
@@ -569,6 +645,7 @@ impl NyaTermApp {
         cx: &mut Context<Self>,
     ) {
         if self.remote_start_blocked_by_configuration_replacement(cx) {
+            self.fail_start_preparation(&request.options, "configuration replacement".into(), cx);
             return;
         }
 
@@ -581,7 +658,7 @@ impl NyaTermApp {
             existing_multiplex,
             existing_multiplex_key,
         } = request;
-        if !self.session.start.retry_is_pending(&options) {
+        if !self.session.start.request_can_start(&options) {
             return;
         }
         config.runtime_mode = config.effective_runtime_mode();
@@ -594,6 +671,7 @@ impl NyaTermApp {
         }
         let options = self.prepare_session_start_options(options);
         let SavedConnectionStartOptions {
+            android_view: _,
             mcp_open_operation_id,
             ssh_runtime_mode: _,
             custom_name,
@@ -606,7 +684,7 @@ impl NyaTermApp {
             reconnect_session_id,
             workspace_split,
             tab_placement,
-            retry_request_id: _,
+            request_id,
         } = options;
         config.deferred_pty = true;
         let geometry_session_hint = after_session_id
@@ -625,6 +703,7 @@ impl NyaTermApp {
             .unwrap_or_else(|| format!("ssh-session:{}", uuid()));
         let request_id = self.register_pending_session_start(
             PendingSessionStartRegistration {
+                request_id,
                 mcp_open_operation_id,
                 requested_ssh_runtime_mode: None,
                 connection_name: connection_name.clone(),
@@ -756,7 +835,7 @@ impl NyaTermApp {
 
     pub(in crate::features::session) fn apply_session_start_event(
         &mut self,
-        event: SessionStartResult,
+        mut event: SessionStartResult,
         cx: &mut Context<Self>,
     ) {
         let request_id = event.request_id.clone();
@@ -785,6 +864,24 @@ impl NyaTermApp {
                     was_active,
                 } => (pending, was_active),
             };
+        if pending.is_none() {
+            // Closed preparations and already-delivered requests cannot resurrect a tab.
+            return;
+        }
+        if let Some(SessionLaunchConfig::AdbShell(config)) =
+            pending.as_ref().and_then(|p| p.launch_config.as_ref())
+            && !self
+                .android
+                .devices
+                .get(&config.device_key)
+                .is_some_and(|lease| {
+                    lease.config.binding.generation == config.binding.generation
+                        && lease.files.runtime.is_valid()
+                })
+        {
+            // Dropping the replaced result closes a successful stale channel.
+            event.result = Err(rust_i18n::t!("android.errors.disconnected").into_owned());
+        }
         let connection_name = event.connection_name.clone();
         let kind = pending
             .as_ref()
@@ -991,10 +1088,7 @@ impl NyaTermApp {
                     self.session
                         .move_session_after(&session_id, &after_session_id);
                 }
-                let should_activate = self
-                    .session
-                    .start
-                    .complete_success(was_active_pending, self.session.active_id().is_none());
+                let should_activate = self.session_start_should_activate(was_active_pending);
                 if should_activate {
                     self.activate_session_id(&session_id, cx);
                     self.load_transfer_browser_for_active_session_if_needed(cx);
@@ -1004,11 +1098,15 @@ impl NyaTermApp {
                 // does not stack full terminal decorations on connect.
                 self.enter_connect_settle();
                 self.terminal.enter_session_render_degraded(&session_id);
-                self.shell.set_status(format!(
-                    "running {} · {}",
-                    short_id(&session_id),
-                    event.connection_name
-                ));
+                self.shell.set_status(if kind == SessionKind::AdbShell {
+                    rust_i18n::t!("android.connected", name = event.connection_name).into_owned()
+                } else {
+                    format!(
+                        "running {} · {}",
+                        short_id(&session_id),
+                        event.connection_name
+                    )
+                });
                 // Do not append local log text through the full terminal decode path
                 // on connect success — that competes with the first SSH/PTY frames.
                 self.apply_workspace_split_for_duplicate(cx, workspace_split, &session_id);
@@ -1024,7 +1122,7 @@ impl NyaTermApp {
                     diagnostic = "session_start",
                     request_id = %request_id,
                     connection_name = %connection_name,
-                    kind = session_kind_label(kind),
+                    kind = %session_kind_label(kind),
                     session_id = %session_id,
                     worker_duration_ms = worker_duration.as_millis(),
                     worker_to_ui_ms = worker_to_ui_duration.as_millis(),
@@ -1041,7 +1139,7 @@ impl NyaTermApp {
                         diagnostic = "session_start",
                         request_id = %request_id,
                         connection_name = %connection_name,
-                        kind = session_kind_label(kind),
+                        kind = %session_kind_label(kind),
                         session_id = %session_id,
                         worker_duration_ms = worker_duration.as_millis(),
                         worker_to_ui_ms = worker_to_ui_duration.as_millis(),
@@ -1075,8 +1173,16 @@ impl NyaTermApp {
                     self.shell
                         .set_last_connect_failure(connection_name.clone(), error.clone());
                 }
-                self.shell
-                    .set_status(format!("failed to start {connection_name}: {error}"));
+                self.shell.set_status(if kind == SessionKind::AdbShell {
+                    rust_i18n::t!(
+                        "savedConnections.startFailed",
+                        name = connection_name,
+                        error = error
+                    )
+                    .into_owned()
+                } else {
+                    format!("failed to start {connection_name}: {error}")
+                });
                 self.shell.select_nav(NavItem::Workspace);
                 let request_to_ui_duration = requested_at
                     .map(|requested_at| requested_at.elapsed())
@@ -1085,7 +1191,7 @@ impl NyaTermApp {
                     diagnostic = "session_start",
                     request_id = %request_id,
                     connection_name = %connection_name,
-                    kind = session_kind_label(kind),
+                    kind = %session_kind_label(kind),
                     worker_duration_ms = worker_duration.as_millis(),
                     worker_to_ui_ms = worker_to_ui_duration.as_millis(),
                     request_to_ui_ms = request_to_ui_duration.as_millis(),
@@ -1113,7 +1219,11 @@ impl NyaTermApp {
             || !self.session.has_session(old_id)
             || !self.session.has_session(new_id)
         {
-            let error = "terminal history could not be transferred".to_string();
+            let error = if completion.kind == SessionKind::AdbShell {
+                rust_i18n::t!("android.errors.operationFailed").into_owned()
+            } else {
+                "terminal history could not be transferred".to_string()
+            };
             let _ = self.session.manager().close(new_id);
             if self.session.has_session(new_id) {
                 self.remove_session_state(new_id, cx);
@@ -1126,7 +1236,12 @@ impl NyaTermApp {
             if let Some(id) = completion.mcp_open_operation_id.as_deref() {
                 self.complete_mcp_session_open_failure(id, &error);
             }
-            self.shell.set_status(format!("reconnect failed: {error}"));
+            self.shell
+                .set_status(if completion.kind == SessionKind::AdbShell {
+                    format!("{}: {error}", rust_i18n::t!("terminal.reconnectFailed"))
+                } else {
+                    format!("reconnect failed: {error}")
+                });
             cx.notify();
             return true;
         }
@@ -1143,21 +1258,22 @@ impl NyaTermApp {
                 self.start_auto_tunnels_for_connection(connection_id, cx);
             }
         }
-        if self
-            .session
-            .start
-            .complete_success(false, self.session.active_id().is_none())
-        {
+        if self.session_start_should_activate(false) {
             self.activate_session_id(new_id, cx);
             self.load_transfer_browser_for_active_session_if_needed(cx);
         }
         self.enter_connect_settle();
         self.terminal.enter_session_render_degraded(new_id);
-        self.shell.set_status(format!(
-            "running {} · {}",
-            short_id(new_id),
-            completion.connection_name
-        ));
+        self.shell
+            .set_status(if completion.kind == SessionKind::AdbShell {
+                rust_i18n::t!("android.connected", name = completion.connection_name).into_owned()
+            } else {
+                format!(
+                    "running {} · {}",
+                    short_id(new_id),
+                    completion.connection_name
+                )
+            });
         self.apply_workspace_split_for_duplicate(cx, completion.workspace_split, new_id);
         if let Some(startup_command) = completion.startup_command {
             self.schedule_startup_command(new_id.to_string(), startup_command, cx);
@@ -1170,6 +1286,9 @@ impl NyaTermApp {
 
 fn session_kind_for_launch_config(config: &SessionLaunchConfig) -> SessionKind {
     match config {
+        SessionLaunchConfig::AdbShell(_) => SessionKind::AdbShell,
+        SessionLaunchConfig::AdbFiles(_) => SessionKind::AdbFiles,
+        SessionLaunchConfig::AdbScreen(_) => SessionKind::AdbScreen,
         SessionLaunchConfig::Local(_) => SessionKind::LocalPty,
         SessionLaunchConfig::Ssh(_) => SessionKind::Ssh,
         SessionLaunchConfig::Telnet(config) if config.raw_tcp => SessionKind::RawTcp,
@@ -1189,6 +1308,24 @@ fn create_session_from_launch_config(
     launch_config: SessionLaunchConfig,
 ) -> Result<SessionStartSuccess, String> {
     match launch_config {
+        SessionLaunchConfig::AdbShell(config) => session_manager
+            .create_adb_session(nyaterm_transport::adb_shell::AdbShellConfig {
+                name: config.name.clone(),
+                binding: config.binding.clone(),
+                cols: config.cols,
+                rows: config.rows,
+            })
+            .map(|session_info| {
+                SessionStartSuccess::channel(
+                    Arc::clone(session_manager),
+                    session_info,
+                    Some(SessionLaunchConfig::AdbShell(config)),
+                )
+            })
+            .map_err(crate::features::android::labels::session_start_error_message),
+        SessionLaunchConfig::AdbFiles(_) | SessionLaunchConfig::AdbScreen(_) => {
+            unreachable!("Android non-terminal views own no terminal transport")
+        }
         SessionLaunchConfig::Local(config) => session_manager
             .create_local_session(config)
             .map(|session_info| SessionStartSuccess {
@@ -1217,7 +1354,7 @@ fn create_session_from_launch_config(
         SessionLaunchConfig::Telnet(config) => session_manager
             .create_telnet_session(config)
             .map(|session_info| {
-                SessionStartSuccess::telnet(Arc::clone(session_manager), session_info, None)
+                SessionStartSuccess::channel(Arc::clone(session_manager), session_info, None)
             })
             .map_err(|error| error.to_string()),
         SessionLaunchConfig::Serial(config) => session_manager
@@ -1237,6 +1374,9 @@ fn create_session_from_launch_config(
 
 fn launch_config_for_session_info(info: &SessionInfo) -> SessionLaunchConfig {
     match info.kind {
+        SessionKind::AdbShell | SessionKind::AdbFiles | SessionKind::AdbScreen => {
+            unreachable!("Android metadata is supplied by its launcher")
+        }
         SessionKind::LocalPty => SessionLaunchConfig::Local(LocalSessionConfig {
             name: info.name.clone(),
             shell_path: None,
@@ -1335,6 +1475,7 @@ mod focus_tests {
                     );
                     let request_id = app.register_pending_session_start(
                         PendingSessionStartRegistration {
+                            request_id: None,
                             mcp_open_operation_id: None,
                             requested_ssh_runtime_mode: None,
                             connection_name: "SSH".into(),

@@ -301,6 +301,7 @@ pub(in crate::features) struct AiSettingsPresentation {
     pub(in crate::features) header_errors:
         Arc<HashMap<(String, String), nyaterm_core::ai::provider_settings::CustomHeaderError>>,
     pub(in crate::features) agent_management: AgentManagementView,
+    pub(in crate::features) background_tasks: crate::features::mcp::tasks::BackgroundTasksView,
 }
 
 impl AiSettingsPresentation {
@@ -312,6 +313,7 @@ impl AiSettingsPresentation {
             credential_draft_key_ids: Arc::new(HashSet::new()),
             header_errors: Arc::new(HashMap::new()),
             agent_management: AgentManagementView::default(),
+            background_tasks: Default::default(),
         }
     }
 }
@@ -2364,6 +2366,37 @@ mod tests {
             .expect("settings footer button is drawn");
         vcx.simulate_click(bounds.center(), Modifiers::default());
         draw(app, vcx);
+    }
+
+    #[test]
+    fn enabled_cloud_sync_switch_can_be_clicked_without_a_master_password() {
+        let dir = TestConfigDir::new("nyaterm-settings-cloud-sync-recovery");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let (app, vcx) = hosted(&mut cx, dir.path());
+        vcx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                assert!(!app.settings.summary().has_master_password);
+                app.cloud_sync.toggle_enabled();
+                app.rebase_open_settings_draft(cx);
+                app.focus_settings_tab(SettingsTab::SyncBackup, cx);
+            });
+        });
+        draw(&app, vcx);
+        let control = vcx.debug_bounds("cloud-sync-enabled-control").unwrap();
+        vcx.simulate_click(control.center(), Modifiers::default());
+        draw(&app, vcx);
+        vcx.update(|_, cx| {
+            let app = app.read(cx);
+            assert!(!app.cloud_sync.settings().enabled);
+            assert!(app.settings_draft_dirty());
+            assert!(app.pending_settings_validation_error().is_none());
+        });
+        // Once disabled, the same rendered control must refuse re-enabling it.
+        let control = vcx.debug_bounds("cloud-sync-enabled-control").unwrap();
+        vcx.simulate_click(control.center(), Modifiers::default());
+        draw(&app, vcx);
+        vcx.update(|_, cx| assert!(!app.read(cx).cloud_sync.settings().enabled));
     }
 
     #[test]

@@ -743,6 +743,7 @@ impl TerminalPasteReviewState {
 #[cfg(test)]
 mod tests {
     use gpui::{Bounds, TestAppContext, point, px, size};
+    use nyaterm_core::command_suggestion_suppression::CommandSuggestionSuppression;
     use nyaterm_terminal::{TerminalOutputDecoder, TerminalScreen};
 
     use super::{LostTerminalSelectionRecovery, TerminalFeatureFocus, TerminalFeatureState};
@@ -813,10 +814,15 @@ mod tests {
                 session_id: "local".to_string(),
                 x: px(10.),
                 y: px(20.),
-                kind_label: "URL".to_string(),
-                value: "https://example.com".to_string(),
-                default_action_label: "Open".to_string(),
-                default_action_preview: "https://example.com".to_string(),
+                default_action: crate::action_links::ActionLinkAction {
+                    id: "open".into(),
+                    label: "Open Link".into(),
+                    target: crate::action_links::ActionLinkTarget::OpenUrl(
+                        "https://example.com".into(),
+                    ),
+                    mac_format: None,
+                    is_default: true,
+                },
                 has_more_actions: false,
                 match_key: "url|https://example.com|0|19".to_string(),
             },
@@ -956,7 +962,7 @@ mod tests {
     fn session_switch_reset_clears_terminal_assist_transients() {
         let mut state = terminal_state();
         state.editing.input_mut().value = "git status".to_string();
-        state.assist.command_suggestions_suppressed = true;
+        state.assist.command_suggestion_suppression = CommandSuggestionSuppression::CommandRunning;
         state.assist.pending_command_history_entry = Some("git status".to_string());
         state.assist.credential_autofill_buffer = "login:".to_string();
         state.assist.credential_autofill_recent = Some((
@@ -970,7 +976,7 @@ mod tests {
         state.reset_assist_for_session_switch();
 
         assert_eq!(state.editing.predicted_input().value, "git status");
-        assert!(!state.assist.command_suggestions_suppressed);
+        assert!(!state.assist.command_suggestion_suppression.is_suppressed());
         assert!(state.assist.pending_command_history_entry.is_none());
         assert!(state.assist.credential_autofill_buffer.is_empty());
         assert!(state.assist.credential_autofill_recent.is_none());

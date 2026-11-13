@@ -58,6 +58,7 @@ use session::default_local_shell_path;
 mod ssh_worker;
 #[cfg(test)]
 use ssh_worker::drain_deferred_ssh_open_commands;
+pub mod adb_shell;
 pub mod connection_attempt;
 #[cfg(windows)]
 pub mod local_conpty;
@@ -90,6 +91,8 @@ mod telnet_codec;
 mod telnet_input;
 mod telnet_prompts;
 pub mod tmux;
+#[cfg(all(test, windows))]
+mod windows_command_input_tests;
 mod writer_mailbox;
 #[cfg(test)]
 use ssh_algorithms::defaults_from_preferred;

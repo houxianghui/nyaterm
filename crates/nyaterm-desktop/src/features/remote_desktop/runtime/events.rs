@@ -350,7 +350,7 @@ impl NyaTermApp {
         };
         #[cfg(not(windows))]
         let mut dirty = false;
-        dirty |= self.drive_deferred_rdp_starts();
+        dirty |= self.drive_deferred_rdp_starts(cx);
         dirty |= self.drive_rdp_resize_debounce();
         dirty |= self.drive_rdp_reconnects(cx);
         self.settle_remote_desktop_restore(cx);
@@ -624,6 +624,7 @@ impl NyaTermApp {
                     RdpClipboardTransferStatus::Cancelled => TransferJobStatus::Cancelled,
                 };
                 let sample = SftpTransferProgress {
+                    phase: None,
                     remote_path: "RDP clipboard".to_string(),
                     local_path: std::path::PathBuf::new(),
                     bytes_transferred: progress.transferred_bytes,

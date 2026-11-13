@@ -4,13 +4,13 @@ use super::SessionFeatureState;
 use super::start::SessionStartTabPlacement;
 use crate::app_shell::session_hub::ssh_connections::SshConnectionLease;
 use crate::features::session::notices::SessionNotices;
+use crate::features::session::remote_files::RemoteFilesSession;
 use crate::features::session::trzsz_runtime::TrzszSessionState;
 use crate::features::session::zmodem_runtime::ZmodemSessionState;
 use crate::models::{SessionLaunchConfig, SessionRuntimeMetadata};
 use gpui::UniformListScrollHandle;
 use nyaterm_core::AiExecutionProfile;
 use nyaterm_files::file_browser::FileBrowserBackendKind;
-use nyaterm_files::remote_file::RemoteFileService;
 use nyaterm_transport::{SessionEvent, SessionInfo, SessionKind, SessionManager, SshSessionConfig};
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -38,7 +38,7 @@ pub(super) struct SessionCatalogTransferEntry {
     pub(super) locked: bool,
     pub(super) command_history: Option<Vec<String>>,
     pub(super) busy_action: Option<String>,
-    pub(super) remote_file: Option<std::sync::Arc<RemoteFileService>>,
+    pub(super) remote_file: Option<RemoteFilesSession>,
     pub(super) ssh_connection: Option<SshConnectionLease>,
     pub(super) xymodem: Option<crate::features::session::xymodem_runtime::XymodemSessionState>,
     pub(super) zmodem: Option<ZmodemSessionState>,
@@ -59,6 +59,29 @@ pub(super) fn session_info_from_metadata(
     metadata: &SessionRuntimeMetadata,
 ) -> SessionInfo {
     match &metadata.launch_config {
+        SessionLaunchConfig::AdbShell(config)
+        | SessionLaunchConfig::AdbFiles(config)
+        | SessionLaunchConfig::AdbScreen(config) => SessionInfo {
+            id: session_id.to_string(),
+            name: match metadata.launch_config {
+                SessionLaunchConfig::AdbShell(_) => {
+                    std::borrow::Cow::Borrowed(config.name.as_str())
+                }
+                SessionLaunchConfig::AdbFiles(_) => {
+                    rust_i18n::t!("android.filesTitle", name = config.name)
+                }
+                _ => rust_i18n::t!("android.screenTitle", name = config.name),
+            }
+            .into_owned(),
+            kind: match metadata.launch_config {
+                SessionLaunchConfig::AdbShell(_) => SessionKind::AdbShell,
+                SessionLaunchConfig::AdbFiles(_) => SessionKind::AdbFiles,
+                _ => SessionKind::AdbScreen,
+            },
+            working_dir: None,
+            cols: config.cols,
+            rows: config.rows,
+        },
         SessionLaunchConfig::Local(config) => SessionInfo {
             id: session_id.to_string(),
             name: config.name.clone(),
@@ -176,6 +199,9 @@ impl SessionFeatureState {
         let mut entries = Vec::with_capacity(session_ids.len());
         for session_id in session_ids {
             let metadata = self.metadata.remove(session_id)?;
+            if let Some(files) = self.protocols.remote_files.get_mut(session_id) {
+                files.cancel_pending();
+            }
             entries.push(SessionCatalogTransferEntry {
                 session_id: session_id.clone(),
                 notices: self.notices.take(session_id),
@@ -451,6 +477,9 @@ impl SessionFeatureState {
         session_id: &str,
     ) -> Option<FileBrowserBackendKind> {
         match self.session_info(session_id)?.kind {
+            SessionKind::AdbShell | SessionKind::AdbFiles | SessionKind::AdbScreen => {
+                Some(FileBrowserBackendKind::Adb)
+            }
             SessionKind::LocalPty => Some(FileBrowserBackendKind::Local),
             SessionKind::Ssh => self
                 .metadata(session_id)
@@ -783,6 +812,9 @@ impl SessionFeatureState {
     pub(in crate::features) fn endpoint(&self, session_id: &str) -> Option<String> {
         let metadata = self.metadata(session_id)?;
         match &metadata.launch_config {
+            SessionLaunchConfig::AdbShell(config)
+            | SessionLaunchConfig::AdbFiles(config)
+            | SessionLaunchConfig::AdbScreen(config) => Some(config.device.serial()),
             SessionLaunchConfig::Local(config) => {
                 let shell = config
                     .shell_path

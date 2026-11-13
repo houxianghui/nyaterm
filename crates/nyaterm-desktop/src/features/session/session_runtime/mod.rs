@@ -23,6 +23,7 @@ pub(in crate::features) struct MultiplexSshStartRequest {
 }
 
 pub(in crate::features) struct PendingSessionStartRegistration {
+    pub(in crate::features) request_id: Option<String>,
     pub(in crate::features) mcp_open_operation_id: Option<String>,
     pub requested_ssh_runtime_mode: Option<nyaterm_core::models::ssh_runtime::SshRuntimeMode>,
     pub(in crate::features) connection_name: String,
@@ -49,3 +50,5 @@ mod background;
 mod mstsc;
 mod retry;
 mod start;
+
+pub(in crate::features) use start::SshSessionConfigBuildContext;

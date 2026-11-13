@@ -1,3 +1,4 @@
+use nyaterm_core::command_suggestion_suppression::CommandSuggestionSuppression;
 use rust_i18n::t;
 
 use std::collections::HashMap;
@@ -970,6 +971,11 @@ impl NyaTermApp {
             .collect();
         let has_dirs = paths.iter().any(|p| p.is_dir());
         match kind {
+            Some(SessionKind::AdbShell | SessionKind::AdbFiles | SessionKind::AdbScreen) => {
+                self.shell
+                    .set_status(rust_i18n::t!("android.uploadUsingBrowser").into_owned());
+                cx.notify();
+            }
             Some(SessionKind::LocalPty) | None => {
                 if path_strings.is_empty() {
                     self.shell
@@ -1075,7 +1081,10 @@ impl NyaTermApp {
         if started {
             // Outer command execution suppresses suggestions, not nested-shell editing.
             self.terminal.assist.command_suggestions = None;
-            self.terminal.assist.command_suggestions_suppressed = true;
+            self.terminal
+                .assist
+                .command_suggestion_suppression
+                .command_started();
             self.terminal.assist.command_suggestion_search_gen = self
                 .terminal
                 .assist
@@ -1084,7 +1093,8 @@ impl NyaTermApp {
         }
         if finished {
             // Command finished: re-enable suggestions; editor input has its own lifecycle.
-            self.terminal.assist.command_suggestions_suppressed = false;
+            self.terminal.assist.command_suggestion_suppression =
+                CommandSuggestionSuppression::None;
             self.terminal.assist.command_suggestions = None;
             self.terminal.assist.command_suggestion_search_gen = self
                 .terminal
@@ -1453,6 +1463,15 @@ impl NyaTermApp {
         session_id: Option<&str>,
     ) -> (usize, usize) {
         let offset = self.terminal_scroll_offset_for_session(session_id);
+        if let Some(index) = session_id
+            .and_then(|id| self.terminal.view.views.get(id))
+            .and_then(|view| view.frame_snapshot.as_ref())
+            .and_then(|snapshot| snapshot.display_rows.as_ref())
+        {
+            let (offset, max) =
+                index.scroll_metrics(offset, self.terminal_viewport_rows_for_session(session_id));
+            return (max, offset);
+        }
         if let Some(index) = self.terminal_scrollbar_logical_index(session_id) {
             let (offset, max) =
                 index.scroll_metrics(offset, self.terminal_viewport_rows_for_session(session_id));
@@ -1467,6 +1486,14 @@ impl NyaTermApp {
         session_id: Option<&str>,
         offset: usize,
     ) -> usize {
+        if let Some(index) = session_id
+            .and_then(|id| self.terminal.view.views.get(id))
+            .and_then(|view| view.frame_snapshot.as_ref())
+            .and_then(|snapshot| snapshot.display_rows.as_ref())
+        {
+            return index
+                .physical_offset(offset, self.terminal_viewport_rows_for_session(session_id));
+        }
         self.terminal_scrollbar_logical_index(session_id)
             .map_or(offset, |index| {
                 index.physical_offset_for_logical_offset(

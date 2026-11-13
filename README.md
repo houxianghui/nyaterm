@@ -34,7 +34,7 @@
   &nbsp;
   <a href="#"><img alt="Platform" src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0EA5E9?style=flat-square&logo=linux&labelColor=334155"></a>
   &nbsp;
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-0EA5E9?style=flat-square&logo=readthedocs&labelColor=334155"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-0EA5E9?style=flat-square&logo=readthedocs&labelColor=334155"></a>
 </p>
 
 <p align="center">
@@ -99,7 +99,6 @@ What this fork changes is the **look and feel**: a complete macOS-inspired redes
 - **NyaTerm is** a terminal workspace with tabs, horizontal splits, and vertical splits
 - **NyaTerm is** an SFTP browser with a transfer queue and local-edit-then-upload-back workflow
 - **NyaTerm supports** SSH, Local Terminal, Telnet, Serial, RDP, and VNC sessions
-- **NyaTerm is not** a shell replacement; it connects to remote shells, local shells, Telnet endpoints, and serial devices
 
 ---
 
@@ -408,4 +407,4 @@ Thanks to the following projects and libraries that make NyaTerm possible:
 <a name="license"></a>
 # License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [Apache License 2.0](LICENSE).

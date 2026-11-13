@@ -6,17 +6,18 @@ use gpui::{
     VirtualFileProvider, VirtualFileStream, VirtualFileTreeProvider,
 };
 use nyaterm_files::drag_export::{
-    DragExportSource, RemoteDragFile, SftpReadSource, SftpReadStream,
+    AdbReadSource, AdbReadStream, DragExportSource, RemoteDragFile, SftpReadSource, SftpReadStream,
 };
-use nyaterm_files::file_browser::FileBrowserBackendKind;
-use nyaterm_files::remote_file::RemoteFileService;
+use nyaterm_files::file_browser::{
+    FileBrowserBackendKind, FileBrowserService, WeakFileBrowserService,
+};
 use nyaterm_files::sftp::{SftpFileEntry, SftpFileType};
 use nyaterm_files::sftp_transfer_types::SftpTransferOptions;
 use std::{
     cell::OnceCell,
     path::PathBuf,
     rc::Rc,
-    sync::{Arc, Weak},
+    sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
 
@@ -24,11 +25,12 @@ use std::{
 /// drag starts cannot redirect its source connection or remote path.
 #[derive(Clone)]
 pub(in crate::features) struct TransferSelection {
+    access_generation: Option<u64>,
     session_id: String,
     backend: FileBrowserBackendKind,
     entries: Vec<SftpFileEntry>,
     transfer_options: SftpTransferOptions,
-    source_service: Option<Weak<RemoteFileService>>,
+    source_service: Option<WeakFileBrowserService>,
 }
 
 #[derive(Clone)]
@@ -82,12 +84,15 @@ impl TransferDragExportService {
                         is_directory: entry.is_directory(),
                     })
                 } else {
+                    nyaterm_files::download_path::validate_name(&entry.name).map_err(|_| {
+                        nyaterm_files::file_browser::FileTransferEntryError::InvalidDestination
+                    })?;
                     anyhow::ensure!(
                         matches!(
                             entry.file_type,
                             SftpFileType::File | SftpFileType::Directory
                         ),
-                        "Links and special files cannot be dragged out; use Download"
+                        nyaterm_files::file_browser::FileTransferEntryError::UnsupportedFileType
                     );
                     Ok(DragExportSource::RemoteFile(RemoteDragFile {
                         display_name: entry.name.clone().into(),
@@ -104,7 +109,7 @@ impl TransferDragExportService {
 
     fn resolve(
         selection: &TransferSelection,
-        service: Option<Weak<RemoteFileService>>,
+        service: Option<WeakFileBrowserService>,
         sender: UnboundedSender<TransferJobResult>,
         virtual_supported: bool,
         promise_supported: bool,
@@ -123,8 +128,14 @@ impl TransferDragExportService {
         }
         anyhow::ensure!(
             !cfg!(target_os = "linux"),
-            "{}",
-            rust_i18n::t!("fileExplorer.dragPlatformUnsupported")
+            nyaterm_files::file_browser::FileTransferEntryError::DragPlatformUnsupported
+        );
+        anyhow::ensure!(
+            service
+                .as_ref()
+                .and_then(WeakFileBrowserService::upgrade)
+                .is_some(),
+            nyaterm_files::file_browser::FileTransferEntryError::Unavailable
         );
         if promise_supported {
             let service = service.ok_or_else(|| anyhow::anyhow!("source session is closed"))?;
@@ -217,7 +228,7 @@ impl TransferDragExportService {
     }
     fn descriptor(
         selection: &TransferSelection,
-        service: Weak<RemoteFileService>,
+        service: WeakFileBrowserService,
         aggregate: Arc<super::drag_aggregate::DragAggregate>,
         parent: nyaterm_files::sftp::SftpTransferControl,
         lifetime: Arc<nyaterm_files::drag_export::DragSourceLifetime>,
@@ -232,9 +243,19 @@ impl TransferDragExportService {
             size: file.size,
             modified_at: file.modified_at,
             provider: Arc::new(RemoteProvider {
-                source: SftpReadSource::new(service, file, factory)
-                    .with_transfer_options(selection.transfer_options.clone())
-                    .with_parent_control(parent),
+                source: match service {
+                    WeakFileBrowserService::Remote(service) => ReadSource::Sftp(
+                        SftpReadSource::new(service, file, factory)
+                            .with_transfer_options(selection.transfer_options.clone())
+                            .with_parent_control(parent),
+                    ),
+                    WeakFileBrowserService::Adb(service) => {
+                        let source = AdbReadSource::new(service, file, factory, parent);
+                        let (control, cleanup) = source.cancellation_cleanup();
+                        lifetime.register_cleanup(control, cleanup);
+                        ReadSource::Adb(source)
+                    }
+                },
                 _lifetime: lifetime,
             }),
         }
@@ -243,7 +264,7 @@ impl TransferDragExportService {
 
 struct RemoteTreeProvider {
     selection: TransferSelection,
-    service: Weak<RemoteFileService>,
+    service: WeakFileBrowserService,
     aggregate: Arc<super::drag_aggregate::DragAggregate>,
     controls: Vec<nyaterm_files::sftp::SftpTransferControl>,
     lifetime: Arc<nyaterm_files::drag_export::DragSourceLifetime>,
@@ -251,19 +272,36 @@ struct RemoteTreeProvider {
 }
 impl VirtualFileTreeProvider for RemoteTreeProvider {
     fn load(&self) -> std::io::Result<VirtualFileDragPayload> {
-        let service = self
-            .service
-            .upgrade()
-            .ok_or_else(|| std::io::Error::other("source session is closed"))?;
-        let source_snapshot = (*service).clone();
+        let result = self.load_tree();
+        if let Err(error) = &result {
+            self.aggregate.fail_inventory(self.service.kind(), error);
+        }
+        result.map_err(|error| {
+            std::io::Error::other(crate::features::android::labels::file_error_message(&error))
+        })
+    }
+    fn cancel(&self) {
+        self.control.cancel();
+        for control in &self.controls {
+            control.cancel();
+        }
+    }
+}
+impl RemoteTreeProvider {
+    fn load_tree(&self) -> anyhow::Result<VirtualFileDragPayload> {
+        self.control.check_cancelled()?;
+        let service = self.service.upgrade().ok_or_else(|| {
+            anyhow::Error::new(nyaterm_files::file_browser::FileTransferEntryError::Unavailable)
+        })?;
+        let source_snapshot = service.clone();
         drop(service);
-        let entries = nyaterm_files::drag_export::tree::enumerate_remote_drag_with_root_controls(
-            &source_snapshot,
-            self.selection.entries.clone(),
-            &self.control,
-            self.controls.clone(),
-        )
-        .map_err(std::io::Error::other)?;
+        let entries =
+            nyaterm_files::drag_export::tree::enumerate_file_browser_drag_with_root_controls(
+                &source_snapshot,
+                self.selection.entries.clone(),
+                &self.control,
+                self.controls.clone(),
+            )?;
         let mut files = Vec::with_capacity(entries.len());
         for entry in entries {
             if !entry.is_directory {
@@ -282,26 +320,30 @@ impl VirtualFileTreeProvider for RemoteTreeProvider {
             descriptor.is_directory = entry.is_directory;
             files.push(descriptor);
         }
-        VirtualFileDragPayload::new_tree(files)
-    }
-    fn cancel(&self) {
-        self.control.cancel();
-        for control in &self.controls {
-            control.cancel();
-        }
+        Ok(VirtualFileDragPayload::new_tree(files)?)
     }
 }
 
+enum ReadSource {
+    Sftp(SftpReadSource),
+    Adb(AdbReadSource),
+}
 struct RemoteProvider {
-    source: SftpReadSource,
+    source: ReadSource,
     _lifetime: Arc<nyaterm_files::drag_export::DragSourceLifetime>,
 }
 impl VirtualFileProvider for RemoteProvider {
     fn open(&self) -> std::io::Result<Box<dyn VirtualFileStream>> {
-        Ok(Box::new(RemoteStream(self.source.open()?)))
+        match &self.source {
+            ReadSource::Sftp(source) => Ok(Box::new(RemoteStream(source.open()?))),
+            ReadSource::Adb(source) => Ok(Box::new(AndroidStream(source.open()?))),
+        }
     }
     fn cancel(&self) {
-        self.source.cancel();
+        match &self.source {
+            ReadSource::Sftp(source) => source.cancel(),
+            ReadSource::Adb(source) => source.cancel(),
+        }
     }
 }
 struct RemoteStream(SftpReadStream);
@@ -320,12 +362,25 @@ impl NyaTermApp {
         drag: &DraggedSelection,
         cx: &mut Context<Self>,
     ) {
+        self.transfer.cancel_browser_selection_click();
+        self.transfer.clear_browser_drag_selection();
+        self.transfer.cancel_browser_pending_rename();
         let Some(session_id) = self.session.active_id_owned() else {
             return;
         };
         let Some(backend) = self.session.active_file_browser_backend() else {
             return;
         };
+        if cfg!(target_os = "linux") && backend != FileBrowserBackendKind::Local {
+            self.report_transfer_entry_error(
+                "drag-export",
+                backend,
+                &nyaterm_files::file_browser::FileTransferEntryError::DragPlatformUnsupported
+                    .into(),
+                cx,
+            );
+            return;
+        }
         let entries = if let Some(anchor) = &drag.tree_entry {
             let selected = self.transfer.selected_tree_entries(&session_id);
             if selected
@@ -355,13 +410,21 @@ impl NyaTermApp {
         let entries = match nyaterm_files::drag_export::tree::prune_nested_roots(entries) {
             Ok(entries) => entries,
             Err(error) => {
-                self.shell.set_status(error.to_string());
-                cx.notify();
+                self.report_browser_transfer_error("drag-export", &error, cx);
                 return;
             }
         };
         let _ = drag.selection.set(TransferSelection {
-            source_service: self.session.weak_remote_file_service(&session_id),
+            access_generation: self.file_access_generation(&session_id),
+            source_service: if backend == FileBrowserBackendKind::Remote {
+                self.session
+                    .weak_remote_file_service(&self.ssh_scoped_session_id(&session_id))
+                    .map(Into::into)
+            } else {
+                self.active_file_browser_service()
+                    .ok()
+                    .and_then(|service| service.downgrade())
+            },
             session_id,
             backend,
             entries,
@@ -381,15 +444,57 @@ impl NyaTermApp {
         cx: &mut Context<Self>,
     ) -> Option<ExternalDragPayload> {
         let selection = drag.selection.get()?;
-        self.session.metadata(&selection.session_id)?;
+        if selection.backend == FileBrowserBackendKind::Remote
+            && self.file_access_generation(&selection.session_id) != selection.access_generation
+        {
+            return None;
+        }
+        if self.session.metadata(&selection.session_id).is_none()
+            || self.session.is_disconnected(&selection.session_id)
+        {
+            self.report_transfer_entry_error(
+                "drag-export",
+                selection.backend,
+                &nyaterm_files::file_browser::FileTransferEntryError::Unavailable.into(),
+                cx,
+            );
+            return None;
+        }
+        if cfg!(target_os = "linux") && selection.backend != FileBrowserBackendKind::Local {
+            self.report_browser_transfer_error(
+                "drag-export",
+                &nyaterm_files::file_browser::FileTransferEntryError::DragPlatformUnsupported
+                    .into(),
+                cx,
+            );
+            return None;
+        }
         if selection.backend == FileBrowserBackendKind::Remote {
-            let service = selection.source_service.as_ref().and_then(Weak::upgrade)?;
+            let Some(service) = selection
+                .source_service
+                .as_ref()
+                .and_then(WeakFileBrowserService::upgrade)
+            else {
+                self.report_transfer_entry_error(
+                    "drag-export",
+                    selection.backend,
+                    &nyaterm_files::file_browser::FileTransferEntryError::Unavailable.into(),
+                    cx,
+                );
+                return None;
+            };
+            let FileBrowserService::Remote(service) = service else {
+                return None;
+            };
             if service.selected_backend()
                 != Some(nyaterm_files::remote_file::RemoteFileBackendKind::Sftp)
             {
-                self.shell
-                    .set_status("Remote drag export requires SFTP; use Download".to_string());
-                cx.notify();
+                self.report_transfer_entry_error(
+                    "drag-export",
+                    selection.backend,
+                    &nyaterm_files::file_browser::FileTransferEntryError::UnsupportedBackend.into(),
+                    cx,
+                );
                 return None;
             }
         }
@@ -402,11 +507,20 @@ impl NyaTermApp {
         ) {
             Ok(payload) => Some(payload),
             Err(error) => {
-                self.shell.set_status(error.to_string());
-                cx.notify();
+                self.report_transfer_entry_error("drag-export", selection.backend, &error, cx);
                 None
             }
         }
+    }
+}
+
+struct AndroidStream(AdbReadStream);
+impl VirtualFileStream for AndroidStream {
+    fn read_at(&mut self, offset: u64, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read_at(offset, buffer)
+    }
+    fn cancel(&self) {
+        self.0.cancel();
     }
 }
 
@@ -444,6 +558,7 @@ mod tests {
     #[test]
     fn linux_resolver_rejects_remote_sources_even_when_native_flags_are_supplied() {
         let selection = TransferSelection {
+            access_generation: None,
             session_id: "session".into(),
             source_service: None,
             transfer_options: Default::default(),
@@ -458,6 +573,7 @@ mod tests {
     #[test]
     fn remote_metadata_preserves_raw_path_and_has_no_destination() {
         let selection = TransferSelection {
+            access_generation: None,
             session_id: "session".into(),
             source_service: None,
             transfer_options: nyaterm_files::sftp_transfer_types::SftpTransferOptions::default(),
@@ -484,6 +600,7 @@ mod tests {
     fn remote_link_or_special_file_rejects_whole_selection() {
         for kind in [SftpFileType::Symlink, SftpFileType::Other] {
             let selection = TransferSelection {
+                access_generation: None,
                 session_id: "session".into(),
                 source_service: None,
                 transfer_options: nyaterm_files::sftp_transfer_types::SftpTransferOptions::default(
@@ -498,6 +615,7 @@ mod tests {
     #[test]
     fn directory_selection_uses_worker_tree_or_native_promise_without_touching_content() {
         let selection = TransferSelection {
+            access_generation: None,
             session_id: "session".into(),
             source_service: None,
             transfer_options: nyaterm_files::sftp_transfer_types::SftpTransferOptions::default(),
@@ -513,7 +631,7 @@ mod tests {
         ));
         let gpui::ExternalDragPayload::VirtualFileTree(tree) = TransferDragExportService::resolve(
             &selection,
-            Some(std::sync::Arc::downgrade(&service)),
+            Some(std::sync::Arc::downgrade(&service).into()),
             sender.clone(),
             true,
             false,
@@ -527,7 +645,7 @@ mod tests {
         let gpui::ExternalDragPayload::PromisedFiles(promises) =
             TransferDragExportService::resolve(
                 &selection,
-                Some(std::sync::Arc::downgrade(&service)),
+                Some(std::sync::Arc::downgrade(&service).into()),
                 sender,
                 false,
                 true,
@@ -548,11 +666,24 @@ mod tests {
                 .write_to(std::path::Path::new("unused"))
                 .is_err()
         );
-        assert!(receiver.try_recv().is_err());
+        assert!(matches!(
+            receiver.try_recv().unwrap().event,
+            crate::models::TransferJobEvent::DragExportOpened { .. }
+        ));
+        let crate::models::TransferJobEvent::FileFinished(Err(error)) =
+            receiver.try_recv().unwrap().event
+        else {
+            panic!("cancelled promise must finish its task")
+        };
+        assert_eq!(
+            crate::features::android::labels::file_error_code(&error),
+            "Cancelled"
+        );
     }
     #[test]
     fn local_selection_maps_to_real_paths_including_directories() {
         let selection = TransferSelection {
+            access_generation: None,
             session_id: "session".into(),
             source_service: None,
             transfer_options: nyaterm_files::sftp_transfer_types::SftpTransferOptions::default(),
@@ -575,6 +706,7 @@ mod tests {
     #[test]
     fn remote_selection_is_deferred_and_keeps_native_content_order() {
         let selection = TransferSelection {
+            access_generation: None,
             session_id: "session".into(),
             source_service: None,
             transfer_options: nyaterm_files::sftp_transfer_types::SftpTransferOptions::default(),
@@ -590,7 +722,7 @@ mod tests {
         ));
         let gpui::ExternalDragPayload::VirtualFiles(files) = TransferDragExportService::resolve(
             &selection,
-            Some(std::sync::Arc::downgrade(&service)),
+            Some(std::sync::Arc::downgrade(&service).into()),
             sender,
             true,
             false,
@@ -613,6 +745,7 @@ mod tests {
     fn unsafe_remote_names_and_unsupported_platform_reject_before_content() {
         for name in ["../escape", "NUL.txt", "name:stream"] {
             let selection = TransferSelection {
+                access_generation: None,
                 session_id: "session".into(),
                 source_service: None,
                 transfer_options: nyaterm_files::sftp_transfer_types::SftpTransferOptions::default(
@@ -624,7 +757,9 @@ mod tests {
             assert!(
                 TransferDragExportService::resolve(
                     &selection,
-                    Some(std::sync::Weak::new()),
+                    Some(nyaterm_files::file_browser::WeakFileBrowserService::Remote(
+                        std::sync::Weak::new()
+                    )),
                     sender,
                     true,
                     false
@@ -633,6 +768,7 @@ mod tests {
             );
         }
         let selection = TransferSelection {
+            access_generation: None,
             session_id: "session".into(),
             source_service: None,
             transfer_options: nyaterm_files::sftp_transfer_types::SftpTransferOptions::default(),
@@ -652,8 +788,9 @@ mod tests {
             nyaterm_transport::SshSessionConfig::default(),
         ));
         let selection = TransferSelection {
+            access_generation: None,
             session_id: "original".into(),
-            source_service: Some(std::sync::Arc::downgrade(&service)),
+            source_service: Some(std::sync::Arc::downgrade(&service).into()),
             transfer_options: nyaterm_files::sftp_transfer_types::SftpTransferOptions::default(),
             backend: FileBrowserBackendKind::Remote,
             entries: vec![entry("original", SftpFileType::File)],
@@ -675,14 +812,19 @@ mod tests {
                 .download_threads(),
             3
         );
+        let nyaterm_files::file_browser::WeakFileBrowserService::Remote(saved) = drag
+            .selection
+            .get()
+            .unwrap()
+            .source_service
+            .as_ref()
+            .unwrap()
+        else {
+            panic!("expected SSH source")
+        };
         assert!(std::sync::Weak::ptr_eq(
-            drag.selection
-                .get()
-                .unwrap()
-                .source_service
-                .as_ref()
-                .unwrap(),
-            &std::sync::Arc::downgrade(&service),
+            saved,
+            &std::sync::Arc::downgrade(&service)
         ));
     }
 }

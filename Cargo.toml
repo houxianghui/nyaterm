@@ -2,19 +2,24 @@
 # The application resolves its helpers beside its executable. Include the Windows
 # ActiveX host in development builds; release packaging filters it by platform.
 default-members = [
+    "crates/nyaterm-android-helper",
     "crates/nyaterm-app",
     "crates/nyaterm-mcp",
     "crates/nyaterm-rdp-helper",
     "crates/nyaterm-vnc-helper",
 ]
 members = [
+    "crates/nyaterm-android-helper",
+    "crates/nyaterm-android",
     "crates/nyaterm-app",
     "crates/nyaterm-ai-client",
+    "crates/nyaterm-agent-client",
     "crates/nyaterm-cloud-storage",
     "crates/nyaterm-core",
     "crates/nyaterm-desktop",
     "crates/nyaterm-mcp",
     "crates/nyaterm-mcp-protocol",
+    "crates/nyaterm-mcp-host",
     "crates/nyaterm-otp",
     "crates/nyaterm-preview",
     "crates/nyaterm-translation-client",
@@ -45,13 +50,14 @@ resolver = "3"
 exclude = ["temp", "examples/plugins/guests"]
 
 [workspace.package]
-version = "2.0.4"
+version = "2.0.5"
 edition = "2024"
 authors = ["Kang"]
 license = "Apache-2.0"
 repository = "https://github.com/nyakang/nyaterm"
 
 [workspace.dependencies]
+nyaterm-android = { path = "crates/nyaterm-android" }
 nucleo-matcher = "0.3.1"
 automerge = "=0.12.0"
 httpdate = "1.0"
@@ -80,8 +86,8 @@ same-file = "1"
 tempfile = "3"
 glob = "0.3.4"
 gpui = { version = "=0.2.2", git = "https://github.com/nyakang/zed", rev = "a45a77c08a7cd5ed364778eb84961e1bde650b73" }
-gpui-base = { git = "https://github.com/nyakang/gpui-kit", rev = "c7410026f06bb07e56eeb619d8c0037c89e05682" }
-gpui-kit = { git = "https://github.com/nyakang/gpui-kit", rev = "c7410026f06bb07e56eeb619d8c0037c89e05682" }
+gpui-base = { git = "https://github.com/nyakang/gpui-kit", rev = "15704adb9f0265fdb88ae7489a5032c897d19dfe" }
+gpui-kit = { git = "https://github.com/nyakang/gpui-kit", rev = "15704adb9f0265fdb88ae7489a5032c897d19dfe" }
 gpui_platform = { git = "https://github.com/nyakang/zed", rev = "a45a77c08a7cd5ed364778eb84961e1bde650b73" }
 # Pure-Rust, `#![forbid(unsafe)]` PDF rasterizer (MIT OR Apache-2.0). Pinned
 # exactly: the crate is pre-1.0 and explicitly experimental, so a caret range
@@ -103,8 +109,10 @@ log = "0.4.11"
 md5 = "0.8"
 nyaterm-core = { path = "crates/nyaterm-core" }
 nyaterm-mcp-protocol = { path = "crates/nyaterm-mcp-protocol" }
+nyaterm-mcp-host = { path = "crates/nyaterm-mcp-host" }
 nyaterm-desktop = { path = "crates/nyaterm-desktop" }
 nyaterm-ai-client = { path = "crates/nyaterm-ai-client" }
+nyaterm-agent-client = { path = "crates/nyaterm-agent-client" }
 nyaterm-cloud-storage = { path = "crates/nyaterm-cloud-storage" }
 nyaterm-otp = { path = "crates/nyaterm-otp" }
 nyaterm-preview = { path = "crates/nyaterm-preview" }

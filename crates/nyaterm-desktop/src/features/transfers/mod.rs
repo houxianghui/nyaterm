@@ -13,12 +13,14 @@ mod external_sync_window;
 pub(in crate::features) mod file_open;
 pub(in crate::features) mod file_operations;
 pub(in crate::features) mod preview;
+pub(in crate::features) mod privilege_runtime;
 mod remote_text_editor;
 mod state;
 pub(in crate::features) use state::TransferSessionTransferBundle;
 pub(in crate::features) use state::TransferTreePresentation;
 pub(in crate::features) use state::{BrowserFilterCache, BrowserFilterKey};
 mod transfer_events;
+mod transfer_feedback;
 pub(in crate::features) mod transfer_jobs;
 mod transfer_options;
 mod transfer_paths;
@@ -26,6 +28,7 @@ mod transfer_widgets;
 mod tree_runtime;
 
 use crate::features::NyaTermApp;
+use crate::features::session::remote_files::FileAccessPurpose;
 use nyaterm_files::file_browser::FileBrowserService;
 use nyaterm_files::remote_file::{
     RemoteFileBackendKind, RemoteFileBackendPreference, RemoteFileBackendPreferenceStore,
@@ -36,9 +39,9 @@ use nyaterm_transport::SshSessionConfig;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub(in crate::features) struct SftpJobSession {
+pub(in crate::features) struct FileTransferSession {
     pub session_id: Option<String>,
-    pub service: RemoteFileService,
+    pub service: FileBrowserService,
 }
 
 struct ConnectionStoreBackendPreferences {
@@ -100,6 +103,7 @@ impl NyaTermApp {
         tx: futures::channel::mpsc::UnboundedSender<crate::models::TransferJobResult>,
         run: impl FnOnce() + Send + 'static,
     ) {
+        self.mark_file_job_access(&job_id);
         if self.transfer.supports_bulk_admission(&job_id) {
             self.transfer
                 .admit_bulk_job(&job_id, name, tx, Box::new(run));
@@ -127,12 +131,13 @@ impl NyaTermApp {
     }
 
     pub(in crate::features) fn submit_transfer_blocking_job(
-        &self,
+        &mut self,
         name: &'static str,
         rejection_job_id: String,
         rejection_tx: futures::channel::mpsc::UnboundedSender<crate::models::TransferJobResult>,
         run: impl FnOnce() + Send + 'static,
     ) {
+        self.mark_file_job_access(&rejection_job_id);
         transfer_jobs::submit_transfer_blocking_job(
             &self.blocking_jobs,
             name,
@@ -146,6 +151,7 @@ impl NyaTermApp {
         &mut self,
         session_id: &str,
         config: SshSessionConfig,
+        purpose: FileAccessPurpose,
     ) -> anyhow::Result<RemoteFileService> {
         let preferences: Arc<dyn RemoteFileBackendPreferenceStore> = Arc::new(
             ConnectionStoreBackendPreferences::new(self.store_blocking_client()),
@@ -155,7 +161,7 @@ impl NyaTermApp {
         // the real session (and all panes reuse the one service).
         let session_id = self.ssh_scoped_session_id(session_id);
         self.session
-            .remote_file_service_for_session(&session_id, config, preferences)
+            .remote_file_service_for_session(&session_id, config, preferences, purpose)
     }
 
     pub(in crate::features) fn active_remote_file_service(
@@ -169,7 +175,7 @@ impl NyaTermApp {
             .session
             .active_ssh_config_owned()
             .ok_or_else(|| anyhow::anyhow!("active session is not SSH"))?;
-        self.remote_file_service_for_session(&session_id, config)
+        self.remote_file_service_for_session(&session_id, config, FileAccessPurpose::Interactive)
     }
 
     pub(in crate::features) fn file_browser_service_for_session(
@@ -177,6 +183,11 @@ impl NyaTermApp {
         session_id: &str,
     ) -> anyhow::Result<FileBrowserService> {
         match self.session.file_browser_backend_for_session(session_id) {
+            Some(nyaterm_files::file_browser::FileBrowserBackendKind::Adb) => self
+                .android_config_for_session(session_id)
+                .ok_or_else(|| anyhow::Error::new(nyaterm_android::error::AdbError::Offline))
+                .and_then(|config| self.android.file_service(&config.device_key))
+                .map(FileBrowserService::Adb),
             Some(nyaterm_files::file_browser::FileBrowserBackendKind::Local) => {
                 Ok(FileBrowserService::local())
             }
@@ -188,8 +199,12 @@ impl NyaTermApp {
                     .ok_or_else(|| {
                         anyhow::anyhow!("SSH file browser configuration is unavailable")
                     })?;
-                self.remote_file_service_for_session(session_id, config)
-                    .map(FileBrowserService::remote)
+                self.remote_file_service_for_session(
+                    session_id,
+                    config,
+                    FileAccessPurpose::Interactive,
+                )
+                .map(FileBrowserService::remote)
             }
             None => anyhow::bail!("session does not provide a file browser"),
         }
@@ -224,7 +239,7 @@ impl NyaTermApp {
             .or_else(|| self.session.active_id())
             .ok_or_else(|| anyhow::anyhow!("source SSH session is unavailable"))?
             .to_string();
-        self.remote_file_service_for_session(&session_id, config)
+        self.remote_file_service_for_session(&session_id, config, FileAccessPurpose::Interactive)
     }
 }
 

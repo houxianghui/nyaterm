@@ -57,6 +57,10 @@ impl NyaTermApp {
                     | (ConnectionType::Serial { .. }, SessionKind::Serial)
                     | (ConnectionType::Rdp { .. }, SessionKind::Rdp)
                     | (ConnectionType::Vnc { .. }, SessionKind::Vnc)
+                    | (
+                        ConnectionType::Adb { .. },
+                        SessionKind::AdbShell | SessionKind::AdbFiles | SessionKind::AdbScreen
+                    )
             )
         });
         if !same_protocol {
@@ -80,26 +84,6 @@ impl NyaTermApp {
             cx.notify();
             return;
         }
-        if failed
-            .pending
-            .source_connection_id
-            .as_ref()
-            .is_some_and(|connection_id| {
-                self.session
-                    .start
-                    .source_connection_is_pending(connection_id)
-                    || self
-                        .session
-                        .start
-                        .saved_connection_is_preparing(connection_id)
-            })
-        {
-            self.session
-                .start
-                .set_failed_error(&request_id, t!("tabCtx.reconnecting").to_string());
-            cx.notify();
-            return;
-        }
         let Some(failed) = self.session.start.take_failed_for_retry(&request_id) else {
             return;
         };
@@ -110,6 +94,7 @@ impl NyaTermApp {
         let profile = pending.ai_execution_profile;
         let new_id = uuid();
         let options = SavedConnectionStartOptions {
+            android_view: pending.android_view_kind(),
             mcp_open_operation_id: None,
             ssh_runtime_mode: pending.ssh_runtime_mode(),
             custom_name: pending.custom_name.clone(),
@@ -122,12 +107,12 @@ impl NyaTermApp {
             reconnect_session_id: None,
             workspace_split: pending.workspace_split.clone(),
             tab_placement: pending.tab_placement,
-            retry_request_id: Some(new_id.clone()),
+            request_id: Some(new_id.clone()),
         };
         pending.attempt = Default::default();
         pending.requested_at = Instant::now();
         pending.reconnect_session_id = None;
-        self.session.start.begin_retry_preparation(new_id, pending);
+        self.session.start.begin_preparation(new_id, pending);
         self.shell.clear_last_connect_failure();
         self.clear_session_tab_drag(cx);
         if let Some(connection) = connection {
@@ -160,16 +145,16 @@ impl NyaTermApp {
         cx.notify();
     }
 
-    pub(in crate::features::session) fn fail_retry_preparation(
+    pub(in crate::features) fn fail_start_preparation(
         &mut self,
         options: &SavedConnectionStartOptions,
         error: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(request_id) = options.retry_request_id.as_ref() else {
+        let Some(request_id) = options.request_id.as_ref() else {
             return;
         };
-        if !self.session.start.retry_is_pending(options) {
+        if !self.session.start.request_can_start(options) {
             return;
         }
         if let SessionStartEventRequest::Pending {
@@ -177,14 +162,19 @@ impl NyaTermApp {
             was_active,
         } = self.session.start.take_event_request(request_id)
         {
+            let reconnect_exists = pending
+                .as_ref()
+                .and_then(|pending| pending.reconnect_session_id.as_deref())
+                .is_some_and(|id| self.session.has_session(id));
             self.session.start.record_failure(
                 request_id.clone(),
                 pending,
                 error,
                 was_active,
-                false,
+                reconnect_exists,
             );
         }
+        self.wake_startup_restore_after_preparation(cx);
         cx.notify();
     }
 }

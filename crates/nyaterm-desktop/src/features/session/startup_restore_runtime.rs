@@ -210,6 +210,9 @@ impl NyaTermApp {
             Some(SessionLaunchConfig::Serial(_)) => "Serial",
             Some(SessionLaunchConfig::Rdp(_)) => "RDP",
             Some(SessionLaunchConfig::Vnc(_)) => "VNC",
+            Some(SessionLaunchConfig::AdbShell(_)) => "adb_shell",
+            Some(SessionLaunchConfig::AdbFiles(_)) => "adb_files",
+            Some(SessionLaunchConfig::AdbScreen(_)) => "adb_screen",
             Some(SessionLaunchConfig::Local(_)) | None => "Local",
         }
         .to_string();
@@ -453,8 +456,9 @@ impl NyaTermApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let pending_session_start =
-            self.session.start_has_pending() || self.remote_desktop.restore_pending.is_some();
+        let pending_session_start = self.session.start_has_pending()
+            || !self.android.pending.is_empty()
+            || self.remote_desktop.restore_pending.is_some();
         let session_start_busy =
             self.session.start_is_busy() || self.remote_desktop.restore_pending.is_some();
         let should_pump = !self.session.restore_is_complete()
@@ -477,7 +481,10 @@ impl NyaTermApp {
         if self.session.restore_is_complete() {
             return;
         }
-        if self.session.start_has_pending() || self.remote_desktop.restore_pending.is_some() {
+        if self.session.start_has_pending()
+            || !self.android.pending.is_empty()
+            || self.remote_desktop.restore_pending.is_some()
+        {
             return;
         }
         let Some(tab) = self
@@ -737,6 +744,9 @@ impl NyaTermApp {
                     custom_name,
                     tab_color,
                     locked: tab.locked,
+                    android_view: nyaterm_core::models::android::AndroidViewKind::from_restore_type(
+                        &session_type,
+                    ),
                     ..Default::default()
                 },
                 cx,
@@ -756,6 +766,9 @@ impl NyaTermApp {
                     custom_name,
                     tab_color,
                     locked: tab.locked,
+                    android_view: nyaterm_core::models::android::AndroidViewKind::from_restore_type(
+                        &session_type,
+                    ),
                     ..Default::default()
                 },
                 cx,
@@ -949,17 +962,16 @@ mod tests {
         cx.update(|window, cx| {
             restored.update(cx, |app, cx| {
                 let placement = app.session.start.allocate_tab_placement(2);
-                assert!(
-                    app.session
-                        .start_reserve_saved_connection("preparing", placement)
-                );
+                let preparing_id = app
+                    .session
+                    .simulate_saved_preparation("preparing", placement);
                 assert!(app.session.start_is_busy());
-                assert!(!app.session.start_has_pending());
+                assert!(app.session.start_has_pending());
                 app.resume_startup_restore_if_unlocked(window, cx);
                 app.pump_startup_restore_queue(window, cx);
                 assert!(!app.pump_startup_restore_queue_if_ready(window, cx));
                 assert!(!app.session.restore_is_complete());
-                app.session.start_release_saved_connection("preparing");
+                app.session.start.close_pending(&preparing_id);
                 app.remote_desktop.restore_pending = Some("pending-remote-desktop".to_string());
                 assert!(!app.pump_startup_restore_queue_if_ready(window, cx));
                 assert!(!app.session.restore_is_complete());
