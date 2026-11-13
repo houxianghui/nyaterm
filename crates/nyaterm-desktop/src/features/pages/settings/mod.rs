@@ -16,6 +16,7 @@ mod inputs;
 pub(in crate::features) mod panel;
 mod security;
 mod sync_backup;
+mod tab_strip;
 mod terminal;
 mod transfer;
 mod translation;

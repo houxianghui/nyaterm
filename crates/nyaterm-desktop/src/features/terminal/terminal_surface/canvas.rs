@@ -126,6 +126,7 @@ impl NyaTermApp {
             return;
         }
         if self.handle_command_suggestion_key(event, cx) {
+            self.open_pending_suggestion_paste(window, cx);
             cx.stop_propagation();
             return;
         }
@@ -291,24 +292,14 @@ impl NyaTermApp {
         let display_offset = self.terminal_display_offset_for_session(
             (!session_id.is_empty()).then_some(session_id.as_str()),
         );
-        // Live sessions already paint the grid on TerminalSurface. Skip cloning /
-        // building a shell-side viewport snapshot except when IME preedit needs
-        // cursor placement, or when there is no session (empty bootstrap canvas).
-        let needs_shell_viewport_snapshot =
-            session_id.is_empty() || (is_active && !self.terminal.input.ime_marked_text.is_empty());
-        let snapshot = if needs_shell_viewport_snapshot {
-            self.terminal_snapshot_for_session(
-                (!session_id.is_empty()).then_some(session_id.as_str()),
-                display_offset,
-            )
+        // Live grid and IME preedit are painted together by TerminalSurface.
+        let snapshot = if session_id.is_empty() {
+            self.terminal_snapshot_for_session(None, display_offset)
         } else {
-            // Chrome wrappers do not paint cells from this value. Reuse one immutable
-            // placeholder instead of rebuilding an 80x24 snapshot on every shell paint.
             terminal_shell_placeholder_snapshot()
         };
         let line_count = snapshot.row_count();
         let cursor_row = snapshot.cursor.row;
-        let cursor_col = snapshot.cursor.col;
         let snapshot_rows = snapshot.row_count();
         let snapshot_cols = snapshot.cols;
         let viewport_snapshot_duration = snapshot_stage_started_at.elapsed();
@@ -488,26 +479,6 @@ impl NyaTermApp {
         let terminal_font_family = terminal_font.family.clone();
         let terminal_font_fallbacks = terminal_font.fallbacks.clone();
         let terminal_gpui_font = terminal_font.font();
-        let ime_preedit_text = (is_active
-            && !session_id.is_empty()
-            && !self.terminal.input.ime_marked_text.is_empty())
-        .then(|| self.terminal.input.ime_marked_text.clone());
-        let ime_preedit_position = ime_preedit_text.as_ref().map(|_| {
-            let insets = self.terminal_content_insets();
-            let gutter = self.terminal_gutter_width_px_for_session(
-                (!session_id.is_empty()).then_some(session_id.as_str()),
-            );
-            let row = if cursor_row == usize::MAX {
-                line_count.saturating_sub(1)
-            } else {
-                cursor_row.min(snapshot_rows.saturating_sub(1))
-            };
-            let col = cursor_col.min(snapshot_cols.saturating_sub(1));
-            (
-                insets.left + gutter + col as f32 * cell_w,
-                insets.top + row as f32 * cell_h,
-            )
-        });
         let gutter = if session_id.is_empty() && gutter_enabled {
             let line_number_digits =
                 self.terminal_line_number_digits_for_session(None, snapshot.as_ref());
@@ -661,7 +632,11 @@ impl NyaTermApp {
         let sync_group_color = active_sync_group
             .map(|group| group.color)
             .unwrap_or(palette.link);
-        let sync_status_label = if sync_is_paused { "Paused" } else { "Syncing" };
+        let sync_status_label = if sync_is_paused {
+            t!("syncGroup.paused")
+        } else {
+            t!("syncGroup.broadcastActive")
+        };
         let output_session_id = session_id.clone();
         let performance_overlay = self
             .terminal
@@ -885,12 +860,18 @@ impl NyaTermApp {
                                             this.activate_workspace_pane(session_id.clone(), cx);
                                             window.focus(&this.terminal.input.focus, cx);
                                             this.close_action_link_menu(cx);
+                                            this.terminal.selection.block_gesture = None;
+                                            this.terminal.selection.suppress_action_link_click = false;
                                             let mods = event.modifiers;
+                                            let block_candidate = mods.alt
+                                                && this.settings.summary().terminal_wrap_mode
+                                                    != nyaterm_core::models::settings::TerminalWrapMode::None;
                                             let skip_selection = this
                                                 .settings
                                                 .summary()
                                                 .terminal_action_links_enabled
-                                                && (mods.alt || mods.control || mods.platform);
+                                                && (mods.alt || mods.control || mods.platform)
+                                                && !block_candidate;
                                             if !skip_selection {
                                                 this.start_terminal_selection_for_session(
                                                     Some(session_id.as_str()),
@@ -994,6 +975,16 @@ impl NyaTermApp {
                                         }
                                         window.focus(&this.terminal.input.focus, cx);
                                         let modifiers = event.modifiers();
+                                        if let ClickEvent::Mouse(mouse) = event
+                                            && !this.terminal.selection.confirm_block_drag(mouse.up.position)
+                                        {
+                                            this.clear_terminal_selection(cx);
+                                        }
+                                        if this.terminal.selection.suppress_action_link_click {
+                                            // The root MouseUp handler must still finish the
+                                            // selection or release the remote mouse capture.
+                                            return;
+                                        }
                                         if this.settings.summary().terminal_action_links_enabled {
                                             if modifiers.alt {
                                                 if this
@@ -1003,7 +994,9 @@ impl NyaTermApp {
                                                     return;
                                                 }
                                             } else if (modifiers.control || modifiers.platform)
-                                                && this.try_activate_action_link_at_click(event, cx)
+                                                && this.try_activate_action_link_at_click(
+                                                    event, window, cx,
+                                                )
                                             {
                                                 cx.stop_propagation();
                                                 return;
@@ -1048,39 +1041,6 @@ impl NyaTermApp {
                                                 cx,
                                             ))
                                         }),
-                                )
-                                .when_some(
-                                    ime_preedit_text.clone().zip(ime_preedit_position),
-                                    |this, (marked_text, (x, y))| {
-                                        this.child(
-                                            div()
-                                                .absolute()
-                                                .left(px(x))
-                                                .top(px(y))
-                                                .h(px(cell_h))
-                                                .max_w(px(360.))
-                                                .px_1()
-                                                .flex()
-                                                .items_center()
-                                                .overflow_hidden()
-                                                .whitespace_nowrap()
-                                                .border_b_2()
-                                                .border_color(rgb(palette.link))
-                                                .bg(rgba((palette.terminal_cursor << 8) | 0x33))
-                                                .text_color(rgb(palette.terminal_fg))
-                                                .font(terminal_gpui_font.clone())
-                                                .font_weight(FontWeight(
-                                                    self.settings.summary().terminal_font_weight
-                                                        as f32,
-                                                ))
-                                                .text_size(px(self
-                                                    .settings
-                                                    .summary()
-                                                    .terminal_font_size
-                                                    as f32))
-                                                .child(marked_text),
-                                        )
-                                    },
                                 )
                                 .when(file_drop_hover && !session_id.is_empty(), |this| {
                                     this.child(
@@ -1175,9 +1135,9 @@ impl NyaTermApp {
                                                         .text_xs()
                                                         .text_color(rgb(sync_group_color))
                                                         .child(if sync_is_paused {
-                                                            "Resume"
+                                                            t!("syncGroup.resumeSync")
                                                         } else {
-                                                            "Pause"
+                                                            t!("syncGroup.pauseSync")
                                                         }),
                                                 ),
                                         )
@@ -1201,7 +1161,7 @@ impl NyaTermApp {
                                                     div()
                                                         .text_xs()
                                                         .text_color(rgb(sync_group_color))
-                                                        .child("Leave"),
+                                                        .child(t!("syncGroup.leaveGroup")),
                                                 ),
                                         )
                                         .child(
@@ -1213,7 +1173,9 @@ impl NyaTermApp {
                                                 .px_1()
                                                 .py(px(2.))
                                                 .cursor_pointer()
-                                                .hover(|style| style.bg(rgba(0xef44441a)))
+                                                .hover(|style| {
+                                                    style.bg(rgba((palette.danger << 8) | 0x1a))
+                                                })
                                                 .on_click(cx.listener(move |this, _, _, cx| {
                                                     this.close_active_sync_group_for_session(
                                                         close_session_id.clone(),
@@ -1224,7 +1186,7 @@ impl NyaTermApp {
                                                     div()
                                                         .text_xs()
                                                         .text_color(rgb(palette.danger))
-                                                        .child("Close Group"),
+                                                        .child(t!("syncGroup.closeGroup")),
                                                 ),
                                         ),
                                 )
@@ -1506,5 +1468,368 @@ mod tests {
         assert!(!terminal_line_decorations_needed(
             false, false, false, false
         ));
+    }
+
+    /// Ctrl+Insert must be consumed by the terminal copy action. The canvas
+    /// `on_key_down` handler is the PTY fallback, so reaching it writes
+    /// `\x1b[2;5~` to the session.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn ctrl_insert_is_consumed_before_the_terminal_key_fallback() {
+        assert_terminal_shortcut_dispatch(&HashMap::new(), "ctrl-insert", TestShortcutEffect::Copy);
+    }
+
+    #[test]
+    fn local_copy_shortcuts_are_consumed_before_the_terminal_key_fallback() {
+        let chord = if cfg!(target_os = "macos") {
+            "cmd-shift-c"
+        } else {
+            "ctrl-shift-c"
+        };
+        assert_terminal_shortcut_dispatch(&HashMap::new(), chord, TestShortcutEffect::Copy);
+    }
+
+    #[test]
+    fn local_paste_shortcuts_send_only_clipboard_bytes() {
+        let chord = if cfg!(target_os = "macos") {
+            "cmd-shift-v"
+        } else {
+            "ctrl-shift-v"
+        };
+        for chord in [chord, "shift-insert"] {
+            assert_terminal_shortcut_dispatch(&HashMap::new(), chord, TestShortcutEffect::Paste);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn ctrl_insert_copy_override_and_file_explorer_binding_keep_local_copy() {
+        for rename in [false, true] {
+            let mut overrides = HashMap::from([("terminal.copy".into(), "ctrl+alt+c".into())]);
+            if rename {
+                overrides.insert("fileExplorer.rename".into(), "ctrl+insert".into());
+            }
+            assert_terminal_shortcut_dispatch(&overrides, "ctrl-insert", TestShortcutEffect::Copy);
+            assert_terminal_shortcut_dispatch(&overrides, "ctrl-alt-c", TestShortcutEffect::Copy);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn ctrl_insert_assigned_to_another_terminal_action_does_not_copy_or_leak() {
+        for (id, effect) in [
+            ("terminal.paste", TestShortcutEffect::Paste),
+            ("terminal.selectAll", TestShortcutEffect::SelectAll),
+        ] {
+            let overrides = HashMap::from([
+                ("terminal.copy".into(), "ctrl+shift+c".into()),
+                (id.into(), "ctrl+insert".into()),
+            ]);
+            assert_terminal_shortcut_dispatch(&overrides, "ctrl-insert", effect);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn ctrl_insert_in_nested_input_preserves_input_shortcuts_without_terminal_bytes() {
+        let overrides = HashMap::from([("terminal.copy".into(), "ctrl+alt+c".into())]);
+        assert_terminal_shortcut_dispatch(&overrides, "ctrl-insert", TestShortcutEffect::InputCopy);
+    }
+
+    #[test]
+    fn repeated_and_held_command_navigation_does_not_write_terminal_bytes_or_change_selection() {
+        let chord = if cfg!(target_os = "macos") {
+            "cmd-shift-left"
+        } else {
+            "ctrl-shift-left"
+        };
+        assert_terminal_shortcut_dispatch(&HashMap::new(), chord, TestShortcutEffect::Navigation);
+    }
+
+    #[derive(Clone, Copy)]
+    enum TestShortcutEffect {
+        Navigation,
+        Copy,
+        Paste,
+        #[cfg(not(target_os = "macos"))]
+        SelectAll,
+        #[cfg(not(target_os = "macos"))]
+        InputCopy,
+    }
+
+    fn assert_terminal_shortcut_dispatch(
+        overrides: &HashMap<String, String>,
+        chord: &'static str,
+        effect: TestShortcutEffect,
+    ) {
+        use std::io::Read;
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        use gpui::{
+            AppContext as _, Bounds, Entity, Point, Render, Size, TestAppContext, Window, px,
+        };
+        use nyaterm_transport::TelnetSessionConfig;
+        use nyaterm_ui::{NyaInput, NyaInputState};
+
+        use crate::features::NyaTermApp;
+        use crate::features::test_support::app_with_visible_local_session;
+        use crate::shortcuts::{WORKSPACE_KEY_CONTEXT, rebuild_keymap};
+        use crate::test_support::{TestAppCleanup, TestConfigDir};
+
+        struct TerminalKeyDispatchView {
+            app: Entity<NyaTermApp>,
+            input: Option<Entity<NyaInputState>>,
+        }
+
+        impl Render for TerminalKeyDispatchView {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                use gpui::prelude::*;
+
+                let app = self.app.clone();
+                let input = self.input.clone();
+                let terminal = app.update(cx, |app, cx| {
+                    let focus = app.terminal.input.focus.clone();
+                    gpui::div()
+                        .id("terminal-key-surface")
+                        .size_full()
+                        .key_context(super::TERMINAL_KEY_CONTEXT)
+                        .track_focus(&focus)
+                        .on_key_down(cx.listener(
+                            |app: &mut NyaTermApp, event: &gpui::KeyDownEvent, window, cx| {
+                                app.handle_terminal_surface_key_down(event, window, cx);
+                            },
+                        ))
+                        .when_some(input, |terminal, input| {
+                            terminal.child(
+                                gpui::div()
+                                    .w(px(300.0))
+                                    .h(px(32.0))
+                                    .child(NyaInput::new(&input)),
+                            )
+                        })
+                });
+                app.update(cx, |app, cx| {
+                    app.with_shortcut_action_handlers(
+                        gpui::div()
+                            .id("terminal-key-root")
+                            .size_full()
+                            .key_context(WORKSPACE_KEY_CONTEXT)
+                            .child(terminal),
+                        cx,
+                    )
+                })
+            }
+        }
+
+        let dir = TestConfigDir::new("nyaterm-terminal-ctrl-insert-dispatch");
+        let mut cx = TestAppContext::single();
+        let _cleanup = TestAppCleanup::new(&cx);
+        cx.update(nyaterm_ui::init_components);
+        let app = app_with_visible_local_session(&mut cx, dir.path(), "s1");
+        let manager = cx.update_entity(&app, |app, _| app.session.manager_handle());
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let info = manager
+            .create_telnet_session(TelnetSessionConfig {
+                host: "127.0.0.1".into(),
+                port: listener.local_addr().unwrap().port(),
+                raw_tcp: true,
+                ..TelnetSessionConfig::default()
+            })
+            .unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        cx.update_entity(&app, |app, cx| {
+            let metadata = app.session.metadata("s1").unwrap().clone();
+            app.session.register_session_metadata(&info.id, metadata);
+            app.session.select_active_session(&info.id);
+            app.terminal.layout.surface_bounds = Some(Bounds {
+                origin: Point::default(),
+                size: Size {
+                    width: px(800.0),
+                    height: px(600.0),
+                },
+            });
+            let text = if matches!(effect, TestShortcutEffect::Navigation) {
+                "\x1b]133;A\x07$ \x1b]133;B\x07echo same\r\n\x1b]133;C\x07out\r\n\x1b]133;D;0\x07"
+                    .repeat(5)
+            } else {
+                "root@host:~# ls\n".into()
+            };
+            app.terminal
+                .seed_session_view(info.id.clone(), text.clone(), "UTF-8");
+            if matches!(effect, TestShortcutEffect::Navigation) {
+                app.terminal
+                    .ensure_frame_session(info.id.clone(), "UTF-8".into(), 10000);
+                app.terminal
+                    .view
+                    .frame_pipeline
+                    .append_local_text(info.id.clone(), text);
+                app.terminal.selection.session_id = Some(info.id.clone());
+                app.terminal.selection.selection =
+                    Some(crate::models::TerminalSelection::from_range(
+                        crate::models::TerminalBufferCellPos::new(0, 0),
+                        crate::models::TerminalBufferCellPos::new(0, 3),
+                    ));
+                app.terminal.view.frame_pipeline.flush_for_test();
+                app.drain_terminal_frame_events(cx);
+            }
+        });
+        cx.update(|cx| rebuild_keymap(overrides, cx));
+        #[cfg(not(target_os = "macos"))]
+        let input = matches!(effect, TestShortcutEffect::InputCopy)
+            .then(|| cx.new(|cx| NyaInputState::new(cx, "search input text")));
+        #[cfg(target_os = "macos")]
+        let input: Option<Entity<NyaInputState>> = None;
+        let (_, vcx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|_| TerminalKeyDispatchView {
+                app: app.clone(),
+                input: input.clone(),
+            });
+            nyaterm_ui::nya_root(view, window, cx)
+        });
+        vcx.update(|window, cx| {
+            let main = window.window_handle().downcast().unwrap();
+            app.update(cx, |app, cx| {
+                app.shell.remember_main_window(main);
+                app.ensure_shortcut_interceptor(cx);
+            });
+        });
+        vcx.update(|window, cx| {
+            let _ = window.draw(cx);
+            let focus = app.read(cx).terminal.input.focus.clone();
+            window.focus(&focus, cx);
+            if let Some(input) = input.as_ref() {
+                input.update(cx, |input, cx| {
+                    input.select_all_with_cursor_at_end(window, cx)
+                });
+            }
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("paste payload".into()));
+        });
+        vcx.run_until_parked();
+        let selection_before = vcx.update(|_, cx| app.read(cx).terminal.selection.selection);
+        vcx.simulate_keystrokes(chord);
+        vcx.run_until_parked();
+
+        #[cfg(not(target_os = "macos"))]
+        if matches!(effect, TestShortcutEffect::InputCopy) {
+            // NyaInput's current baseline uses Ctrl+C, not Ctrl+Insert. An
+            // unbound Ctrl+Insert must leave both clipboard and session alone.
+            assert_eq!(
+                vcx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+                    .as_deref(),
+                Some("paste payload")
+            );
+            vcx.simulate_keystrokes("ctrl-c");
+            vcx.run_until_parked();
+        }
+
+        let copied = vcx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+        match effect {
+            TestShortcutEffect::Navigation => {
+                let target = |app: &mut NyaTermApp, cx: &mut gpui::Context<NyaTermApp>| {
+                    app.terminal.view.frame_pipeline.flush_for_test();
+                    app.drain_terminal_frame_events(cx);
+                    app.terminal
+                        .view
+                        .views
+                        .get(&info.id)
+                        .unwrap()
+                        .frame_snapshot
+                        .as_ref()
+                        .unwrap()
+                        .command_navigation_target
+                };
+                assert_eq!(
+                    vcx.update(|_, cx| app.read(cx).terminal.selection.selection),
+                    selection_before
+                );
+                let mut previous = vcx.update(|_, cx| app.update(cx, target)).unwrap();
+                for _ in 0..4 {
+                    vcx.update(|window, cx| {
+                        window.dispatch_event(
+                            gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+                                keystroke: gpui::Keystroke::parse(chord).unwrap(),
+                                is_held: true,
+                                prefer_character_input: false,
+                            }),
+                            cx,
+                        );
+                    });
+                    let next = vcx.update(|_, cx| app.update(cx, target)).unwrap();
+                    assert!(next.logical_line < previous.logical_line);
+                    previous = next;
+                }
+                assert_eq!(
+                    vcx.update(|_, cx| app.read(cx).terminal.selection.selection),
+                    selection_before
+                );
+                let next = if cfg!(target_os = "macos") {
+                    "cmd-shift-right"
+                } else {
+                    "ctrl-shift-right"
+                };
+                for _ in 0..5 {
+                    vcx.simulate_keystrokes(next);
+                    vcx.update(|_, cx| app.update(cx, target));
+                }
+                assert!(vcx.update(|_, cx| app.update(cx, target)).is_none());
+                assert_eq!(
+                    vcx.update(|_, cx| app
+                        .read(cx)
+                        .terminal
+                        .view
+                        .views
+                        .get(&info.id)
+                        .unwrap()
+                        .scroll_offset),
+                    0
+                );
+            }
+            TestShortcutEffect::Copy => assert!(
+                copied.unwrap_or_default().contains("root@host"),
+                "{chord} did not copy terminal text"
+            ),
+            TestShortcutEffect::Paste => assert_eq!(copied.as_deref(), Some("paste payload")),
+            #[cfg(not(target_os = "macos"))]
+            TestShortcutEffect::SelectAll => {
+                assert_eq!(
+                    copied.as_deref(),
+                    Some("paste payload"),
+                    "{chord} unexpectedly copied"
+                );
+                assert!(vcx.update(|_, cx| {
+                    app.read(cx)
+                        .terminal
+                        .selection
+                        .selection
+                        .as_ref()
+                        .is_some_and(|selection| selection.all_buffer)
+                }));
+            }
+            #[cfg(not(target_os = "macos"))]
+            TestShortcutEffect::InputCopy => {
+                assert_eq!(copied.as_deref(), Some("search input text"))
+            }
+        }
+
+        cx.update_entity(&app, |app, _| {
+            app.write_session_protocol_response(&info.id, b"CLICK")
+                .unwrap();
+        });
+        let expected = if matches!(effect, TestShortcutEffect::Paste) {
+            b"paste payloadCLICK".as_slice()
+        } else {
+            b"CLICK".as_slice()
+        };
+        let mut received = vec![0u8; expected.len()];
+        peer.read_exact(&mut received)
+            .unwrap_or_else(|error| panic!("session received no sentinel bytes: {error}"));
+        assert_eq!(received, expected, "{chord} wrote unexpected session bytes");
+        manager.close(&info.id).unwrap();
     }
 }

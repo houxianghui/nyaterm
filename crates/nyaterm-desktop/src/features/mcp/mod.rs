@@ -283,8 +283,8 @@ impl NyaTermApp {
         .detach();
     }
 
-    pub(in crate::features) fn mcp_pending_approval_requests(&mut self) -> Vec<McpApprovalRequest> {
-        self.mcp.capabilities.pending_approval_requests()
+    pub(in crate::features) fn mcp_pending_approval_requests(&self) -> Vec<McpApprovalRequest> {
+        self.mcp.capabilities.external_approval_requests()
     }
 
     pub(in crate::features) fn respond_to_mcp_approval(
@@ -317,6 +317,7 @@ impl NyaTermApp {
             }
             None => {}
         }
+        self.defer_ai_panel_snapshot_flush(cx);
         cx.notify();
     }
 
@@ -344,6 +345,7 @@ impl NyaTermApp {
     }
 
     fn handle_mcp_disconnect(&mut self, connection_id: &str, cx: &mut Context<Self>) {
+        self.mcp.capabilities.expire_mcp_owner(connection_id);
         self.mcp
             .capabilities
             .terminal_executions
@@ -373,22 +375,23 @@ impl NyaTermApp {
 
     pub(in crate::features) fn complete_mcp_session_open_success(
         &mut self,
-        connection_id: &str,
+        operation_id: &str,
         session_id: String,
     ) {
+        let sessions = self.mcp_live_sessions();
         self.mcp
             .capabilities
-            .complete_session_open_success(connection_id, session_id);
+            .complete_session_open_success(operation_id, session_id, &sessions);
     }
 
     pub(in crate::features) fn complete_mcp_session_open_failure(
         &mut self,
-        connection_id: &str,
+        operation_id: &str,
         error: &str,
     ) {
         self.mcp
             .capabilities
-            .complete_session_open_failure(connection_id, error);
+            .complete_session_open_failure(operation_id, error);
     }
 
     pub(in crate::features) fn create_ephemeral_mcp_credential(
@@ -504,6 +507,7 @@ mod tests {
                 port: 3389,
                 username: String::new(),
                 domain: String::new(),
+                backend: Default::default(),
                 security: Default::default(),
                 display: Default::default(),
                 clipboard: Default::default(),
@@ -537,6 +541,8 @@ mod tests {
         let (reply, receiver) = tokio::sync::oneshot::channel();
         (
             McpHostRequest {
+                extended_results: true,
+                resolved_session_id: None,
                 caller: crate::features::capability_runtime::CapabilityCaller::Mcp,
                 connection_id: connection_id.to_string(),
                 request_id: request_id.to_string(),

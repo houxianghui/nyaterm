@@ -1,14 +1,12 @@
-use rust_i18n::t;
-
-use gpui::Context;
-use nyaterm_core::{AiAction, AiContext};
-use nyaterm_transport::{RecordingMode, RecordingStatus, SessionKind};
-use nyaterm_ui::NyaMenuItem;
-
+use super::helpers::{available_translation_providers, search_engine_url};
 use crate::features::{NyaTermApp, icons::known_search_engine_icon, session::SerialUploadProtocol};
 use crate::models::{AiPreparedRequest, NavItem, SettingsTab, TerminalSearchMode};
-
-use super::helpers::{available_translation_providers, search_engine_url};
+use gpui::Context;
+use nyaterm_core::{AiAction, AiContext};
+use nyaterm_recording::recording::{RecordingMode, RecordingStatus};
+use nyaterm_transport::SessionKind;
+use nyaterm_ui::NyaMenuItem;
+use rust_i18n::t;
 
 impl NyaTermApp {
     pub(in crate::features) fn prepare_terminal_context_menu(&mut self, cx: &mut Context<Self>) {
@@ -329,7 +327,6 @@ impl NyaTermApp {
             vec![
                 NyaMenuItem::action(t!("recording.startTranscriptLog"))
                     .icon("icons/file/description.svg")
-                    .shortcut(shortcut)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.start_recording_for_session(
                             &transcript_session_id,
@@ -490,23 +487,20 @@ fn terminal_ai_prepared_request(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
+    use super::terminal_ai_prepared_request;
+    use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
+    use crate::features::NyaTermApp;
+    use crate::features::test_support::app_with_visible_local_session;
+    use crate::features::translation::TranslationFeatureState;
     use gpui::{AppContext as _, TestAppContext};
     use nyaterm_core::test_support::TestTempDir;
     use nyaterm_core::{
         AiAction, AiContext, AiCustomActionConfig, AiSettings, AppRuntime, RuntimeMode,
         SearchEngineConfig, TranslationSettings, uuid,
     };
-    use nyaterm_transport::{RecordingMode, RecordingStatus, RecordingStatusState};
+    use nyaterm_recording::recording::{RecordingMode, RecordingStatus, RecordingStatusState};
     use nyaterm_ui::NyaMenuItem;
-
-    use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
-    use crate::features::NyaTermApp;
-    use crate::features::test_support::app_with_visible_local_session;
-    use crate::features::translation::TranslationFeatureState;
-
-    use super::terminal_ai_prepared_request;
+    use std::path::PathBuf;
 
     fn unique_test_dir(label: &str) -> PathBuf {
         // A uuid rather than a clock reading: these tests run in parallel and
@@ -644,11 +638,6 @@ mod tests {
                 "Settings...",
             ]
         );
-        let recording_shortcut = if cfg!(target_os = "macos") {
-            "Cmd+Alt+R"
-        } else {
-            "Ctrl+Alt+R"
-        };
         assert_eq!(
             recording
                 .iter()
@@ -656,10 +645,7 @@ mod tests {
                 .map(|(_, icon, shortcut, _, _, _)| (icon, shortcut))
                 .collect::<Vec<_>>(),
             vec![
-                (
-                    Some("icons/file/description.svg".to_string()),
-                    Some(recording_shortcut.to_string())
-                ),
+                (Some("icons/file/description.svg".to_string()), None),
                 (Some("icons/session/record.svg".to_string()), None),
                 (None, None),
                 (Some("icons/file/description.svg".to_string()), None),

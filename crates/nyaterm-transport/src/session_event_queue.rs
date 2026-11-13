@@ -325,6 +325,27 @@ impl SessionEventQueue {
         self.shared.ready.notify_all();
     }
 
+    /// Lift a previous `cancel_session` for a session id that legitimately
+    /// comes back. tmux pane virtual sessions respawn under the same
+    /// `<host>::pane<N>` id on reattach, window re-activation, and layout
+    /// churn — keeping them in `cancelled_sessions` would make `accepts`
+    /// silently refuse every subsequent push. Producers parked in
+    /// `begin_push` are woken so they re-check `accepts`.
+    pub(super) fn resume_session(&self, session_id: &str) {
+        if session_id.is_empty() {
+            return;
+        }
+        let Ok(mut inner) = self.shared.inner.lock() else {
+            return;
+        };
+        let resumed = inner.cancelled_sessions.remove(session_id);
+        drop(inner);
+        if resumed {
+            self.shared.producer_order.notify_all();
+            self.shared.async_changed.notify_waiters();
+        }
+    }
+
     pub(super) fn assign_consumer(&self, session_id: &str, consumer_id: SessionEventConsumerId) {
         if session_id.is_empty() {
             return;
@@ -620,10 +641,13 @@ impl SessionEventQueueInner {
                     stats.dropped_output_bytes = stats.dropped_output_bytes.saturating_add(*bytes);
                 }
                 SessionEvent::CwdChanged { .. }
+                | SessionEvent::CommandContext { .. }
                 | SessionEvent::CommandAccepted { .. }
                 | SessionEvent::Exited { .. }
                 | SessionEvent::CleanupFailed { .. }
                 | SessionEvent::OutputBoundary { .. }
+                | SessionEvent::TmuxState { .. }
+                | SessionEvent::Notice { .. }
                 | SessionEvent::Error { .. } => {}
             }
             events.push(event);
@@ -689,10 +713,13 @@ impl SessionEventQueueInner {
                     stats.dropped_output_bytes = stats.dropped_output_bytes.saturating_add(*bytes);
                 }
                 SessionEvent::CwdChanged { .. }
+                | SessionEvent::CommandContext { .. }
                 | SessionEvent::CommandAccepted { .. }
                 | SessionEvent::Exited { .. }
                 | SessionEvent::CleanupFailed { .. }
                 | SessionEvent::OutputBoundary { .. }
+                | SessionEvent::TmuxState { .. }
+                | SessionEvent::Notice { .. }
                 | SessionEvent::Error { .. } => {}
             }
             events.push(event);
@@ -721,9 +748,12 @@ fn event_session_id(event: &SessionEvent) -> &str {
         | SessionEvent::OutputBoundary { session_id, .. }
         | SessionEvent::OutputDropped { session_id, .. }
         | SessionEvent::CwdChanged { session_id, .. }
+        | SessionEvent::CommandContext { session_id, .. }
         | SessionEvent::CommandAccepted { session_id, .. }
         | SessionEvent::Exited { session_id, .. }
         | SessionEvent::CleanupFailed { session_id, .. }
+        | SessionEvent::TmuxState { session_id, .. }
+        | SessionEvent::Notice { session_id, .. }
         | SessionEvent::Error { session_id, .. } => session_id,
     }
 }

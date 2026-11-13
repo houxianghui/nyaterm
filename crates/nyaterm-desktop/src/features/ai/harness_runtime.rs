@@ -3,26 +3,71 @@ use nyaterm_core::ai::AiCommandCard;
 use nyaterm_core::ai::harness::{
     AgentPlan, AgentTool, AgentToolCall, AgentToolResult, AgentVerification,
 };
-use nyaterm_core::capabilities::CapabilityScopeSnapshot;
+use nyaterm_core::capabilities::{AgentApprovalDecision, CapabilityScopeSnapshot};
 use nyaterm_mcp_protocol::{RpcError, TerminalExecuteArgs};
 use rust_i18n::t;
 use serde_json::{Value, json};
 
 use crate::features::NyaTermApp;
 use crate::features::capability_runtime::{CapabilityCaller, CapabilityRequest};
-use crate::features::runtime_jobs::{AiChatJobResult, AiChatWorkerEvent};
 
-use super::ai_jobs::{AiJobRunOptions, run_ai_ask_job};
 use super::presentation::AiAgentStepKind;
 
 impl NyaTermApp {
-    pub(in crate::features) fn cancel_native_run_for_closed_session(
+    pub(in crate::features) fn respond_to_native_capability_approval(
+        &mut self,
+        run_id: &str,
+        ai_session_id: &str,
+        request_id: &str,
+        decision: AgentApprovalDecision,
+        cx: &mut Context<Self>,
+    ) {
+        // A virtualized row can outlive its conversation or tool call. Never
+        // let a stale callback approve another run, even after a scope switch.
+        if self.ai.chat_session_id() != ai_session_id
+            || !self.ai.native_run_is_live(run_id, ai_session_id)
+            || !self.ai.native_run_view().is_some_and(|view| {
+                view.run_id == run_id
+                    && view
+                        .call_id
+                        .as_ref()
+                        .is_some_and(|call_id| request_id == format!("native:{run_id}:{call_id}"))
+            })
+            || !self
+                .mcp
+                .capabilities
+                .native_approval_requests(run_id, ai_session_id)
+                .iter()
+                .any(|view| view.approval.request_id == request_id)
+        {
+            return;
+        }
+        self.respond_to_mcp_approval(request_id, decision, cx);
+    }
+
+    pub(in crate::features) fn cancel_ai_run_for_closed_session(
         &mut self,
         session_id: &str,
         cx: &mut Context<Self>,
     ) {
+        // A run can target a different terminal from the one that owns its
+        // conversation. Closing either must make its pending buttons inert.
+        for request in self
+            .mcp
+            .capabilities
+            .cancel_native_approvals_for_target(session_id)
+        {
+            let _ = request.reply.send(Err(RpcError {
+                code: "target_disconnected".into(),
+                message: "The authorization target was closed.".into(),
+            }));
+        }
+        self.cancel_native_runs_for_disconnected_session(session_id, cx);
+        self.defer_ai_panel_snapshot_flush(cx);
         let scope = format!("terminal:{session_id}");
-        if self.ai.native_owner_in_scope(&scope).is_none() {
+        if !self.ai.chat_or_agent_is_running_in_scope(&scope)
+            && self.ai.native_owner_in_scope(&scope).is_none()
+        {
             return;
         }
         let visible = self.ai.active_scope_key().to_string();
@@ -31,8 +76,24 @@ impl NyaTermApp {
         self.ai.switch_scope(&visible);
     }
 
+    pub(in crate::features) fn cancel_native_runs_for_disconnected_session(
+        &mut self,
+        session_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        // A target can belong to a background conversation on another terminal.
+        // Revoke its run before any queued model/tool completion is dispatched.
+        let scopes = self.ai.native_run_scopes_for_session(session_id);
+        let visible = self.ai.active_scope_key().to_string();
+        for scope in scopes {
+            self.ai.switch_scope(&scope);
+            self.cancel_ai_chat(cx);
+        }
+        self.ai.switch_scope(&visible);
+    }
+
     fn persist_native_chat_projection(&mut self, cx: &mut Context<Self>) {
-        if !self.ai.settings_config().record_history {
+        if !self.ai.run_settings().record_history {
             return;
         }
         let Some(message) = self
@@ -63,6 +124,39 @@ impl NyaTermApp {
         .detach();
     }
 
+    pub(in crate::features) fn dispatch_native_agent_decision(
+        &mut self,
+        decision: nyaterm_core::ai::harness::AgentDecision,
+        cx: &mut Context<Self>,
+    ) {
+        match decision {
+            nyaterm_core::ai::harness::AgentDecision::Tools(batch) => {
+                if let Err(error) = self.ai.queue_native_batch(batch) {
+                    let owner = self.ai.native_owner();
+                    self.ai.cancel_chat_and_agent();
+                    self.ai.set_native_message(error);
+                    if let Some(owner) = owner {
+                        self.clear_capability_owner(&owner, cx);
+                    }
+                } else {
+                    self.start_native_agent_continuation(cx);
+                }
+            }
+            nyaterm_core::ai::harness::AgentDecision::FinalText(answer) => {
+                let answer = format!("{answer}\n\n[{}]", t!("ai.harness.unverified"));
+                match self.ai.finish_native_text(answer) {
+                    Ok(()) => self.record_native_control_audit("text_answer", true, cx),
+                    Err(error) => self.ai.set_native_message(error),
+                }
+                if let Some(owner) = self.ai.ended_native_owner() {
+                    self.clear_capability_owner(&owner, cx);
+                }
+                self.persist_native_chat_projection(cx);
+            }
+        }
+        self.defer_ai_panel_snapshot_flush(cx);
+    }
+
     pub(in crate::features) fn dispatch_native_agent_call(
         &mut self,
         call: AgentToolCall,
@@ -75,9 +169,10 @@ impl NyaTermApp {
                     self.start_native_agent_continuation(cx);
                     return;
                 }
+                let owner = self.ai.native_owner();
                 self.ai.cancel_chat_and_agent();
                 self.ai.set_native_message(error);
-                if let Some(owner) = self.ai.native_owner() {
+                if let Some(owner) = owner {
                     self.clear_capability_owner(&owner, cx);
                 }
                 return;
@@ -204,9 +299,10 @@ impl NyaTermApp {
                             && (value["exitCode"].is_null()
                                 || value["timedOut"] == true
                                 || value["sourceTruncated"] == true);
-                        let stop_execution = tool_kind == AgentTool::TerminalExecute
-                            && (value["timedOut"] == true || value["sourceTruncated"] == true
-                                || matches!(value["code"].as_str(), Some("execution_incomplete" | "target_disconnected" | "cancelled")));
+                        let stop_run = matches!(
+                            value["code"].as_str(),
+                            Some("target_disconnected" | "cancelled")
+                        );
                         if this.ai.complete_native_call(
                             &callback_run,
                             AgentToolResult {
@@ -231,9 +327,8 @@ impl NyaTermApp {
                                 nyaterm_core::truncate_preview(&value.to_string(), 500),
                             );
                             this.ai.record_native_tool_output(&value);
-                            if stop_execution {
-                                this.ai.set_native_run_status(&callback_run, nyaterm_core::ai::harness::AgentRunStatus::Blocked);
-                                this.ai.set_native_message("Terminal execution is incomplete; review the terminal before starting another command.".into());
+                            if stop_run {
+                                this.ai.cancel_chat_and_agent();
                                 this.clear_capability_owner(&format!("native:{callback_run}"), cx);
                             } else {
                                 this.start_native_agent_continuation(cx);
@@ -247,6 +342,8 @@ impl NyaTermApp {
                 .detach();
                 self.dispatch_capability_request(
                     CapabilityRequest {
+                        extended_results: true,
+                        resolved_session_id: None,
                         connection_id: format!("native:{run_id}"),
                         request_id: format!("native:{run_id}:{}", call.id),
                         generation: String::new(),
@@ -315,51 +412,15 @@ impl NyaTermApp {
     }
 
     pub(in crate::features) fn start_native_agent_continuation(&mut self, cx: &mut Context<Self>) {
+        if let Some(call) = self.ai.next_native_call() {
+            self.dispatch_native_agent_call(call, cx);
+            return;
+        }
         let Some((launch, request)) = self.ai.begin_native_continuation() else {
             return;
         };
         let agent_history = self.ai.native_initial_history();
-        let store = self.store_blocking_client();
-        let settings = self.ai.settings_config_cloned();
-        let job_id = launch.job_id;
-        let session_id = launch.session_id;
-        let tx = launch.tx;
-        let reject_tx = tx.clone();
-        let reject_session = session_id.clone();
-        if let Err(error) = self.blocking_jobs.submit_detached(
-            "native-agent-continuation",
-            move |scheduler_cancel| {
-                let result = if scheduler_cancel.is_cancelled() {
-                    Err("Agent cancelled".into())
-                } else {
-                    run_ai_ask_job(
-                        store,
-                        settings,
-                        request,
-                        AiJobRunOptions {
-                            mcp_credential: None,
-                            stream_tx: Some(tx.clone()),
-                            cancel: launch.cancel,
-                            job_id,
-                            agent_history,
-                            persist_user_message: false,
-                        },
-                    )
-                };
-                let _ = tx.unbounded_send(AiChatWorkerEvent::Finished(Box::new(AiChatJobResult {
-                    job_id,
-                    session_id,
-                    result,
-                })));
-            },
-        ) {
-            let _ =
-                reject_tx.unbounded_send(AiChatWorkerEvent::Finished(Box::new(AiChatJobResult {
-                    job_id,
-                    session_id: reject_session,
-                    result: Err(error.to_string()),
-                })));
-        }
+        self.launch_native_chat(request, launch, agent_history, false, cx);
         self.defer_ai_panel_snapshot_flush(cx);
     }
 

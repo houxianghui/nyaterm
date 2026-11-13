@@ -1,20 +1,23 @@
-use gpui::{Context, PathPromptOptions, SharedString};
-use nyaterm_transport::zmodem::runtime::{
-    ZmodemRuntime as ZmodemWorker, ZmodemRuntimeEvent as ZmodemWorkerEvent,
-};
-use nyaterm_transport::{
-    SftpDuplicateDecision, SftpDuplicatePolicy, SftpDuplicateRequest, SftpDuplicateResolver,
-    SftpService, SftpTransferDirection, SftpTransferProgress, SshSessionConfig, ZmodemAction,
-    ZmodemDetectResult, ZmodemDetector, ZmodemDirection, ZmodemEvent, ZmodemTransfer,
-};
-use std::{collections::HashSet, path::PathBuf, time::Instant};
-
 use crate::features::NyaTermApp;
 use crate::features::formatting::short_id;
 use crate::models::{
     TransferJobEvent, TransferJobKind, TransferJobOutput, TransferJobResult, TransferJobState,
     TransferJobStatus,
 };
+use gpui::{Context, PathPromptOptions, SharedString};
+use nyaterm_files::sftp::SftpService;
+use nyaterm_files::sftp_transfer_types::{
+    SftpDuplicateDecision, SftpDuplicatePolicy, SftpDuplicateRequest, SftpDuplicateResolver,
+    SftpTransferDirection, SftpTransferProgress,
+};
+use nyaterm_transport::zmodem::runtime::{
+    ZmodemRuntime as ZmodemWorker, ZmodemRuntimeEvent as ZmodemWorkerEvent,
+};
+use nyaterm_transport::{
+    SshSessionConfig, ZmodemAction, ZmodemDetectResult, ZmodemDetector, ZmodemDirection,
+    ZmodemEvent, ZmodemTransfer,
+};
+use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 pub(super) struct ZmodemSessionState {
     detector: ZmodemDetector,
@@ -76,6 +79,16 @@ impl Drop for ZmodemSessionState {
 }
 
 impl NyaTermApp {
+    pub(in crate::features) fn modem_transfer_disabled_message(&self, session_id: &str) -> String {
+        if self.tmux.is_control_session(session_id)
+            || self.tmux.pane_for_session(session_id).is_some()
+        {
+            rust_i18n::t!("tmux.modemDisabled").to_string()
+        } else {
+            rust_i18n::t!("dialog.serialSoftwareFlowControlModemDisabled").to_string()
+        }
+    }
+
     pub(in crate::features) fn rebind_zmodem_recording(&mut self) {
         let recording = self.recording.writer();
         for (_, state) in self.session.zmodem_states_mut() {
@@ -128,6 +141,12 @@ impl NyaTermApp {
         files: Vec<PathBuf>,
         cx: &mut Context<Self>,
     ) {
+        if !self.session.manager().supports_modem_transfer(&session_id) {
+            self.shell
+                .set_status(self.modem_transfer_disabled_message(&session_id));
+            cx.notify();
+            return;
+        }
         if files.is_empty() {
             return;
         }
@@ -239,9 +258,8 @@ impl NyaTermApp {
         cx: &mut Context<Self>,
     ) {
         if !self.session.manager().supports_modem_transfer(&session_id) {
-            self.shell.set_status(
-                rust_i18n::t!("dialog.serialSoftwareFlowControlModemDisabled").to_string(),
-            );
+            self.shell
+                .set_status(self.modem_transfer_disabled_message(&session_id));
             cx.notify();
             return;
         }
@@ -623,6 +641,18 @@ impl NyaTermApp {
                 self.shell.set_status(format!(
                     "ZMODEM {dir} complete ({file_count} file(s)) [{session_id}]"
                 ));
+                // Surface completion in the top-right notification stack; the
+                // transfer queue row alone is easy to miss when it is collapsed.
+                self.notify_background_operation(
+                    if direction == ZmodemDirection::Upload {
+                        "zmodem-upload-complete"
+                    } else {
+                        "zmodem-download-complete"
+                    },
+                    nyaterm_ui::notification::NyaNotificationKind::Success,
+                    rust_i18n::t!("zmodem.complete").to_string(),
+                    cx,
+                );
                 self.finish_zmodem_transfer_jobs(session_id, true, None, cx);
                 if let Some(state) = self.session.zmodem_state_mut(session_id) {
                     state.finish_transfer();
@@ -939,19 +969,16 @@ const ZMODEM_WORKER_EVENT_DRAIN_BATCH: usize = 32;
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-
-    use gpui::{AppContext as _, Context, Subscription, TestAppContext};
-    use nyaterm_core::{AiExecutionProfile, AppRuntime, RuntimeMode, uuid};
-    use nyaterm_transport::{LocalSessionConfig, ZmodemDirection};
-
+    use super::ZmodemTransferJobUpdate;
     use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
     use crate::features::NyaTermApp;
     use crate::features::test_support::app_with_visible_local_session;
     use crate::models::{SessionLaunchConfig, SessionRuntimeMetadata};
     use crate::test_support::TestConfigDir;
-
-    use super::ZmodemTransferJobUpdate;
+    use gpui::{AppContext as _, Context, Subscription, TestAppContext};
+    use nyaterm_core::{AiExecutionProfile, AppRuntime, RuntimeMode, uuid};
+    use nyaterm_transport::{LocalSessionConfig, ZmodemDirection};
+    use std::time::{Duration, Instant};
 
     const SESSION_ID: &str = "zmodem-panel-session";
 
@@ -1068,7 +1095,10 @@ mod tests {
         cx.update_entity(&app, |app, cx| {
             let (passthrough, dirty) =
                 app.process_zmodem_output(SESSION_ID, b"\x18z waiting to receive.**\x18B01", cx);
-            assert_eq!(passthrough, b"\x18z waiting to receive.");
+            assert!(
+                passthrough.is_empty(),
+                "the lrzsz receive banner must not reach the terminal"
+            );
             assert!(dirty);
             assert!(
                 app.session

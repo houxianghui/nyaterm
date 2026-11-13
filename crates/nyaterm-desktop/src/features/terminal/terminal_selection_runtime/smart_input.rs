@@ -1,65 +1,18 @@
-use gpui::{
-    App, Context, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseUpEvent, Pixels, Point,
-};
-use nyaterm_core::terminal::editing::{EditIntent, EditPhase, EditPlan, plan_edit};
+use gpui::{App, Context, KeyDownEvent, MouseUpEvent, Pixels, Point};
+use nyaterm_core::terminal::editing::{EditIntent, EditPhase, plan_edit};
 use nyaterm_core::terminal::input_tracker::InputSelectionRange;
 use nyaterm_terminal::editing::resolve_input;
-use nyaterm_terminal::navigation::{NavigationKey, navigation_key_bytes};
-use nyaterm_terminal_gpui::{
-    TerminalKeyMode, terminal_key_bytes_with_mode, terminal_key_release_bytes_with_mode,
-};
+use nyaterm_terminal::selection::TerminalSelectionMode;
 
 use super::helpers::SmartSelectionEdge;
 use super::metrics::{
     terminal_cell_for_visual_geometry, terminal_snapshot_row_for_visual_geometry,
 };
 use crate::features::NyaTermApp;
+use crate::features::terminal::editing_payload::shell_edit_payload;
 use crate::features::terminal::editing_state::SnapshotEvidence;
 use crate::features::terminal::terminal_surface::terminal_absolute_line_for_snapshot_row;
 use crate::models::{TerminalBufferCellPos, TerminalSelection};
-
-fn shell_edit_payload(
-    plan: &EditPlan,
-    mode: TerminalKeyMode,
-    insertion_wire: Vec<u8>,
-) -> (Vec<u8>, Vec<u8>) {
-    let key = if plan.move_right {
-        NavigationKey::Right
-    } else {
-        NavigationKey::Left
-    };
-    // Recording/tracking consumes legacy logical intents. The wire uses exactly
-    // the same press/release encoder as physical input, including Kitty flags.
-    let mut logical = navigation_key_bytes(key, mode.application_cursor).repeat(plan.move_steps);
-    logical.extend(std::iter::repeat_n(0x7f, plan.delete_steps));
-    let mut wire = shell_edit_key_bytes(if plan.move_right { "right" } else { "left" }, mode)
-        .repeat(plan.move_steps);
-    wire.extend(shell_edit_key_bytes("backspace", mode).repeat(plan.delete_steps));
-    wire.extend(insertion_wire);
-    logical.extend_from_slice(plan.insert_text.as_bytes());
-    (wire, logical)
-}
-
-fn shell_edit_key_bytes(key: &str, mode: TerminalKeyMode) -> Vec<u8> {
-    let keystroke = Keystroke {
-        key: key.into(),
-        key_char: None,
-        modifiers: Modifiers::default(),
-    };
-    let mut bytes = terminal_key_bytes_with_mode(
-        &KeyDownEvent {
-            keystroke: keystroke.clone(),
-            is_held: false,
-            prefer_character_input: false,
-        },
-        mode,
-    )
-    .expect("shell editing keys have a terminal encoding");
-    if let Some(release) = terminal_key_release_bytes_with_mode(&KeyUpEvent { keystroke }, mode) {
-        bytes.extend(release);
-    }
-    bytes
-}
 
 impl NyaTermApp {
     pub(in crate::features) fn smart_input_line_selection_at_mouse(
@@ -207,7 +160,9 @@ impl NyaTermApp {
         if !self.can_use_smart_cursor_selection() {
             return;
         }
-        if let Some(selection) = self.terminal.selection.selection {
+        if let Some(selection) = self.terminal.selection.selection
+            && selection.mode == TerminalSelectionMode::Linear
+        {
             let state = self.terminal.editing.state_mut();
             if state.model.phase == EditPhase::Ready
                 && state.selection_origin_version == Some(state.model.version)
@@ -227,6 +182,9 @@ impl NyaTermApp {
             return None;
         }
         let selection = self.terminal.selection.selection.as_ref()?;
+        if selection.mode == TerminalSelectionMode::Block {
+            return None;
+        }
         if selection.is_empty() || selection.all_buffer {
             return None;
         }
@@ -264,6 +222,7 @@ impl NyaTermApp {
         paste: bool,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.terminal.editing.state_mut().suggestion_fill = None;
         if !self.can_use_smart_cursor_selection() {
             return false;
         }
@@ -426,8 +385,8 @@ mod tests {
     use nyaterm_core::terminal::editing::{EditIntent, plan_edit};
     use nyaterm_core::terminal::input_tracker::TerminalInputState;
 
-    use super::shell_edit_payload;
     use crate::features::NyaTermApp;
+    use crate::features::terminal::editing_payload::shell_edit_payload;
     use nyaterm_terminal_gpui::TerminalKeyMode;
 
     #[test]

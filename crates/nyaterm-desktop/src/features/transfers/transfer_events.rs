@@ -1,17 +1,3 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-
-use futures::{FutureExt as _, StreamExt as _, select_biased};
-use gpui::{Context, Window};
-use nyaterm_core::{AiAction, truncate_preview};
-use nyaterm_transport::{
-    SFTP_TRANSFER_CANCELLED, SftpFileEntry, SftpFileType, SftpTransferProgress,
-};
-use nyaterm_ui::NyaDialogWindowExt as _;
-use rust_i18n::t;
-
 use crate::features::NyaTermApp;
 use crate::features::formatting::format_permissions_octal;
 use crate::models::{
@@ -19,6 +5,17 @@ use crate::models::{
     TransferBrowserPathMenuState, TransferExternalSyncPromptState, TransferJobEvent,
     TransferJobKind, TransferJobOutput, TransferJobResult, TransferJobStatus,
 };
+use futures::{FutureExt as _, StreamExt as _, select_biased};
+use gpui::{Context, Window};
+use nyaterm_core::{AiAction, truncate_preview};
+use nyaterm_files::sftp::{RemoteFilePath, SFTP_TRANSFER_CANCELLED, SftpFileEntry, SftpFileType};
+use nyaterm_files::sftp_transfer_types::SftpTransferProgress;
+use nyaterm_ui::NyaDialogWindowExt as _;
+use rust_i18n::t;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// How long the event drain holds a progress batch open before entering GPUI.
 ///
@@ -317,10 +314,19 @@ impl NyaTermApp {
                 });
             return true;
         }
+        let event_finished = matches!(event.event, TransferJobEvent::Finished(_));
+        if event_finished {
+            self.transfer.browser.navigation_handles.remove(&event.id);
+        }
         let Some((job_index, mut job)) = self.transfer.take_transfer_job_for_event(&event.id)
         else {
-            // The job was cancelled or removed while its worker was still running.
-            return false;
+            // A removed job must release both its slot and its node's pending generation.
+            let tree_slot_released =
+                event_finished && self.transfer.discard_tree_listing(&event.id);
+            if tree_slot_released {
+                self.request_missing_expanded_tree_listings(cx);
+            }
+            return tree_slot_released;
         };
         if self.transfer.file_operation(&event.id).is_some() {
             let cancelled_without_running = job.status == TransferJobStatus::Cancelling
@@ -350,12 +356,13 @@ impl NyaTermApp {
                                 bytes, target_path, ..
                             } = output
                             {
-                                job.summary = Some(nyaterm_transport::SftpTransferSummary {
-                                    remote_path: target_path,
-                                    local_path: Default::default(),
-                                    bytes,
-                                    skipped: false,
-                                });
+                                job.summary =
+                                    Some(nyaterm_files::sftp_transfer_types::SftpTransferSummary {
+                                        remote_path: target_path,
+                                        local_path: Default::default(),
+                                        bytes,
+                                        skipped: false,
+                                    });
                             }
                         }
                         Err(error) => {
@@ -411,26 +418,20 @@ impl NyaTermApp {
             }
             return false;
         }
-        let reveal_tree_after_navigation = matches!(
-            &job.kind,
-            TransferJobKind::InitialDirectory
-                | TransferJobKind::ListDir { .. }
-                | TransferJobKind::SyncCwd { .. }
-                | TransferJobKind::ResolveHome
-        ) || job_session_id
-            .as_deref()
-            .is_some_and(|id| !self.transfer.tree_is_initialized(id));
         if let TransferJobKind::ListTree { path, generation } = &job.kind {
             if let TransferJobEvent::Finished(result) = event.event {
+                let tree_slot_released = self.transfer.finish_tree_listing(&event.id);
                 let result = match result {
                     Ok(TransferJobOutput::TreeEntries(entries)) => Ok(entries),
                     Err(error) => Err(error),
                     _ => Err(t!("fileExplorer.treeUnexpectedResult").to_string()),
                 };
-                return job_session_id.as_deref().is_some_and(|session| {
+                let changed = job_session_id.as_deref().is_some_and(|session| {
                     self.transfer
                         .complete_tree_request(session, path, *generation, result)
                 });
+                self.request_missing_expanded_tree_listings(cx);
+                return changed || tree_slot_released;
             }
             self.transfer
                 .restore_transfer_job_after_event((job_index, job));
@@ -456,6 +457,55 @@ impl NyaTermApp {
             }
             return false;
         }
+        let navigation_position_owned = if let (Some(session), TransferJobEvent::Finished(result)) =
+            (navigation_job_key.as_deref(), &event.event)
+        {
+            self.transfer
+                .settle_tree_navigation(session, &event_id, result.is_ok())
+        } else {
+            false
+        };
+        let tree_uninitialized = job_session_id
+            .as_deref()
+            .is_some_and(|id| !self.transfer.tree_is_initialized(id));
+        let directory_changed = match &job.kind {
+            TransferJobKind::ListDir { remote_path, .. } => self
+                .transfer
+                .browser
+                .pending_navigations
+                .get(&event_id)
+                .is_some_and(|snapshot| {
+                    let backend = job_session_id.as_deref().and_then(|session| {
+                        self.session
+                            .file_browser_backend_support_for_session(session)
+                    });
+                    backend.is_some_and(|backend| {
+                        if self.session.active_id() == job_session_id.as_deref() {
+                            !self.transfer.tree_paths_equal(
+                                backend,
+                                &RemoteFilePath {
+                                    display_path: snapshot.browser_path.clone(),
+                                    raw_path_token: snapshot.browser_raw_path_token.clone(),
+                                },
+                                &self.transfer.browser_remote_file_path(),
+                            )
+                        } else {
+                            !super::cwd_sync::cwd_paths_equal(
+                                backend,
+                                &snapshot.browser_path,
+                                remote_path,
+                            )
+                        }
+                    })
+                }),
+            TransferJobKind::InitialDirectory => true,
+            _ => false,
+        };
+        let reveal_tree_after_navigation = if navigation_job_key.is_some() {
+            navigation_position_owned && (directory_changed || tree_uninitialized)
+        } else {
+            tree_uninitialized
+        };
         dirty |= transfer_event_needs_ui_refresh(
             self.session.active_id(),
             job_session_id.as_deref(),
@@ -531,6 +581,14 @@ impl NyaTermApp {
                 job.progress = None;
                 job.speed.reset();
                 job.summary = None;
+            }
+            TransferJobEvent::ExternalWorkspacePrepared { local_path } => {
+                if let TransferJobKind::OpenExternal {
+                    local_path: target, ..
+                } = &mut job.kind
+                {
+                    *target = Some(local_path);
+                }
             }
             TransferJobEvent::ExternalModified {
                 remote_path,
@@ -613,16 +671,29 @@ impl NyaTermApp {
                     .retain(|identity| {
                         entries.iter().any(|entry| entry.matches_identity(identity))
                     });
-                if let Some(select_after) = select_after
-                    && entries.iter().any(|entry| entry.path == select_after)
-                {
-                    self.transfer.browser.selected_remote_path = Some(select_after.clone());
-                    self.transfer.browser.selected_remote_paths.clear();
-                    self.transfer
-                        .browser
-                        .selected_remote_paths
-                        .insert(select_after.clone());
-                    remote_path_to_set = Some(select_after);
+                if let Some(select_after) = select_after {
+                    let remote_browser = job_session_id.as_deref().is_some_and(|session_id| {
+                        self.session
+                            .file_browser_backend_support_for_session(session_id)
+                            == Some(nyaterm_files::file_browser::FileBrowserBackendKind::Remote)
+                    });
+                    if remote_browser {
+                        // Inactive listings update the session cache, whose scroll/selection
+                        // are not retained. Never mutate the active session's scroll handle.
+                        if inactive_browser_snapshot.is_none() {
+                            remote_path_to_set =
+                                self.transfer.restore_browser_navigation_selection(
+                                    &select_after,
+                                    self.settings.summary().ui_file_explorer_show_hidden_files,
+                                );
+                        } else {
+                            self.transfer
+                                .restore_browser_ancestor_path_token(&event_id, &select_after);
+                        }
+                    } else if entries.iter().any(|entry| entry.path == select_after) {
+                        self.transfer.select_browser_entry(select_after.clone());
+                        remote_path_to_set = Some(select_after);
+                    }
                 }
                 job.entries = entries;
                 job.summary = None;
@@ -685,10 +756,11 @@ impl NyaTermApp {
                 job.detail = format!("Home {home_dir}");
                 self.transfer.browser.home_dir = home_dir.clone();
                 self.transfer.browser.home_dir_pending = false;
-                self.transfer.browser.loading = false;
-                self.transfer.browser.error = None;
-                self.transfer.browser.status =
-                    format!("remote home resolved: {}", truncate_preview(&home_dir, 72));
+                // Metadata replies must not settle a directory request started afterwards.
+                if !self.transfer.browser.loading {
+                    self.transfer.browser.status =
+                        format!("remote home resolved: {}", truncate_preview(&home_dir, 72));
+                }
                 job.entries.clear();
                 job.summary = None;
                 job.progress = None;
@@ -819,7 +891,7 @@ impl NyaTermApp {
                     target_parent_path: target_parent_path.clone(),
                 };
                 job.entries.clear();
-                job.summary = Some(nyaterm_transport::SftpTransferSummary {
+                job.summary = Some(nyaterm_files::sftp_transfer_types::SftpTransferSummary {
                     remote_path: target_path.clone(),
                     local_path: job
                         .progress
@@ -1195,6 +1267,12 @@ impl NyaTermApp {
                 local_path,
                 baseline,
             })) => {
+                if let TransferJobKind::OpenExternal {
+                    local_path: target, ..
+                } = &mut job.kind
+                {
+                    *target = Some(local_path.clone());
+                }
                 job.status = TransferJobStatus::Completed;
                 job.detail = format!("Opened {}", local_path.display());
                 job.summary = None;
@@ -1350,9 +1428,11 @@ impl NyaTermApp {
                     &job.kind,
                     TransferJobKind::InitialDirectory
                         | TransferJobKind::ListDir { .. }
-                        | TransferJobKind::ResolveHome
                         | TransferJobKind::SyncCwd { .. }
                 );
+                if matches!(job.kind, TransferJobKind::ResolveHome) {
+                    self.transfer.browser.home_dir_pending = false;
+                }
                 let property_remote_path = match &job.kind {
                     TransferJobKind::LoadProperties { remote_path }
                     | TransferJobKind::UpdateProperties { remote_path, .. }
@@ -1595,19 +1675,10 @@ fn transfer_navigation_job_is_stale(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
-    use std::path::{Path, PathBuf};
-    use std::time::Duration;
-
-    use gpui::{
-        AppContext as _, Entity, IntoElement, ParentElement as _, Render, Styled as _,
-        TestAppContext, VisualTestContext, div,
+    use super::{
+        TRANSFER_UI_COALESCE_WINDOW, transfer_event_needs_browser_context,
+        transfer_event_needs_ui_refresh, transfer_navigation_job_is_stale,
     };
-    use nyaterm_core::{AppRuntime, RuntimeMode};
-    use nyaterm_transport::{
-        SFTP_TRANSFER_CANCELLED, SftpPathTransferOptions, SftpTransferProgress, SftpTransferSummary,
-    };
-
     use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
     use crate::features::NyaTermApp;
     use crate::models::{
@@ -1615,11 +1686,161 @@ mod tests {
         TransferJobStatus,
     };
     use crate::test_support::TestConfigDir;
-
-    use super::{
-        TRANSFER_UI_COALESCE_WINDOW, transfer_event_needs_browser_context,
-        transfer_event_needs_ui_refresh, transfer_navigation_job_is_stale,
+    use gpui::{
+        AppContext as _, Entity, IntoElement, ParentElement as _, Render, Styled as _,
+        TestAppContext, VisualTestContext, div,
     };
+    use nyaterm_core::{AppRuntime, RuntimeMode};
+    use nyaterm_files::sftp::SFTP_TRANSFER_CANCELLED;
+    use nyaterm_files::sftp_transfer_types::{
+        SftpPathTransferOptions, SftpTransferProgress, SftpTransferSummary,
+    };
+    use std::collections::{HashMap, HashSet};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    #[test]
+    fn external_workspace_path_is_unknown_until_prepared_and_finished_path_is_authoritative() {
+        let test_dir = TestConfigDir::new("nyaterm-external-prepared-path");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let (app, vcx) = hosted(&mut cx, test_dir.path());
+        let prepared = test_dir.path().join("local/example.txt");
+        let opened = test_dir.path().join("final/example.txt");
+        // A closed source session lets this test inspect completion without starting a watcher.
+        vcx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                let mut job = running_job("external");
+                job.session_id = Some("closed-source".into());
+                job.kind = TransferJobKind::OpenExternal {
+                    remote_path: "/remote/example.txt".into(),
+                    local_path: None,
+                };
+                app.transfer.enqueue_transfer_job(job);
+                assert!(matches!(
+                    &app.transfer.transfer_job("external").unwrap().kind,
+                    TransferJobKind::OpenExternal { local_path: None, .. }
+                ));
+                app.apply_transfer_event(TransferJobResult {
+                    id: "external".into(),
+                    event: TransferJobEvent::ExternalWorkspacePrepared { local_path: prepared.clone() },
+                }, window, cx);
+                assert!(matches!(
+                    &app.transfer.transfer_job("external").unwrap().kind,
+                    TransferJobKind::OpenExternal { local_path: Some(path), .. } if path == &prepared
+                ));
+                app.apply_transfer_event(TransferJobResult {
+                    id: "external".into(),
+                    event: TransferJobEvent::Progress(SftpTransferProgress {
+                        remote_path: "/remote/example.txt".into(),
+                        local_path: prepared.clone(),
+                        bytes_transferred: 3,
+                        total_bytes: Some(3),
+                        item_count_completed: None,
+                        item_count_total: None,
+                    }),
+                }, window, cx);
+                assert_eq!(app.transfer.transfer_job("external").unwrap().progress.as_ref().unwrap().local_path, prepared);
+                app.apply_transfer_event(TransferJobResult {
+                    id: "external".into(),
+                    event: TransferJobEvent::Finished(Ok(TransferJobOutput::ExternalOpened {
+                        remote_path: "/remote/example.txt".into(),
+                        raw_path_token: None,
+                        local_path: opened.clone(),
+                        baseline: crate::models::external_editor::ExternalEditorFileVersion {
+                            len: 3, modified: None, digest: [0; 32],
+                        },
+                    })),
+                }, window, cx);
+                let job = app.transfer.transfer_job("external").unwrap();
+                assert_eq!(job.status, TransferJobStatus::Completed);
+                assert!(job.progress.is_none());
+                assert!(matches!(&job.kind, TransferJobKind::OpenExternal { local_path: Some(path), .. } if path == &opened));
+                assert!(job.detail.contains(&opened.display().to_string()));
+            });
+        });
+    }
+
+    #[test]
+    fn prepared_workspace_for_a_removed_job_is_ignored() {
+        let test_dir = TestConfigDir::new("nyaterm-external-late-prepared");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let (app, vcx) = hosted(&mut cx, test_dir.path());
+        vcx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                assert!(!app.apply_transfer_event(
+                    TransferJobResult {
+                        id: "removed".into(),
+                        event: TransferJobEvent::ExternalWorkspacePrepared {
+                            local_path: test_dir.path().join("example.txt"),
+                        },
+                    },
+                    window,
+                    cx
+                ));
+                assert!(app.transfer.transfer_jobs().is_empty());
+            });
+        });
+    }
+
+    #[test]
+    fn external_open_completion_watches_the_final_path_and_reports_changes_from_it() {
+        let test_dir = TestConfigDir::new("nyaterm-external-final-watch");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let (app, vcx) = hosted(&mut cx, test_dir.path());
+        let path = test_dir.path().join("LocalAppData 文件.txt");
+        std::fs::write(&path, "original").unwrap();
+        let baseline =
+            crate::features::transfers::external_sync_runtime::read_external_editor_version(
+                &path,
+                || false,
+            )
+            .unwrap();
+        // An edit before watcher startup must be compared with the downloaded baseline.
+        std::fs::write(&path, "edited").unwrap();
+        let mut receiver = vcx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                let mut job = running_job("external-watch");
+                job.kind = TransferJobKind::OpenExternal {
+                    remote_path: "/remote/example.txt".into(),
+                    local_path: None,
+                };
+                app.transfer.enqueue_transfer_job(job);
+                let receiver = app.transfer.take_transfer_event_receiver().unwrap();
+                app.apply_transfer_event(
+                    TransferJobResult {
+                        id: "external-watch".into(),
+                        event: TransferJobEvent::Finished(Ok(TransferJobOutput::ExternalOpened {
+                            remote_path: "/remote/example.txt".into(),
+                            raw_path_token: Some("opaque-remote-path".into()),
+                            local_path: path.clone(),
+                            baseline,
+                        })),
+                    },
+                    window,
+                    cx,
+                );
+                receiver
+            })
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let event = loop {
+            if let Ok(event) = receiver.try_recv() {
+                break event;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "final-path watcher did not report the edit"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(event.id, "external-watch");
+        assert!(matches!(event.event, TransferJobEvent::ExternalModified {
+            local_path, raw_path_token: Some(token), ..
+        } if local_path == path && token == "opaque-remote-path"));
+    }
 
     #[test]
     fn closing_shared_app_child_window_keeps_transfer_events_alive() {
@@ -1785,11 +2006,11 @@ mod tests {
         (app, vcx)
     }
 
-    fn browser_entry(name: &str) -> nyaterm_transport::SftpFileEntry {
-        nyaterm_transport::SftpFileEntry {
+    fn browser_entry(name: &str) -> nyaterm_files::sftp::SftpFileEntry {
+        nyaterm_files::sftp::SftpFileEntry {
             name: name.to_string(),
             path: format!("/remote/{name}"),
-            file_type: nyaterm_transport::SftpFileType::File,
+            file_type: nyaterm_files::sftp::SftpFileType::File,
             size: Some(1),
             permissions: None,
             owner: String::new(),
@@ -2422,7 +2643,7 @@ mod tests {
                 remote_path: "/tmp/file".to_string(),
             },
             &TransferJobEvent::Finished(Ok(TransferJobOutput::Uploaded {
-                summary: nyaterm_transport::SftpTransferSummary {
+                summary: nyaterm_files::sftp_transfer_types::SftpTransferSummary {
                     remote_path: "/tmp/file".to_string(),
                     local_path: PathBuf::from("/tmp/file"),
                     bytes: 2,

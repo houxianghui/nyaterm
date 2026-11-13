@@ -481,7 +481,7 @@ fn connection_group_editor_input_box(
         .when(focused, |this| {
             this.shadow(ordinary_input_focus_ring(palette))
         })
-        .bg(rgb(palette.input))
+        .bg(rgb(palette.input_surface()))
         .cursor_text()
         .on_mouse_down(
             MouseButton::Left,
@@ -817,6 +817,7 @@ mod hover_card_tests {
             )
         });
         let (_, cx) = cx.add_window_view(|window, cx| {
+            window.activate_window();
             let view = cx.new(|_| HoverCardHarness);
             nyaterm_ui::nya_root(view, window, cx)
         });

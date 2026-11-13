@@ -775,11 +775,13 @@ fn prepare_termius_import(store: TermiusRawStore) -> AppResult<PreparedJsonImpor
     )?;
 
     Ok(PreparedJsonImport {
+        warnings: Vec::new(),
         custom_icons: Vec::new(),
         groups: group_paths.values().cloned().collect(),
         passwords: prepared_passwords.passwords,
         ssh_keys: prepared_keys.keys,
         connections,
+        notices: Vec::new(),
     })
 }
 

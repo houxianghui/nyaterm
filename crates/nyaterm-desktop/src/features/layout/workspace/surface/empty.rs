@@ -3,11 +3,10 @@ use rust_i18n::t;
 use gpui::{Context, FontWeight, IntoElement, SharedString, div, prelude::*, px, rgb, svg};
 use nyaterm_core::truncate_preview;
 
+use crate::features::NyaTermApp;
 use crate::features::view_widgets::{
     connection_spinner, empty_workspace_action, nyaterm_logo_mark,
 };
-use crate::features::{NyaTermApp, text_inputs::TextInputSetup};
-use crate::models::BottomPanelMode;
 use crate::models::NavItem;
 
 impl NyaTermApp {
@@ -76,24 +75,17 @@ impl NyaTermApp {
                                     cx.notify();
                                 }),
                             ))
-                            .child(empty_workspace_action(
-                                palette,
-                                show_commands_label,
-                                show_commands,
-                                cx.listener(|this, _, window, cx| {
-                                    this.set_bottom_panel_mode(BottomPanelMode::QuickCommands);
-                                    let search = this.commands.quick_search_draft().to_string();
-                                    let field = this.text_input(
-                                        "quick-command.search",
-                                        &search,
-                                        TextInputSetup::placeholder(t!("quickCommands.search")),
-                                        cx,
-                                    );
-                                    window.focus(&field.read(cx).focus_handle(), cx);
-                                    this.shell.set_status("quick commands opened".to_string());
-                                    cx.notify();
-                                }),
-                            ))
+                            .child(
+                                empty_workspace_action(
+                                    palette,
+                                    show_commands_label,
+                                    show_commands,
+                                    cx.listener(|this, _, window, cx| {
+                                        this.open_quick_commands_panel(window, cx);
+                                    }),
+                                )
+                                .debug_selector(|| "empty-workspace-quick-commands".to_string()),
+                            )
                             .child(empty_workspace_action(
                                 palette,
                                 switch_terminal_label,
@@ -146,12 +138,16 @@ impl NyaTermApp {
     ) -> impl IntoElement {
         let palette = self.theme_palette();
         let request_id = self.session.active_failed_request_id().map(str::to_string);
+        let cancelled = request_id
+            .as_deref()
+            .is_some_and(|id| self.session.start_request_cancelled(id));
         let error = self
             .session
             .start_active_failed()
             .map(|failed| failed.error.clone())
             .or_else(|| self.shell.last_connect_failure_error().map(str::to_string))
             .unwrap_or_default();
+        let show_error = !cancelled || error != t!("terminal.connectionCancelled").as_ref();
 
         div()
             .debug_selector(|| "failed-workspace-state".into())
@@ -167,7 +163,11 @@ impl NyaTermApp {
                 svg()
                     .size(px(32.))
                     .path("icons/session/disconnect.svg")
-                    .text_color(rgb(palette.danger)),
+                    .text_color(rgb(if cancelled {
+                        palette.text_muted
+                    } else {
+                        palette.danger
+                    })),
             )
             .child(
                 div()
@@ -183,15 +183,21 @@ impl NyaTermApp {
                             .text_size(px(13.))
                             .font_weight(FontWeight(600.))
                             .text_color(rgb(palette.text))
-                            .child(t!("terminal.connectionFailed")),
+                            .child(if cancelled {
+                                t!("terminal.connectionCancelled")
+                            } else {
+                                t!("terminal.connectionFailed")
+                            }),
                     )
-                    .child(
-                        div()
-                            .max_w(px(320.))
-                            .text_size(px(11.))
-                            .text_color(rgb(palette.text_dimmed))
-                            .child(truncate_preview(&error, 160)),
-                    ),
+                    .when(show_error, |this| {
+                        this.child(
+                            div()
+                                .max_w(px(320.))
+                                .text_size(px(11.))
+                                .text_color(rgb(palette.text_dimmed))
+                                .child(truncate_preview(&error, 160)),
+                        )
+                    }),
             )
             .when_some(request_id, |this, request_id| {
                 this.child(

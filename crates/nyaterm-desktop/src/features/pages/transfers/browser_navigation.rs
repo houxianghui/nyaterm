@@ -1,12 +1,13 @@
+use super::{normalized_transfer_browser_path, remote_file_name, remote_parent_path};
+use crate::features::NyaTermApp;
+use crate::features::transfers::browser_paths::remote_ancestor_selection;
+use crate::models::{TransferBrowserNavigationSnapshot, TransferBrowserSessionCacheState};
 use gpui::{Context, Window};
-use nyaterm_transport::{RemoteFilePath, SftpFileEntry};
-
+use nyaterm_files::sftp::{RemoteFilePath, SftpFileEntry};
 use std::collections::VecDeque;
 
-use crate::features::NyaTermApp;
-use crate::models::{TransferBrowserNavigationSnapshot, TransferBrowserSessionCacheState};
-
-use super::{normalized_transfer_browser_path, remote_file_name, remote_parent_path};
+#[cfg(test)]
+mod tests;
 
 impl NyaTermApp {
     pub(in crate::features::pages::transfers) fn toggle_transfer_browser_view_mode(
@@ -17,6 +18,8 @@ impl NyaTermApp {
         self.persist_transfer_browser_ui_settings(cx);
         if mode == nyaterm_core::TransferBrowserViewMode::Tree {
             self.reveal_transfer_tree_current_path(cx);
+        } else if let Some(session) = self.session.active_id_owned() {
+            self.transfer.cancel_tree_session_requests(&session);
         }
         self.defer_transfer_panel_snapshot_flush(cx);
         cx.notify();
@@ -29,8 +32,8 @@ impl NyaTermApp {
         let backend = self
             .session
             .active_file_browser_backend()
-            .unwrap_or(nyaterm_transport::FileBrowserBackendKind::Remote);
-        nyaterm_transport::valid_file_browser_child_name(backend, name)
+            .unwrap_or(nyaterm_files::file_browser::FileBrowserBackendKind::Remote);
+        nyaterm_files::file_browser::valid_file_browser_child_name(backend, name)
     }
 
     pub(in crate::features) fn cache_transfer_browser_session(&mut self, session_id: &str) {
@@ -143,7 +146,7 @@ impl NyaTermApp {
         }
 
         if self.session.active_file_browser_backend()
-            == Some(nyaterm_transport::FileBrowserBackendKind::Remote)
+            == Some(nyaterm_files::file_browser::FileBrowserBackendKind::Remote)
         {
             self.start_transfer_initial_directory_job(cx);
             return;
@@ -194,11 +197,24 @@ impl NyaTermApp {
 
     fn open_transfer_browser_directory_with_history_and_rollback(
         &mut self,
-        path: RemoteFilePath,
+        mut path: RemoteFilePath,
         record_history: bool,
         rollback: TransferBrowserNavigationSnapshot,
         cx: &mut Context<Self>,
     ) {
+        let select_after = if self.session.active_file_browser_backend()
+            == Some(nyaterm_files::file_browser::FileBrowserBackendKind::Remote)
+        {
+            remote_ancestor_selection(
+                RemoteFilePath {
+                    display_path: rollback.browser_path.clone(),
+                    raw_path_token: rollback.browser_raw_path_token.clone(),
+                },
+                &mut path,
+            )
+        } else {
+            None
+        };
         self.forget_text_inputs("transfer.browser.path");
         let display_path = path.display_path.clone();
         self.transfer.set_remote_path(display_path.clone());
@@ -208,7 +224,7 @@ impl NyaTermApp {
         } else {
             self.record_transfer_browser_visited_history(display_path);
         }
-        self.start_sftp_list_job(None, rollback, cx);
+        self.start_sftp_list_job(select_after, rollback, cx);
     }
 
     pub(in crate::features) fn open_transfer_browser_history(
@@ -463,6 +479,17 @@ impl NyaTermApp {
             self.transfer
                 .set_browser_status("remote parent directory is unavailable");
             cx.notify();
+            return;
+        }
+        if self.session.active_file_browser_backend()
+            == Some(nyaterm_files::file_browser::FileBrowserBackendKind::Remote)
+        {
+            self.open_transfer_browser_directory_with_history_and_rollback(
+                parent_identity,
+                true,
+                rollback,
+                cx,
+            );
             return;
         }
         self.transfer.set_remote_path(parent.clone());

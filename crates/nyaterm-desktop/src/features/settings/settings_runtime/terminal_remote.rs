@@ -18,6 +18,19 @@ impl NyaTermApp {
     pub(in crate::features) fn toggle_terminal_zebra_stripes(&mut self, cx: &mut Context<Self>) {
         self.settings.toggle_terminal_zebra_stripes();
         self.save_terminal_settings(cx);
+        self.refresh_terminal_zebra_stripes(cx);
+    }
+
+    pub(in crate::features) fn toggle_terminal_zebra_stripes_by_row(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings.toggle_terminal_zebra_stripes_by_row();
+        self.save_terminal_settings(cx);
+        self.refresh_terminal_zebra_stripes(cx);
+    }
+
+    fn refresh_terminal_zebra_stripes(&mut self, cx: &mut Context<Self>) {
         let session_ids = self
             .visible_terminal_session_ids()
             .into_iter()
@@ -80,6 +93,39 @@ impl NyaTermApp {
         self.save_terminal_settings(cx);
     }
 
+    pub(in crate::features) fn set_terminal_wrap_mode(
+        &mut self,
+        mode: nyaterm_core::models::settings::TerminalWrapMode,
+        cx: &mut Context<Self>,
+    ) {
+        if mode == nyaterm_core::models::settings::TerminalWrapMode::None {
+            self.clear_terminal_block_selection(cx);
+        }
+        self.settings.set_terminal_wrap_mode(mode);
+        self.save_terminal_settings(cx);
+        let session_ids = self
+            .visible_terminal_session_ids()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        for session_id in session_ids {
+            self.notify_terminal_surface_only(Some(&session_id), cx);
+        }
+    }
+
+    pub(in crate::features) fn toggle_terminal_wrap_markers(&mut self, cx: &mut Context<Self>) {
+        self.settings.toggle_terminal_wrap_markers();
+        self.save_terminal_settings(cx);
+        let session_ids = self
+            .visible_terminal_session_ids()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        for session_id in session_ids {
+            self.notify_terminal_surface_only(Some(&session_id), cx);
+        }
+    }
+
     pub(in crate::features) fn toggle_terminal_timestamps(&mut self, cx: &mut Context<Self>) {
         self.settings.toggle_terminal_timestamps();
         self.save_terminal_settings(cx);
@@ -90,6 +136,12 @@ impl NyaTermApp {
         cx: &mut Context<Self>,
     ) {
         self.settings.toggle_terminal_reconnect_restore_cwd();
+        self.save_terminal_settings(cx);
+    }
+
+    pub(in crate::features) fn toggle_remote_stats_show_users(&mut self, cx: &mut Context<Self>) {
+        self.settings.toggle_remote_stats_show_users();
+        self.remote_stats_users_setting_changed(cx);
         self.save_terminal_settings(cx);
     }
 

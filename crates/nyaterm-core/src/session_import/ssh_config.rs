@@ -53,11 +53,13 @@ pub(super) fn prepare_ssh_config_import(path: &Path) -> AppResult<PreparedSessio
     let mut builder = ImportBuilder::new(&config);
     builder.materialize_all()?;
     Ok(PreparedSessionImport {
+        warnings: Vec::new(),
         custom_icons: Vec::new(),
         groups: Vec::new(),
         passwords: Vec::new(),
         ssh_keys: builder.keys,
         connections: builder.connections,
+        notices: Vec::new(),
     })
 }
 
@@ -760,6 +762,7 @@ fn saved_connection(
         post_login: None,
         recording: None,
         ssh_algorithms: None,
+        ssh_compatibility_mode: false,
         ssh_profile: Default::default(),
         terminal_type: None,
         sftp: Default::default(),

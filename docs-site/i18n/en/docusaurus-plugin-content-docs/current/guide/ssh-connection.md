@@ -219,28 +219,50 @@ Conventions and limits:
 
 A temporary session never becomes a saved connection: NyaTerm strips the connection ID, proxy, jump host, post-login command, X11, and algorithm preferences, so it stays a one-off session.
 
-## External and protocol invocation
+## External invocation and protocol links
 
-NyaTerm can also open connection links from browsers, scripts, launchers, or other tools. External invocation sends the link to the current NyaTerm main window; if the app is not running yet, links passed as startup arguments are handled after the main window is ready.
+Open SSH, Telnet, or local terminals from browsers, scripts, and launchers. Launching the app or opening an external connection restores and activates the most recently used workspace window, creating one when none is available. `--reuse-window` remains supported; `--new-window` explicitly creates an independent workspace and handles any accompanying connection there. These flags are mutually exclusive: a conflicting invocation is rejected without opening connections or creating windows.
 
-Supported entry points:
+```powershell
+NyaTerm.exe
+NyaTerm.exe ssh://root@example.com:22
+NyaTerm.exe --reuse-window
+NyaTerm.exe --new-window
+NyaTerm.exe --new-window ssh://root@example.com:22
+NyaTerm.exe --local --cwd "C:\中文 目录"
+NyaTerm.exe --local "--cwd=C:\My Projects"
+```
 
-- Program invocation: pass a link as a NyaTerm startup argument, for example `NyaTerm.exe ssh://root@example.com:22`
-- Protocol invocation: installed packages register the `nyaterm://` operating-system URL scheme. NyaTerm does not claim the generic `ssh://` or `telnet://` handlers, but those links can still be passed as startup arguments
+When the process is not running, a normal launch restores the workspace windows in the saved list. `--new-window` restores them and creates one additional active window. A fresh installation with no saved workspaces opens only one window. The session-tab restoration setting does not control independent workspace window restoration.
 
-Supported link formats:
+Stable installers declare the `nyaterm`, `ssh`, and `telnet` protocols. Preview installers declare only `nyaterm-preview`. Your OS may ask you to choose a default handler. Uninstall removes a registration only while it still points to that installation. Portable packages do not register protocols automatically.
 
-- `ssh://user@host:port`
+Supported examples (replace the custom prefix with `nyaterm-preview://` for Preview):
+
+- `ssh://user@host:port?mode=terminal`
+- `ssh://user:password@host:port?mode=sftp`
 - `telnet://host:port`
-- `nyaterm://connect/ssh?host=host&port=22&username=user`
+- `nyaterm://connect/ssh?host=host&port=22&username=user&mode=standard`
 - `nyaterm://connect/telnet?host=host&port=23`
+- `nyaterm://connect/local?cwd=C%3A%5CMy%20Projects`
 
-Handling rules:
+SSH defaults to username `root` and port `22`; Telnet defaults to port `23`. IPv6 is supported, for example `ssh://user@[2001:db8::1]:2222`. Scheme names are case insensitive. Percent-encode usernames, passwords, and query values as UTF-8; they are decoded exactly once (for example `user%40realm`, `p%40ssword`). Both `--cwd PATH` and `--cwd=PATH` require `--local`. Directories must be nonempty; the background session worker checks existence and accessibility and never treats the path as a startup command.
 
-- SSH defaults to username `root` and port `22`; Telnet defaults to port `23`
-- NyaTerm first looks for saved connections with the same protocol, host, and port; when an SSH link includes a username, the username must match exactly
-- If multiple saved connections match, NyaTerm refuses to choose one arbitrarily; add an explicit SSH username to disambiguate. If none match, it opens a temporary connection
-- Every external link rejects passwords, post-login commands, proxies, jump hosts, port forwarding, and private-key parameters; save a connection first if you need those capabilities
+SSH supports these optional modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `standard` | Ordinary SSH, falling back to a file session when the server rejects a shell but supports SFTP. |
+| `terminal` | Terminal only, without SFTP, directory following, or remote monitoring. Shell rejection fails the connection. |
+| `sftp` | Authenticate and verify SFTP, then show the file browser. No PTY/shell, post-login command, terminal AI execution, X11, agent forwarding, or remote monitoring. Saved connections with SFTP disabled report an error. |
+
+Omitting the mode uses ordinary SSH. Overrides apply only to the current session. Reconnect, duplication, moves between windows, and saved-connection startup restoration preserve the mode without changing the saved connection. Old restore data defaults to ordinary SSH; unknown modes are retained and skipped during restoration.
+
+Links without passwords first match saved connections by protocol, normalized host, and port. Explicit SSH usernames must match exactly. A unique match opens directly; multiple matches show a picker for a saved connection, temporary connection, or cancellation. Enabled saved post-login commands still require confirmation; SFTP mode does not execute them. Cancellation ends only the current request.
+
+One-time passwords are allowed only in `ssh://` user information. Such links always create temporary sessions and never match or change saved credentials. The password remains in memory for reconnects in the current process and is excluded from restoration, backups, and sync. Authenticate again after restarting the app. Calling tools and browsers may retain links in history, so treat password-bearing links as sensitive.
+
+Links cannot supply startup commands, proxies, jump hosts, private keys, or forwarding configuration. Unknown/duplicate parameters, invalid ports, and malformed encoding are rejected. Batches are processed independently so invalid entries do not block valid ones, with at most 16 connection intents and 4 KiB per argument. Repeated connection intents are suppressed within 500ms; explicit window creation still takes place. Requests wait for startup, restoration, unlocking, and existing dialogs; closing a window cancels its remaining requests.
 
 ## Session input synchronization
 
@@ -253,12 +275,20 @@ Configuration, filtering, broadcast control, and the send command panel are docu
 NyaTerm can import session definitions from other terminal clients. Current supported imports are:
 
 - **Xshell** (`.xts`)
-- **MobaXterm** (`.mxtsessions`)
+- **MobaXterm** (`.mxtsessions` or `MobaXterm.ini`)
 - **WindTerm** (`.sessions`)
 - **SecureCRT** (`.xml`)
 - **FinalShell** (`conn` directory)
 - **Termius** (local IndexedDB)
 - **NyaTerm JSON** (`.json`)
+
+### Import from MobaXterm
+
+Select a session export or a complete `MobaXterm.ini` configuration. Encrypted credentials in the configuration are included. When prompted, enter the **MobaXterm Master Password**, or choose **Skip encrypted credentials** to import the sessions. If the password is incorrect or credentials are damaged, you can retry or cancel before any connections are saved.
+
+You can also select a plaintext `MobaXterm Stored Passwords.txt` file; its matches take priority over embedded credentials. Named credentials follow explicit session references, while connection passwords match addresses and usernames. Ambiguous matches are skipped and reported.
+
+Passwords stored only in the Windows registry cannot be imported from the configuration. Whole-file encrypted exports are unsupported.
 
 ### Import from Termius
 

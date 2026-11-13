@@ -1,22 +1,19 @@
-use std::collections::{HashSet, VecDeque};
-use std::sync::Arc;
-
-use gpui::{
-    Context, Entity, FocusHandle, IntoElement, Render, Rgba, ScrollHandle, UniformListScrollHandle,
-    WeakEntity, Window,
-};
-use nyaterm_core::TransferBrowserViewMode;
-use nyaterm_transport::SftpFileEntry;
-use nyaterm_ui::NyaInputState;
-
+use super::TransferBrowserAvailability;
 use crate::features::NyaTermApp;
 use crate::models::{
     TransferBrowserColumnResizeState, TransferBrowserColumnWidths, TransferBrowserSortColumn,
     TransferBrowserSortDirection, TransferJobRowSnapshot, TransferRenameState,
 };
 use crate::theme::ThemePalette;
-
-use super::TransferBrowserAvailability;
+use gpui::{
+    Context, Entity, FocusHandle, IntoElement, Render, Rgba, ScrollHandle, UniformListScrollHandle,
+    WeakEntity, Window,
+};
+use nyaterm_core::TransferBrowserViewMode;
+use nyaterm_files::sftp::SftpFileEntry;
+use nyaterm_ui::NyaInputState;
+use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
 
 /// Colours the transfers panel needs that are not on the palette itself.
 ///
@@ -44,6 +41,7 @@ pub(in crate::features) struct TransferBrowserPresentation {
     pub tree_focus: FocusHandle,
     pub local_backend: bool,
     pub path: String,
+    pub terminal_cwd: Option<String>,
     pub home_dir: String,
     pub path_editing: bool,
     pub expanded_children_path: Option<String>,
@@ -210,20 +208,18 @@ impl Render for TransferPanel {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-    use std::time::{Duration, Instant};
-
+    use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
+    use crate::features::NyaTermApp;
+    use crate::models::NavItem;
+    use crate::test_support::TestConfigDir;
     use gpui::{
         AppContext as _, ClickEvent, Entity, IntoElement, Modifiers, MouseButton, MouseClickEvent,
         MouseDownEvent, MouseUpEvent, ParentElement as _, Render, Styled as _, TestAppContext,
         VisualTestContext, div, px,
     };
     use nyaterm_core::{AppRuntime, RuntimeMode};
-
-    use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
-    use crate::features::NyaTermApp;
-    use crate::models::NavItem;
-    use crate::test_support::TestConfigDir;
+    use std::path::Path;
+    use std::time::{Duration, Instant};
 
     fn app(cx: &mut TestAppContext, root: &Path) -> Entity<NyaTermApp> {
         // A uuid rather than a clock reading: these tests run in parallel and
@@ -392,9 +388,9 @@ mod tests {
                     assert_eq!(
                         app.session.active_file_browser_backend(),
                         Some(if remote {
-                            nyaterm_transport::FileBrowserBackendKind::Remote
+                            nyaterm_files::file_browser::FileBrowserBackendKind::Remote
                         } else {
-                            nyaterm_transport::FileBrowserBackendKind::Local
+                            nyaterm_files::file_browser::FileBrowserBackendKind::Local
                         })
                     );
                     app.flush_transfer_panel_snapshot(cx);
@@ -439,7 +435,7 @@ mod tests {
                         entries
                             .iter()
                             .take(2)
-                            .map(nyaterm_transport::SftpFileEntry::identity_key)
+                            .map(nyaterm_files::sftp::SftpFileEntry::identity_key)
                             .collect(),
                         Some(entries[0].identity_key()),
                     );
@@ -478,9 +474,9 @@ mod tests {
         let mut entries: Vec<_> = (0..2)
             .map(super::super::tests_support::browser_entry)
             .collect();
-        entries[1].file_type = nyaterm_transport::SftpFileType::Directory;
-        let root = nyaterm_transport::file_browser_root(
-            nyaterm_transport::FileBrowserBackendKind::Local,
+        entries[1].file_type = nyaterm_files::sftp::SftpFileType::Directory;
+        let root = nyaterm_files::file_browser::file_browser_root(
+            nyaterm_files::file_browser::FileBrowserBackendKind::Local,
             &test_dir.path().display().to_string(),
         );
         for entry in &mut entries {
@@ -491,16 +487,16 @@ mod tests {
                 let mut settings = app.settings.summary().clone();
                 settings.ui_file_explorer_view_mode = nyaterm_core::TransferBrowserViewMode::Tree;
                 app.settings.replace_summary(settings);
-                let path = nyaterm_transport::RemoteFilePath::new(root);
+                let path = nyaterm_files::sftp::RemoteFilePath::new(root);
                 app.transfer.seed_tree_listing(
                     "path-test",
-                    nyaterm_transport::FileBrowserBackendKind::Local,
+                    nyaterm_files::file_browser::FileBrowserBackendKind::Local,
                     path.clone(),
                     std::sync::Arc::new(entries.clone()),
                 );
                 app.transfer.reveal_tree_path(
                     "path-test",
-                    nyaterm_transport::FileBrowserBackendKind::Local,
+                    nyaterm_files::file_browser::FileBrowserBackendKind::Local,
                     path,
                 );
                 let rows = app.transfer.tree_presentation(Some("path-test"), true).rows;
@@ -554,6 +550,236 @@ mod tests {
             );
         });
         assert!(vcx.debug_bounds("transfer-file-drag-preview").is_some());
+    }
+
+    #[test]
+    fn tree_marks_terminal_cwd_and_keeps_scroll_position_hint_in_the_viewport() {
+        use nyaterm_files::file_browser::{FileBrowserBackendKind, file_browser_root};
+        use nyaterm_files::sftp::{RemoteFilePath, SftpFileType};
+
+        let test_dir = TestConfigDir::new("nyaterm-tree-position");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let (app, vcx) = hosted_file_browser(&mut cx, test_dir.path());
+        let root = file_browser_root(
+            FileBrowserBackendKind::Local,
+            &test_dir.path().display().to_string(),
+        );
+        let mut entries: Vec<_> = (0..500)
+            .map(super::super::tests_support::browser_entry)
+            .collect();
+        for entry in &mut entries {
+            entry.path = Path::new(&root).join(&entry.name).display().to_string();
+        }
+        entries[0].file_type = SftpFileType::Directory;
+        let cwd = entries[0].path.clone();
+        let (scroll, current_key) = vcx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                let mut settings = app.settings.summary().clone();
+                settings.ui_file_explorer_view_mode = nyaterm_core::TransferBrowserViewMode::Tree;
+                app.settings.replace_summary(settings);
+                app.session.update_cwd("path-test", cwd.clone());
+                let root = RemoteFilePath::new(root);
+                app.transfer.seed_tree_listing(
+                    "path-test",
+                    FileBrowserBackendKind::Local,
+                    root.clone(),
+                    std::sync::Arc::new(entries),
+                );
+                app.transfer
+                    .reveal_tree_path("path-test", FileBrowserBackendKind::Local, root);
+                let tree = app.transfer.tree_presentation(Some("path-test"), true);
+                let current_key = tree
+                    .rows
+                    .iter()
+                    .find(|row| row.path.display_path == cwd)
+                    .unwrap()
+                    .key
+                    .clone();
+                app.flush_transfer_panel_snapshot(cx);
+                (tree.scroll, current_key)
+            })
+        });
+        draw_path_fixture(vcx);
+        let marker = Box::leak(format!("tree-terminal-cwd:{current_key}").into_boxed_str());
+        assert!(vcx.debug_bounds(marker).is_some());
+        assert!(vcx.debug_bounds("transfer-tree-position").is_none());
+        let row_selector = Box::leak(format!("transfer-tree-row:{current_key}").into_boxed_str());
+        let row_bounds = vcx.debug_bounds(row_selector).unwrap();
+        let viewport = vcx.debug_bounds("transfer-tree-viewport").unwrap();
+        assert_eq!(row_bounds.left() - viewport.left(), px(4.));
+        assert_eq!(row_bounds.size.height, px(24.));
+        let next_key = vcx.update(|_, cx| {
+            app.read(cx)
+                .transfer_panel
+                .read(cx)
+                .snapshot()
+                .unwrap()
+                .browser
+                .tree
+                .rows[2]
+                .key
+                .clone()
+        });
+        let next_selector = Box::leak(format!("transfer-tree-row:{next_key}").into_boxed_str());
+        assert_eq!(
+            vcx.debug_bounds(next_selector).unwrap().top() - row_bounds.top(),
+            px(28.)
+        );
+        vcx.simulate_mouse_move(row_bounds.center(), None, Modifiers::none());
+        draw_path_fixture(vcx);
+        assert_eq!(
+            vcx.debug_bounds(row_selector),
+            Some(row_bounds),
+            "hover must not move or resize a row"
+        );
+        vcx.executor().advance_clock(Duration::from_secs(1));
+        vcx.run_until_parked();
+        draw_path_fixture(vcx);
+        let details = vcx
+            .debug_bounds("transfer-tree-details")
+            .expect("structured file details");
+        assert_eq!(details.size.width, px(208.));
+        vcx.simulate_click(row_bounds.center(), Modifiers::none());
+        vcx.simulate_mouse_move(
+            row_bounds.center() - gpui::point(px(0.), px(56.)),
+            None,
+            Modifiers::none(),
+        );
+        vcx.simulate_mouse_move(row_bounds.center(), None, Modifiers::none());
+        draw_path_fixture(vcx);
+        assert_eq!(vcx.debug_bounds(row_selector), Some(row_bounds));
+        assert!(vcx.debug_bounds(marker).is_some());
+        assert!(vcx.debug_bounds("transfer-tree-details").is_none());
+        vcx.update(|_, cx| {
+            assert!(
+                app.read(cx)
+                    .transfer_panel
+                    .read(cx)
+                    .snapshot()
+                    .unwrap()
+                    .browser
+                    .tree
+                    .selected
+                    .contains(&current_key)
+            );
+        });
+        let mut hint_top = None;
+        for index in [250, 400] {
+            vcx.update(|_, cx| {
+                scroll.scroll_to_item(index, gpui::ScrollStrategy::Top);
+                app.update(cx, |app, cx| app.flush_transfer_panel_snapshot(cx));
+            });
+            draw_path_fixture(vcx);
+            let viewport = vcx.debug_bounds("transfer-tree-viewport").unwrap();
+            let hint = vcx
+                .debug_bounds("transfer-tree-position")
+                .expect("scroll context hint");
+            assert!(hint.top() >= viewport.top());
+            assert!(hint.bottom() <= viewport.bottom());
+            if let Some(previous) = hint_top {
+                assert_eq!(
+                    hint.top(),
+                    previous,
+                    "the hint must not scroll with the rows"
+                );
+            }
+            hint_top = Some(hint.top());
+        }
+        let built = vcx.update(|_, cx| app.read(cx).transfer_panel.read(cx).rows_built());
+        assert!(
+            built < 500,
+            "tree rows must remain virtualized; built {built}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tree_marks_translated_terminal_cwd_for_windows_shells() {
+        use nyaterm_files::file_browser::{FileBrowserBackendKind, file_browser_root};
+        use nyaterm_files::sftp::{RemoteFilePath, SftpFileType};
+
+        for (shell, reported, translated) in [
+            ("wsl.exe", "/mnt/d/Projects", r"D:\Projects"),
+            ("wsl.exe", "/home", r"\\wsl.localhost\Ubuntu\home"),
+            (
+                r"C:\Program Files\Git\bin\bash.exe",
+                "/d/Projects",
+                r"D:\Projects",
+            ),
+        ] {
+            let test_dir = TestConfigDir::new("nyaterm-tree-translated-cwd");
+            let mut cx = TestAppContext::single();
+            let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+            let (app, vcx) = hosted_file_browser(&mut cx, test_dir.path());
+            let current_key = vcx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let mut settings = app.settings.summary().clone();
+                    settings.ui_file_explorer_view_mode =
+                        nyaterm_core::TransferBrowserViewMode::Tree;
+                    app.settings.replace_summary(settings);
+                    let crate::models::SessionLaunchConfig::Local(config) =
+                        &mut app.session.metadata_mut("path-test").unwrap().launch_config
+                    else {
+                        panic!("local session");
+                    };
+                    config.shell_path = Some(shell.into());
+                    config.shell_args = if shell == "wsl.exe" {
+                        vec!["-d".into(), "Ubuntu".into()]
+                    } else {
+                        Vec::new()
+                    };
+                    app.session.update_cwd("path-test", reported.into());
+                    let root = RemoteFilePath::new(file_browser_root(
+                        FileBrowserBackendKind::Local,
+                        translated,
+                    ));
+                    let mut entry = super::super::tests_support::browser_entry(0);
+                    entry.name = Path::new(translated)
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned();
+                    entry.path = translated.into();
+                    entry.file_type = SftpFileType::Directory;
+                    app.transfer.seed_tree_listing(
+                        "path-test",
+                        FileBrowserBackendKind::Local,
+                        root.clone(),
+                        std::sync::Arc::new(vec![entry]),
+                    );
+                    app.transfer
+                        .reveal_tree_path("path-test", FileBrowserBackendKind::Local, root);
+                    let tree = app.transfer.tree_presentation(Some("path-test"), true);
+                    let key = tree
+                        .rows
+                        .iter()
+                        .find(|row| row.path.display_path == translated)
+                        .unwrap()
+                        .key
+                        .clone();
+                    app.flush_transfer_panel_snapshot(cx);
+                    assert_eq!(app.session.cwd("path-test"), Some(reported));
+                    assert_eq!(
+                        app.transfer_panel
+                            .read(cx)
+                            .snapshot()
+                            .unwrap()
+                            .browser
+                            .terminal_cwd
+                            .as_deref(),
+                        Some(translated),
+                    );
+                    key
+                })
+            });
+            draw_path_fixture(vcx);
+            let marker = Box::leak(format!("tree-terminal-cwd:{current_key}").into_boxed_str());
+            assert!(
+                vcx.debug_bounds(marker).is_some(),
+                "missing cwd marker for {shell}: {reported}"
+            );
+        }
     }
 
     #[test]
@@ -791,7 +1017,7 @@ mod tests {
         let entries = (0..80)
             .map(|index| {
                 let mut entry = super::super::tests_support::browser_entry(index);
-                entry.file_type = nyaterm_transport::SftpFileType::Directory;
+                entry.file_type = nyaterm_files::sftp::SftpFileType::Directory;
                 entry
             })
             .collect::<Vec<_>>();
@@ -833,11 +1059,12 @@ mod tests {
                 Some("/remote")
             )
         });
-        vcx.simulate_event(gpui::ScrollWheelEvent {
+        vcx.simulate_event(gpui::ScrollEvent {
             position: viewport.center(),
             delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-10_000.))),
             modifiers: Modifiers::none(),
             touch_phase: gpui::TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         vcx.run_until_parked();
         vcx.update(|window, cx| {
@@ -1071,10 +1298,9 @@ mod tests {
 
     #[test]
     fn long_transfer_text_shrinks_without_displacing_status_when_panel_resizes() {
+        use crate::models::{TransferJobKind, TransferJobRowSnapshot, TransferJobStatus};
         use std::path::PathBuf;
         use std::sync::Arc;
-
-        use crate::models::{TransferJobKind, TransferJobRowSnapshot, TransferJobStatus};
 
         let test_dir = TestConfigDir::new("nyaterm-transfer-queue-layout");
         let mut cx = TestAppContext::single();
@@ -1168,7 +1394,7 @@ mod tests {
     /// 不发送鼠标事件，也不刷新侧栏快照，覆盖启动竞态和原先的悬浮依赖。
     #[test]
     fn duplicate_prompts_open_globally_without_panel_interaction_and_drain_in_order() {
-        use nyaterm_transport::{
+        use nyaterm_files::sftp_transfer_types::{
             SftpDuplicateDecision, SftpDuplicateRequest, SftpTransferDirection,
         };
         use nyaterm_ui::{NyaDialogWindowExt as _, nya_root};
@@ -1306,6 +1532,103 @@ mod tests {
                 .remove(0)
                 .recv_timeout(Duration::from_secs(5))
                 .unwrap(),
+            SftpDuplicateDecision::Skip
+        );
+        vcx.update(|window, cx| {
+            assert!(!window.has_active_nya_dialog(cx));
+            assert!(app.read(cx).session.prompt_active_duplicate().is_none());
+        });
+    }
+
+    #[test]
+    fn duplicate_batch_menu_overwrites_queued_siblings_and_leaves_other_batches_asking() {
+        use crate::features::session::UploadBatchDuplicateResolver;
+        use nyaterm_files::sftp_transfer_types::{
+            SftpDuplicateDecision, SftpDuplicateRequest, SftpTransferDirection,
+        };
+        use nyaterm_ui::{NyaDialogWindowExt as _, nya_root};
+
+        let test_dir = TestConfigDir::new("nyaterm-transfer-duplicate-batch");
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx, test_dir.path());
+        app.update(&mut cx, |app, cx| app.sync_component_theme(cx));
+        let host_app = app.clone();
+        let (_, vcx) = cx.add_window_view(move |window, cx| {
+            let host = cx.new(|_| AppHost { app: host_app });
+            nya_root(host, window, cx)
+        });
+        let vcx: &mut VisualTestContext = vcx;
+        vcx.update(|window, cx| {
+            app.update(cx, |app, cx| app.start_prompt_activation_drain(window, cx))
+        });
+        vcx.run_until_parked();
+        let broker = vcx.update(|_, cx| app.read(cx).session.prompt_duplicate_broker());
+        let batch = UploadBatchDuplicateResolver::new(broker.clone());
+        let request = |name: &str| SftpDuplicateRequest {
+            direction: SftpTransferDirection::Upload,
+            source_path: format!("/local/{name}"),
+            target_path: format!("/remote/{name}"),
+            is_directory: true,
+        };
+        let first = batch.enqueue_for_test(request("first"));
+        let sibling = batch.enqueue_for_test(request("second"));
+        let unrelated = broker
+            .enqueue_decision_request_for_test(request("unrelated"))
+            .unwrap();
+        vcx.run_until_parked();
+        vcx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        vcx.run_until_parked();
+        let trigger = vcx
+            .debug_bounds("duplicate-overwrite-menu")
+            .expect("batch menu visible");
+        vcx.simulate_click(trigger.center(), Modifiers::default());
+        vcx.run_until_parked();
+        vcx.simulate_keystrokes("down enter");
+        vcx.run_until_parked();
+        assert_eq!(
+            first.recv_timeout(Duration::from_secs(5)).unwrap(),
+            SftpDuplicateDecision::Overwrite
+        );
+        assert_eq!(
+            sibling.recv_timeout(Duration::from_secs(5)).unwrap(),
+            SftpDuplicateDecision::Overwrite
+        );
+        assert_eq!(
+            batch
+                .enqueue_for_test(request("future"))
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            SftpDuplicateDecision::Overwrite
+        );
+        vcx.update(|window, cx| {
+            assert!(window.has_active_nya_dialog(cx));
+            assert_eq!(
+                app.read(cx)
+                    .session
+                    .prompt_active_duplicate()
+                    .unwrap()
+                    .request
+                    .target_path,
+                "/remote/unrelated"
+            );
+            _ = window.draw(cx);
+        });
+        vcx.run_until_parked();
+        assert!(
+            vcx.debug_bounds("duplicate-overwrite-menu").is_none(),
+            "ordinary conflicts have no batch menu"
+        );
+        vcx.simulate_keystrokes("escape");
+        vcx.run_until_parked();
+        vcx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        vcx.run_until_parked();
+        assert_eq!(
+            unrelated.recv_timeout(Duration::from_secs(5)).unwrap(),
             SftpDuplicateDecision::Skip
         );
         vcx.update(|window, cx| {

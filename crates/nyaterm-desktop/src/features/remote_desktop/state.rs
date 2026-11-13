@@ -40,6 +40,8 @@ pub(in crate::features) struct RemoteDesktopFeatureState {
     wake_rx: Option<UnboundedReceiver<()>>,
     /// True while the periodic-maintenance clock task is alive.
     periodic_clock_armed: bool,
+    #[cfg(windows)]
+    pub(super) native_shutting_down: bool,
 }
 
 #[derive(Clone)]
@@ -64,6 +66,8 @@ pub(super) struct RemoteDesktopSessionState {
     pub(super) cursor_position: CursorPosition,
     pub(super) cursor_visible: bool,
     pub(super) cursor_texture: Option<DynamicTexture>,
+    pub(super) cursor_repaint_pending: bool,
+    pub(super) last_cursor_repaint_at: Option<Instant>,
     pub(super) certificate_request: Option<RdpCertificatePrompt>,
     pub(super) vnc_key_request:
         Option<(nyaterm_remote_desktop::VncServerKeyRequest, Option<String>)>,
@@ -85,8 +89,21 @@ pub(super) struct RemoteDesktopSessionState {
     pub(super) pending_resize: Option<(RdpDisplayMetrics, Instant)>,
     pub(super) dynamic_resize_disabled: bool,
     pub(super) viewport: Option<Bounds<Pixels>>,
+    /// Window scale factor that `viewport` was measured with, so a reconnect can
+    /// ask for the same desktop without waiting for a fresh layout.
+    pub(super) viewport_scale_factor: f32,
+    /// A fit-window session waiting for its panel to be measured.
+    ///
+    /// This is the launch request, not a second copy of the live configuration:
+    /// it is taken by whoever starts the helper, and it is dropped if the tab
+    /// goes away first.
+    pub(super) deferred_start: Option<(RdpSessionConfig, Instant)>,
     pub(super) reconnect_attempts: u32,
     pub(super) reconnect_at: Option<Instant>,
+    #[cfg(windows)]
+    pub(super) native_rdp_config: Option<RdpSessionConfig>,
+    #[cfg(windows)]
+    pub(super) native_rdp: Option<nyaterm_windows_rdp::NativeRdpControl>,
 }
 
 impl Default for RemoteDesktopSessionState {
@@ -101,6 +118,8 @@ impl Default for RemoteDesktopSessionState {
             cursor_position: CursorPosition::default(),
             cursor_visible: true,
             cursor_texture: None,
+            cursor_repaint_pending: false,
+            last_cursor_repaint_at: None,
             certificate_request: None,
             vnc_key_request: None,
             vnc_trust_previous: None,
@@ -121,13 +140,40 @@ impl Default for RemoteDesktopSessionState {
             pending_resize: None,
             dynamic_resize_disabled: false,
             viewport: None,
+            viewport_scale_factor: 1.0,
+            deferred_start: None,
             reconnect_attempts: 0,
             reconnect_at: None,
+            #[cfg(windows)]
+            native_rdp_config: None,
+            #[cfg(windows)]
+            native_rdp: None,
         }
     }
 }
 
 impl RemoteDesktopFeatureState {
+    #[cfg(windows)]
+    pub(in crate::features) fn take_native_hosts_for_shutdown(
+        &mut self,
+    ) -> Vec<nyaterm_windows_rdp::NativeRdpControl> {
+        // Latch before taking owners: COM shutdown may pump the UI queue and
+        // re-enter maintenance or complete an asynchronous reconnect.
+        self.native_shutting_down = true;
+        self.sessions
+            .values_mut()
+            .filter_map(|session| {
+                session.native_rdp_config = None;
+                if session.deferred_start.as_ref().is_some_and(|(config, _)| {
+                    config.backend == nyaterm_remote_desktop::RdpBackend::Windows
+                }) {
+                    session.deferred_start = None;
+                }
+                session.native_rdp.take()
+            })
+            .collect()
+    }
+
     pub(in crate::features) fn release_inactive_textures(&mut self, active: &str) {
         for (id, session) in &mut self.sessions {
             if id == active {
@@ -139,6 +185,11 @@ impl RemoteDesktopFeatureState {
             if let Some(texture) = session.cursor_texture.take() {
                 self.pending_texture_removals.push(texture);
             }
+            session.cursor_repaint_pending = false;
+            #[cfg(windows)]
+            if let Some(native) = session.native_rdp.as_mut() {
+                native.set_visible(false);
+            }
             session.texture_dirty = session.framebuffer.is_some();
         }
         if !self.pending_texture_removals.is_empty() {
@@ -146,9 +197,52 @@ impl RemoteDesktopFeatureState {
         }
     }
 
-    pub(in crate::features) fn has_active_sessions(&self) -> bool {
-        !self.sessions.is_empty()
+    pub(in crate::features) fn blocks_configuration_replacement(&self) -> bool {
+        self.restore_pending.is_some()
+            || !self.prepared_routes.is_empty()
+            || !self.routes.is_empty()
+            || self.sessions.iter().any(|(id, session)| {
+                let pending = session.deferred_start.is_some()
+                    || session.reconnect_at.is_some()
+                    || session.certificate_request.is_some()
+                    || session.vnc_key_request.is_some();
+                #[cfg(windows)]
+                let pending =
+                    pending || session.native_rdp.is_some() || session.native_rdp_config.is_some();
+                pending
+                    || matches!(
+                        session.state,
+                        RemoteDesktopViewState::Connecting
+                            | RemoteDesktopViewState::Connected
+                            | RemoteDesktopViewState::Reconnecting
+                            | RemoteDesktopViewState::Disconnecting
+                    )
+                    // A terminal state can arrive before the helper is reaped.
+                    // Production teardown removes the manager record through
+                    // close_detached; until then it still owns backend resources.
+                    || self.manager.state(id).is_some()
+                    || self.vnc_manager.state(id).is_some()
+            })
     }
+
+    /// Whether this feature still requires the native child-window presentation
+    /// scope.
+    ///
+    /// Workspace panels read the same answer: while the scope exists the ActiveX
+    /// child window is composed above the owner's GPUI scene, so anything that
+    /// overlaps it must be painted in the owned overlay popup instead.
+    #[cfg(windows)]
+    pub(in crate::features) fn native_presentation_needed(&self) -> bool {
+        !self.native_shutting_down
+            && self.sessions.values().any(|session| {
+                native_surface_needed(
+                    session.native_rdp_config.is_some(),
+                    session.native_rdp.is_some(),
+                    session.state,
+                )
+            })
+    }
+
     pub(in crate::features) fn new(focus: FocusHandle) -> Self {
         let (wake, wake_rx) = EventWake::new();
         let manager = Arc::new(RdpSessionManager::new());
@@ -185,6 +279,8 @@ impl RemoteDesktopFeatureState {
             wake,
             wake_rx: Some(wake_rx),
             periodic_clock_armed: false,
+            #[cfg(windows)]
+            native_shutting_down: false,
         }
     }
 
@@ -235,15 +331,6 @@ impl RemoteDesktopFeatureState {
         &self.focus
     }
 
-    pub(in crate::features) fn create_rdp_session(
-        &mut self,
-        config: RdpSessionConfig,
-    ) -> Result<String, RdpError> {
-        let session_id = self.manager.create_session(config)?;
-        self.insert_connecting(session_id.clone());
-        Ok(session_id)
-    }
-
     pub(in crate::features) fn create_vnc_session(
         &mut self,
         config: VncSessionConfig,
@@ -289,8 +376,19 @@ impl RemoteDesktopFeatureState {
     }
 
     pub(super) fn insert_connecting(&mut self, session_id: String) {
-        self.sessions
-            .insert(session_id, RemoteDesktopSessionState::default());
+        let measured = self
+            .sessions
+            .get(&session_id)
+            .map(|session| (session.viewport, session.viewport_scale_factor));
+        let mut session = RemoteDesktopSessionState::default();
+        if let Some((viewport, viewport_scale_factor)) = measured {
+            // The panel belongs to the tab, not to the connection: a failed or
+            // restarted session is still shown in the same place, so forgetting
+            // the measurement would make the next connect guess again.
+            session.viewport = viewport;
+            session.viewport_scale_factor = viewport_scale_factor;
+        }
+        self.sessions.insert(session_id, session);
     }
 
     pub(in crate::features) fn insert_disconnected(&mut self, session_id: String) {
@@ -301,11 +399,71 @@ impl RemoteDesktopFeatureState {
     }
 }
 
+/// Whether a native RDP surface is expected to be on screen.
+///
+/// This stays independent of the Windows-only control type so the presentation
+/// scope rule is testable on every platform.
+#[cfg(any(windows, test))]
+pub(in crate::features) fn native_rdp_state_is_displayable(state: RemoteDesktopViewState) -> bool {
+    matches!(
+        state,
+        RemoteDesktopViewState::Connecting
+            | RemoteDesktopViewState::Connected
+            | RemoteDesktopViewState::Reconnecting
+    )
+}
+
+/// Whether a native presentation scope is still required.
+///
+/// The scope exists so application overlays and workspace panels can be painted
+/// above the ActiveX child window. Once a native session reaches a
+/// non-displayable state its surface is hidden, so keeping the scope alive only
+/// leaves an input popup and a global mouse hook behind.
+#[cfg(any(windows, test))]
+pub(in crate::features) fn native_surface_needed(
+    config_pending: bool,
+    control_present: bool,
+    state: RemoteDesktopViewState,
+) -> bool {
+    config_pending || (control_present && native_rdp_state_is_displayable(state))
+}
+
 #[cfg(test)]
 mod tests {
     use nyaterm_remote_desktop::{RdpErrorKind, RemoteDesktopViewState};
 
     use super::RemoteDesktopFeatureState;
+
+    #[test]
+    fn configuration_replacement_ignores_display_only_tabs_but_protects_pending_work() {
+        let cx = gpui::TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let focus = cx.update(|cx| cx.focus_handle());
+        let mut state = RemoteDesktopFeatureState::new(focus);
+        state.insert_disconnected("disconnected".into());
+        state.insert_failed_session(
+            "failed".into(),
+            RdpErrorKind::HelperMissing,
+            "fixture".into(),
+        );
+        assert!(!state.blocks_configuration_replacement());
+        state.sessions.get_mut("failed").unwrap().reconnect_at = Some(std::time::Instant::now());
+        assert!(state.blocks_configuration_replacement());
+        state.sessions.get_mut("failed").unwrap().reconnect_at = None;
+        assert!(!state.blocks_configuration_replacement());
+        for view in [
+            RemoteDesktopViewState::Connecting,
+            RemoteDesktopViewState::Connected,
+            RemoteDesktopViewState::Reconnecting,
+            RemoteDesktopViewState::Disconnecting,
+        ] {
+            state.sessions.get_mut("failed").unwrap().state = view;
+            assert!(state.blocks_configuration_replacement(), "{view:?}");
+        }
+        state.sessions.get_mut("failed").unwrap().state = RemoteDesktopViewState::Failed;
+        state.restore_pending = Some("failed".into());
+        assert!(state.blocks_configuration_replacement());
+    }
 
     #[test]
     fn removing_the_last_session_wakes_disposal_without_protocol_events() {
@@ -341,5 +499,140 @@ mod tests {
         );
         assert!(session.pending_pointer.is_none());
         assert!(session.pending_resize.is_none());
+    }
+
+    #[test]
+    fn native_surface_is_only_displayable_while_the_session_can_paint() {
+        use super::native_rdp_state_is_displayable;
+        use RemoteDesktopViewState::{
+            Connected, Connecting, Disconnected, Disconnecting, Failed, Reconnecting,
+        };
+
+        assert!(native_rdp_state_is_displayable(Connecting));
+        assert!(native_rdp_state_is_displayable(Connected));
+        assert!(native_rdp_state_is_displayable(Reconnecting));
+        assert!(!native_rdp_state_is_displayable(Disconnecting));
+        assert!(!native_rdp_state_is_displayable(Disconnected));
+        assert!(!native_rdp_state_is_displayable(Failed));
+    }
+
+    #[test]
+    fn native_surface_scope_ends_with_its_last_visible_session() {
+        use super::native_surface_needed;
+        use RemoteDesktopViewState::{
+            Connected, Connecting, Disconnected, Disconnecting, Failed, Reconnecting,
+        };
+
+        // Nothing native left: the owned input popup and mouse hook must go,
+        // otherwise they cover later modal child windows.
+        assert!(!native_surface_needed(false, false, Connected));
+        assert!(!native_surface_needed(false, false, Disconnected));
+        assert!(!native_surface_needed(false, true, Failed));
+        assert!(!native_surface_needed(false, true, Disconnected));
+
+        // A pending config or a still-displayable control keeps the scope.
+        assert!(native_surface_needed(true, false, Failed));
+        assert!(native_surface_needed(false, true, Connecting));
+        assert!(native_surface_needed(false, true, Connected));
+        assert!(native_surface_needed(false, true, Reconnecting));
+        assert!(!native_surface_needed(false, true, Disconnecting));
+    }
+
+    /// A floating panel joins the native overlay exactly while a native session
+    /// needs the presentation scope. `native_presentation_needed` is the only
+    /// gate `workspace_surface` reads before wrapping the panel.
+    #[cfg(windows)]
+    #[test]
+    fn floating_panels_join_the_native_scope_only_while_a_native_session_needs_it() {
+        use nyaterm_remote_desktop::{
+            RdpBackend, RdpCertificatePolicy, RdpClipboardConfig, RdpDisplayConfig,
+            RdpReconnectConfig, RdpSessionConfig,
+        };
+
+        let cx = gpui::TestAppContext::single();
+        let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let focus = cx.update(|cx| cx.focus_handle());
+        let mut state = RemoteDesktopFeatureState::new(focus);
+        state.insert_disconnected("native".to_string());
+
+        let session = state.sessions.get_mut("native").expect("native session");
+        session.native_rdp_config = Some(RdpSessionConfig {
+            relay: None,
+            backend: RdpBackend::Windows,
+            windows_authentication: None,
+            name: "native".into(),
+            host: "127.0.0.1".into(),
+            port: 1,
+            username: String::new(),
+            domain: String::new(),
+            password: None,
+            use_nla: false,
+            certificate_policy: RdpCertificatePolicy::default(),
+            administrative_session: false,
+            display: RdpDisplayConfig::default(),
+            clipboard: RdpClipboardConfig::default(),
+            reconnect: RdpReconnectConfig::default(),
+        });
+        let config = session.native_rdp_config.as_ref().unwrap().clone();
+        assert!(state.native_presentation_needed(), "pending native config");
+        let session = state.sessions.get_mut("native").unwrap();
+        session.native_rdp_config = None;
+        // Creating the staged controller performs no COM work; only running an
+        // operation would instantiate ActiveX. This needs no reachable server.
+        session.native_rdp = Some(
+            nyaterm_windows_rdp::NativeRdpControl::create(
+                1,
+                nyaterm_remote_desktop::activex::NativeRdpRect {
+                    x: 0,
+                    y: 0,
+                    width: 800,
+                    height: 600,
+                    scale_percent: 100,
+                },
+                &config,
+            )
+            .unwrap(),
+        );
+        for view_state in [
+            RemoteDesktopViewState::Connecting,
+            RemoteDesktopViewState::Connected,
+            RemoteDesktopViewState::Reconnecting,
+        ] {
+            state.sessions.get_mut("native").unwrap().state = view_state;
+            assert!(state.native_presentation_needed());
+        }
+        for view_state in [
+            RemoteDesktopViewState::Disconnecting,
+            RemoteDesktopViewState::Disconnected,
+            RemoteDesktopViewState::Failed,
+        ] {
+            state.sessions.get_mut("native").unwrap().state = view_state;
+            assert!(!state.native_presentation_needed());
+        }
+        state.insert_disconnected("second".into());
+        state.sessions.get_mut("second").unwrap().native_rdp_config = Some(config);
+        assert!(
+            state.native_presentation_needed(),
+            "another pending session retains the scope"
+        );
+        state.sessions.remove("second");
+        assert!(
+            !state.native_presentation_needed(),
+            "no displayable native sessions remain"
+        );
+        state.sessions.get_mut("native").unwrap().state = RemoteDesktopViewState::Connected;
+        assert!(state.native_presentation_needed());
+        let hosts = state.take_native_hosts_for_shutdown();
+        assert!(
+            !state.native_presentation_needed(),
+            "shutdown suppresses native presentation"
+        );
+        assert!(
+            state
+                .sessions
+                .values()
+                .all(|session| session.native_rdp.is_none() && session.native_rdp_config.is_none())
+        );
+        drop(hosts);
     }
 }

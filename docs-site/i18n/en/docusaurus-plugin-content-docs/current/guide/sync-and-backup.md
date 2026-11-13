@@ -1,5 +1,17 @@
 # Cloud Sync
 
+## Sync scope and existing field-merge configurations
+
+Cloud Sync uses a fixed scope in both snapshot and field-merge modes: connections and groups, connection icons, proxies and groups, tunnels and groups, quick commands and categories, notes and folders, and custom themes. There are no scope switches. Passwords, private keys, OTP, AI configuration and keys, shortcuts, host trust and appearance preferences stay on each device. New devices need local authentication setup.
+
+The settings page no longer shows the version introduction or mode selector. Snapshot mode remains the default. Existing field-merge configurations retain their mode and support Local Directory, WebDAV, S3, Google Drive, OneDrive and Aliyun Drive. Click Push Now or Pull Now to prepare a preview, review and resolve conflicts in Conflict Handling, then click Confirm, apply and publish to synchronize. Independent fields merge automatically; conflicting fields and concurrent deletion/editing retain candidates for local resolution. Missing local credentials or changes redirecting an existing secret defer the affected fields.
+
+New field publications use schema 5 under `sync/v5/`. New sync snapshots use Sync schema 4; full `.nya` backups retain schema 3 and their complete data contract. All participating devices must upgrade. The first field confirmation creates and verifies an encrypted `cloud-sync-v3-safety-<id>.nya` backup. Old cloud publications and local replicas remain migration inputs; old scope settings remain readable but do not control sync. Only core values enter new publications, while causal references, core conflicts and deletions remain intact. Old pending payloads are retained and never retried in the new space. Later legacy writes require a manual import preview.
+
+Apply and publication retain the existing workflow: business changes commit atomically, then immutable ciphertext is published and read back. Failure retains a pending publication for exact-byte retry. Password changes publish and verify a new `rotation-<id>` subspace before switching the local password and namespace. Other devices must use the new password and namespace. `.nya` backup/restore continues to include credentials, secrets and settings independently of cloud sync.
+
+The sections below describe snapshot mode and provider setup.
+
 NyaTerm's **Cloud Sync** capability is not remote file transfer. It syncs portable application configuration through one encrypted current snapshot in remote storage.
 
 Remote storage uses immutable snapshots and independent device commits:
@@ -231,7 +243,7 @@ The current implementation offers two resolution actions.
 
 ### Download Remote Version
 
-The branch list shows every concurrent revision, device name (short UUID for old snapshots), time, readability and difference counts. One readable branch is selected automatically; multiple readable branches require an explicit choice. Summaries show record counts, settings categories and unknown-entity change markers without credentials, OTP values, notes or command text.
+The branch list shows every concurrent revision, device name (short UUID for old snapshots), time, readability and difference counts. One readable branch is selected automatically; multiple readable branches require an explicit choice. Summaries show record counts, custom theme changes without credentials, OTP values, notes or command text.
 
 Pull the selected immutable revision and apply it to the current device.
 
@@ -259,28 +271,9 @@ Device commits and causal records preserve concurrent branches. Explicitly choos
 
 ## What gets synced?
 
-Cloud Sync is built on portable snapshots. These cover NyaTerm's portable configuration data, such as:
+Both modes sync connections and groups, connection icons, proxies and groups, tunnels and groups, quick commands and categories, notes and folders, and custom themes.
 
-- saved connections and groups
-- key, password, and OTP configuration
-- proxies and tunnels
-- quick commands
-- most application settings
-- known_hosts and the master-key token
-
-Command history is not included in the cloud sync core snapshot. Use local `.nya` export / import when you need an offline backup or migration package.
-
-The current implementation deliberately preserves some device-local UI state, such as:
-
-- currently open tabs
-- live panel open/close and sizing state
-
-So the feature is best understood as:
-
-- syncing portable configuration
-- letting multiple devices share the current core configuration state
-
-not as a full desktop-session image.
+Passwords, private keys, OTP, AI configuration and keys, shortcuts, trusted hosts, appearance preferences, history, device paths and window state remain local. Selecting a theme remains local even though custom theme definitions sync. Use a full encrypted `.nya` backup to migrate secrets and application settings.
 
 ## Recommended first-time setup order
 

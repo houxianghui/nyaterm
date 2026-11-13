@@ -44,6 +44,7 @@ pub(crate) struct NyaTermProcessEntities {
     pub(crate) process_state: gpui::Entity<crate::app_shell::ProcessStateStore>,
     pub(crate) update: gpui::Entity<super::update::UpdateStore>,
     pub(crate) plugins: gpui::Entity<super::plugins::PluginProcess>,
+    pub(crate) sync_operations: super::sync::operation::CloudSyncOperationRegistry,
 }
 
 impl NyaTermProcessEntities {
@@ -51,11 +52,13 @@ impl NyaTermProcessEntities {
         process_state: gpui::Entity<crate::app_shell::ProcessStateStore>,
         update: gpui::Entity<super::update::UpdateStore>,
         plugins: gpui::Entity<super::plugins::PluginProcess>,
+        sync_operations: super::sync::operation::CloudSyncOperationRegistry,
     ) -> Self {
         Self {
             process_state,
             update,
             plugins,
+            sync_operations,
         }
     }
 }
@@ -81,7 +84,6 @@ pub struct NyaTermApp {
     pub(in crate::features) start_workspace: StartWorkspaceFeatureState,
     pub(in crate::features) connection_panel: gpui::Entity<ConnectionPanel>,
     pub(in crate::features) settings_panel: gpui::Entity<SettingsPanel>,
-    pub(in crate::features) native_settings_panel: Option<gpui::WeakEntity<SettingsPanel>>,
     pub(in crate::features) transfer_panel: gpui::Entity<TransferPanel>,
     pub(in crate::features) notes: NotesFeatureState,
     pub(in crate::features) notes_panel: gpui::Entity<NotesPanel>,
@@ -96,6 +98,8 @@ pub struct NyaTermApp {
     /// The five polling panels. They own their refresh schedules; `remote_ops` stays
     /// the authoritative owner of the data those schedules fetch.
     pub(in crate::features) remote_panels: RemotePanels,
+    /// Ports and Services: self-contained entities that own their data.
+    pub(in crate::features) host_tool_panels: crate::features::remote::HostToolPanels,
     pub(in crate::features) remote_desktop: RemoteDesktopFeatureState,
     pub(in crate::features) security: SecurityFeatureState,
     pub(in crate::features) settings: SettingsFeatureState,
@@ -110,9 +114,11 @@ pub struct NyaTermApp {
     pub(in crate::features) update: gpui::Entity<super::update::UpdateStore>,
     pub(in crate::features) cloud_sync: CloudSyncFeatureState,
     pub(in crate::features) session: SessionFeatureState,
+    pub(in crate::features) activation: super::activation::ActivationFeatureState,
     pub(in crate::features) shell: ShellFeatureState,
     pub(in crate::features) sync_input: SyncInputFeatureState,
     pub(in crate::features) recording: RecordingFeatureState,
+    pub(in crate::features) tmux: super::tmux::TmuxFeatureState,
     pub(in crate::features) tunnel_state: TunnelFeatureState,
     /// Last field by design: test cleanup must run after storage clients and
     /// feature-owned background work have released their Windows file handles.

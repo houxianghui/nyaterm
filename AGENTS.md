@@ -20,15 +20,47 @@ must include explicit conversion logic and tests.
   contracts, and shared pure logic. Do not add GPUI dependencies here.
 * `crates/nyaterm-desktop`: GPUI application composition, `AppShell`,
   `NyaTermApp`, feature state, views, platform adapters, background-job
-  coordination, native HTTP adapters, and GPUI Entity stores.
+  coordination, service adapters, and GPUI Entity stores.
+* `crates/nyaterm-ai-client`: UI-independent native AI provider HTTP clients,
+  request and streaming-response adapters, model discovery, and proxy handling.
+  Runtime/task ownership and AI feature orchestration remain in desktop.
+* `crates/nyaterm-preview`: UI-independent image/PDF decoding, text preview
+  parsing, pixel transformations and decoded-content contracts. Desktop owns
+  fetching, job lifecycle, GPUI image conversion and preview caches.
+* `crates/nyaterm-translation-client`: UI-independent native translation HTTP
+  clients and provider request/response adapters. Desktop owns translation
+  tasks, settings persistence, credential state and presentation.
+* `crates/nyaterm-cloud-storage`: UI-independent native and OpenDAL cloud-storage
+  adapters, OAuth device authorization, token-refresh sinks, and HTTP I/O counters.
+  Sync orchestration, caches, and credential persistence remain in desktop/store.
+  Its default-off `test-support` feature exposes local fixtures only for tests.
+* `crates/nyaterm-updater`: UI-independent native update HTTP checks, signed
+  downloads, installation preparation, helper execution, and portable recovery.
+  Desktop owns update state, scheduling, close guards, and native progress UI;
+  cancellation and helper progress execution are injected through callbacks.
+  These adapter crates may depend on `nyaterm-core`, but not GPUI, desktop,
+  store, other business crates, or each other, including in development dependencies.
 * `crates/nyaterm-terminal`: terminal state machine, snapshots,
   control-sequence handling, encoding, and graphics protocols. It must remain
   independent of UI frameworks.
 * `crates/nyaterm-terminal-gpui`: GPUI-specific terminal layout, input,
   highlighting, images, and painting.
-* `crates/nyaterm-transport`: local PTY, SSH, Telnet, Serial, SFTP, tunnels,
-  remote operations, and transfer-protocol runtime. It must remain independent
-  of GPUI and desktop presentation types.
+* `crates/nyaterm-transport`: local PTY, SSH authentication and channels, Telnet,
+  Serial, tunnels, session lifecycle, tmux, and transfer-protocol runtime. It
+  exposes file-session probe injection and must not depend on the file,
+  recording, or remote-operations crates.
+* `crates/nyaterm-files`: local and remote file services, SFTP and shell file
+  backends, file revisions, path safety, and file-transfer policies.
+* `crates/nyaterm-remote-ops`: system metrics, process management, Docker, and
+  GPU/NPU operations over transport execution APIs. Docker state is shared by
+  the desktop SSH connection lease, not owned by transport.
+* `crates/nyaterm-recording`: recording, transcripts, rotation, and terminal
+  history search over the core and terminal contracts. Its `pipeline` module
+  owns the recording writer, bounded queues, and coalesced events; desktop owns
+  lifecycle coordination. Its default-off `test-support` feature exposes only
+  cross-crate test helpers.
+* These four crates remain independent of GPUI and desktop presentation types;
+  the three business crates must not depend on each other.
 * `crates/nyaterm-ui`: shared GPUI theme tokens, the `gpui-kit`
   integration boundary, and reusable NyaTerm presentation and interaction
   widgets.
@@ -46,6 +78,10 @@ must include explicit conversion logic and tests.
   protocol. It owns the forked `vnc-rs` decoders, the VNC reconnect ladder, and
   the server-facing policy gates (`view_only`, `shared`, clipboard enablement).
   Those gates must stay enforced here, not only in the application.
+* `crates/nyaterm-windows-rdp`: explicitly selected Windows Native RDP system
+  component exception. Thread-bound ActiveX/ATL host and staged controller;
+  COM runs on the creating UI/STA thread outside all GPUI borrows. No GPUI
+  production dependency, no protocol decoder or exposed COM interfaces.
 * `crates/nyaterm-otp`: bundled HOTP/TOTP implementation.
 * `crates/nyaterm-app/assets`: bundled icons and images. Assets under
   `icons/**` are normally tintable and rendered through `svg()` or
@@ -101,12 +137,15 @@ For new or substantially changed features:
   `nyaterm-terminal`.
 * Keep terminal layout, GPUI input adapters, highlighting, image presentation,
   and painting in `nyaterm-terminal-gpui`.
-* Keep transport code independent of GPUI and desktop presentation types.
+* Keep transport, files, remote operations, and recording code independent of
+  GPUI and desktop presentation types.
 * Keep remote-desktop protocol and session logic in
   `nyaterm-remote-desktop`; keep GPUI presentation in `nyaterm-desktop`.
 * Keep protocol decoders that parse server-controlled bytes in the helper
   crates, never in a crate the application links. Both helpers must translate a
-  decoder panic into a fatal IPC error rather than dying silently.
+  decoder panic into a fatal IPC error rather than dying silently. Windows Native,
+  selected explicitly by the user, hosts the installed Windows system component
+  in process; the IronRDP/VNC decoder isolation requirement continues to apply.
 * Keep persistence logic out of GPUI views.
 
 Use normal Rust module trees with `mod.rs` files or sibling module
@@ -236,10 +275,12 @@ Use package-specific checks while iterating:
 * `cargo test -p <crate-name>`
 * `cargo run -p nyaterm-app --bin nyaterm`
 
-RDP and VNC each run in a helper process that the application resolves beside its
-own executable. `cargo run -p nyaterm-app --bin nyaterm` builds only the
-application, so build the helpers into the same target directory first or both
-protocols fail with `HelperMissing`:
+Builtin/IronRDP and VNC run in helper processes that the application resolves
+beside its own executable. Windows Native RDP is the explicitly selected
+in-process system-component exception and requires MSVC with ATL when building.
+`cargo run -p nyaterm-app --bin nyaterm` builds only the application, so build the
+helpers into the same target directory first or the helper backends fail with
+`HelperMissing`:
 
 * `cargo build -p nyaterm-rdp-helper -p nyaterm-vnc-helper`
 
@@ -286,14 +327,19 @@ Add tests beside the behavior being changed.
 
 * Terminal parsing, snapshots, graphics, selection, input, and rendering tests
   belong in `nyaterm-terminal` or `nyaterm-terminal-gpui`.
-* SSH, SFTP, Telnet, Serial, tunnel, transfer, and terminal-session lifecycle
-  tests belong in `nyaterm-transport`.
+* SSH, Telnet, Serial, tunnel, protocol transfer, and terminal-session lifecycle
+  tests belong in `nyaterm-transport`. File and SFTP tests belong in
+  `nyaterm-files`; operation and recording tests belong in their owning crates.
 * RDP/VNC protocol, framebuffer, input mapping, IPC, certificate, clipboard,
   and reconnect tests belong in `nyaterm-remote-desktop`, `nyaterm-rdp-helper`,
   or `nyaterm-vnc-helper`. Helper crates carry a `tests/lifecycle.rs` covering
   the handshake, an ordinary disconnect, and crash/hang reaping; keep both in
   step when the IPC contract changes.
 * Storage changes require round-trip and supported-format compatibility tests.
+* Update HTTP, signature, package validation, replacement, and recovery tests
+  belong in `nyaterm-updater`. GPUI update state and native progress presentation
+  tests remain in desktop. Release jobs run `portable_release_archive_round_trip`
+  from the updater crate against the actual packaged ZIP.
 * Credential and encryption changes require success, invalid-password,
   corrupted-data, and compatibility-format tests.
 * GPUI state changes should test state transitions separately from visual

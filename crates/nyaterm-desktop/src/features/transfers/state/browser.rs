@@ -1,11 +1,15 @@
 //! SFTP browser navigation, selection, menu and column-layout transitions.
 
+use gpui::{Pixels, ScrollHandle, ScrollStrategy};
+use nyaterm_files::sftp::{RemoteFilePath, SftpFileEntry};
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
-use gpui::{Pixels, ScrollHandle, ScrollStrategy};
-use nyaterm_transport::{RemoteFilePath, SftpFileEntry};
-
+use super::browser_logic::BrowserFilterKey;
+use super::{TransferBrowserState, TransferBrowserView, TransferFeatureState};
+use crate::features::transfers::browser_paths::{
+    remote_ancestor_selection, transfer_browser_path_is_root,
+};
 #[cfg(test)]
 use crate::models::TransferBrowserPendingRenameState;
 use crate::models::{
@@ -14,9 +18,6 @@ use crate::models::{
     TransferBrowserNavigationSnapshot, TransferBrowserPathMenuState,
     TransferBrowserSessionCacheState, TransferBrowserSortColumn, TransferBrowserUploadMenuState,
 };
-
-use super::browser_logic::BrowserFilterKey;
-use super::{TransferBrowserState, TransferBrowserView, TransferFeatureState};
 
 pub(in crate::features) struct TransferSessionTransferBundle {
     caches: Vec<(String, TransferBrowserSessionCacheState)>,
@@ -32,9 +33,8 @@ impl TransferFeatureState {
             if let Some(cache) = self.browser.session_cache.remove(id) {
                 caches.push((id.clone(), cache));
             }
-            if let Some(job_id) = self.browser.navigation_jobs.remove(id) {
-                self.browser.pending_navigations.remove(&job_id);
-            }
+            self.invalidate_browser_navigation(id);
+            self.tree.remove_session(id);
         }
         TransferSessionTransferBundle { caches }
     }
@@ -122,6 +122,13 @@ impl TransferFeatureState {
     }
 
     #[cfg(test)]
+    pub(in crate::features) fn browser_directory_requests_for_test(
+        &mut self,
+    ) -> &mut Vec<(String, RemoteFilePath)> {
+        self.browser.directory_requests.get_or_insert_with(Vec::new)
+    }
+
+    #[cfg(test)]
     pub(in crate::features) fn browser_filter_recomputes(&self) -> usize {
         self.browser_filter.recomputes()
     }
@@ -171,6 +178,10 @@ impl TransferFeatureState {
         session_id: &str,
     ) -> Option<TransferBrowserNavigationSnapshot> {
         let id = self.browser.navigation_jobs.remove(session_id)?;
+        if let Some(handle) = self.browser.navigation_handles.remove(&id) {
+            handle.cancel();
+        }
+        self.settle_tree_navigation(session_id, &id, false);
         self.browser.pending_navigations.remove(&id)
     }
 
@@ -183,17 +194,15 @@ impl TransferFeatureState {
         {
             *reason = crate::models::TransferCwdSyncReason::Explicit;
         }
+        self.renew_tree_navigation(session_id);
     }
 
     pub(in crate::features) fn remove_browser_session_cache(&mut self, session_id: &str) {
+        // Retiring the latest job rejects late replies from the closed session.
+        self.invalidate_browser_navigation(session_id);
         self.tree.remove_session(session_id);
         self.browser.session_cache.remove(session_id);
         self.file_ops.delete_refresh_pending.remove(session_id);
-        // Dropping the latest-job entry makes the closed session's in-flight
-        // navigation reply stale instead of letting it swap browser context.
-        if let Some(job_id) = self.browser.navigation_jobs.remove(session_id) {
-            self.browser.pending_navigations.remove(&job_id);
-        }
     }
 
     pub(in crate::features) fn has_browser_session_cache(&self, session_id: &str) -> bool {
@@ -250,6 +259,57 @@ impl TransferFeatureState {
         self.browser
             .list_scroll
             .scroll_to_item_strict(offset, ScrollStrategy::Top);
+    }
+
+    /// Resolve navigation intent against the same filtered, sorted rows the view draws.
+    /// Return an operation path, never the token-based selection identity.
+    pub(in crate::features) fn restore_browser_navigation_selection(
+        &mut self,
+        requested: &str,
+        show_hidden: bool,
+    ) -> Option<String> {
+        self.clear_browser_selection();
+        let visible = self.visible_browser_entries(show_hidden);
+        let exact = visible
+            .iter()
+            .position(|entry| entry.identity_key() == requested);
+        let index = exact.or_else(|| {
+            // Legacy callers pass display paths. Do not guess when decoding made
+            // two remote names indistinguishable.
+            let mut matches = visible
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.path == requested);
+            let (index, _) = matches.next()?;
+            matches.next().is_none().then_some(index)
+        })?;
+        let entry = &visible[index];
+        self.select_browser_entry(entry.identity_key());
+        let parent_count = usize::from(!transfer_browser_path_is_root(&self.browser.path));
+        self.browser
+            .list_scroll
+            .scroll_to_item(index + parent_count, ScrollStrategy::Nearest);
+        Some(entry.path.clone())
+    }
+
+    /// An inactive session loads its stable cache before receiving a listing.
+    /// Recover the ancestor's token instead of pairing the new path with that cache's old token.
+    pub(in crate::features) fn restore_browser_ancestor_path_token(
+        &mut self,
+        job_id: &str,
+        requested: &str,
+    ) {
+        let Some(snapshot) = self.browser.pending_navigations.get(job_id) else {
+            return;
+        };
+        let source = RemoteFilePath {
+            display_path: snapshot.browser_path.clone(),
+            raw_path_token: snapshot.browser_raw_path_token.clone(),
+        };
+        let mut destination = RemoteFilePath::new(self.browser.path.clone());
+        if remote_ancestor_selection(source, &mut destination).as_deref() == Some(requested) {
+            self.browser.raw_path_token = destination.raw_path_token;
+        }
     }
 
     pub(in crate::features) fn start_browser_column_resize(
@@ -710,10 +770,7 @@ impl TransferFeatureState {
         remote_path: String,
     ) -> TransferBrowserNavigationSnapshot {
         self.clear_pending_cwd_sync();
-        let pending_job_id = self.browser.navigation_jobs.remove(session_key);
-        if let Some(snapshot) =
-            pending_job_id.and_then(|job_id| self.browser.pending_navigations.remove(&job_id))
-        {
+        if let Some(snapshot) = self.invalidate_browser_navigation(session_key) {
             self.browser.restore_navigation(snapshot.clone());
             return snapshot;
         }
@@ -852,7 +909,7 @@ impl TransferFeatureState {
     pub(in crate::features) fn invalidate_file_operation_directory(
         &mut self,
         session: &str,
-        path: &nyaterm_transport::RemoteFilePath,
+        path: &nyaterm_files::sftp::RemoteFilePath,
     ) {
         if let Some(cache) = self.browser.session_cache.get(session)
             && cache.current_path == path.display_path

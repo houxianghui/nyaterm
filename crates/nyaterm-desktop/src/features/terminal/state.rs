@@ -15,7 +15,9 @@ use nyaterm_terminal::{TerminalOutputDecoder, TerminalScreen};
 use nyaterm_ui::NyaDocumentEditorState;
 
 use super::assist_state::TerminalAssistState;
+use super::command_suggestions::paste::SuggestionPasteContext;
 use super::editing_state::TerminalEditingState;
+use super::ime_state::TerminalImeState;
 use super::terminal_surface::TerminalScrollbarDragState;
 use super::terminal_surface_entity::TerminalSurface;
 use crate::features::{FontResolutionStatus, terminal::ResolvedAppearanceFont};
@@ -25,7 +27,6 @@ use crate::models::{
     RecordingHistorySearchKey, TerminalFrameEvent, TerminalFramePipeline, TerminalSearchMode,
     TerminalSelection, TerminalSelectionTextError, TerminalViewState,
 };
-use crate::terminal::terminal_keyword_rules_key;
 
 pub(in crate::features) struct TerminalFeatureState {
     pub(super) search: TerminalSearchState,
@@ -85,13 +86,19 @@ pub(super) struct TerminalInputState {
     pub(super) focus: FocusHandle,
     pub(super) focus_active: bool,
     pub(super) focus_subscriptions: Vec<Subscription>,
-    pub(super) ime_marked_text: String,
+    pub(super) ime: TerminalImeState,
 }
 
 /// Dedicated multi-line paste editor state backed by gpui-kit's editor.
 pub(super) struct TerminalPasteReviewState {
     pub(super) editor: Option<Entity<NyaDocumentEditorState>>,
+    pub(super) suggestion: Option<SuggestionPasteReview>,
     _subscription: Option<Subscription>,
+}
+
+pub(super) struct SuggestionPasteReview {
+    pub(super) context: SuggestionPasteContext,
+    pub(super) pending_text: Option<String>,
 }
 
 /// Text selection and mouse reporting.
@@ -105,6 +112,10 @@ pub(super) struct TerminalSelectionState {
     pub(super) source_history: Option<nyaterm_terminal::TerminalHistoryState>,
     pub(super) selected_occurrence: TerminalSelectedOccurrenceState,
     pub(super) dragging: bool,
+    pub(super) block_gesture: Option<TerminalBlockSelectionGesture>,
+    /// Survives MouseUp: GPUI can dispatch on_click before or after the root
+    /// release handler. Only the next press resets this gesture's decision.
+    pub(super) suppress_action_link_click: bool,
     pub(super) drag_pointer_position: Option<gpui::Point<gpui::Pixels>>,
     pub(super) autoscroll: Option<TerminalSelectionAutoscroll>,
     pub(super) autoscroll_generation: u64,
@@ -113,6 +124,79 @@ pub(super) struct TerminalSelectionState {
     pub(super) mouse_report_session_id: Option<String>,
     pub(super) mouse_report_peer_session_ids: Vec<String>,
     pub(super) mouse_report_position: Option<(u16, u16)>,
+}
+
+pub(super) struct TerminalBlockSelectionGesture {
+    pub(super) origin: gpui::Point<gpui::Pixels>,
+    pub(super) confirmed: bool,
+}
+
+impl TerminalSelectionState {
+    pub(super) fn confirm_block_drag(&mut self, position: gpui::Point<gpui::Pixels>) -> bool {
+        let Some(gesture) = self.block_gesture.as_mut() else {
+            return true;
+        };
+        let dx = f32::from(position.x - gesture.origin.x);
+        let dy = f32::from(position.y - gesture.origin.y);
+        gesture.confirmed |= dx * dx + dy * dy > 4.0;
+        self.suppress_action_link_click |= gesture.confirmed;
+        gesture.confirmed
+    }
+
+    /// Coordinate-only moves keep cached text and outstanding copy generations.
+    pub(super) fn advance_history(
+        &mut self,
+        session_id: &str,
+        current: nyaterm_terminal::TerminalHistoryState,
+    ) -> bool {
+        if self.session_id.as_deref() != Some(session_id) {
+            return false;
+        }
+        let Some(previous) = self.source_history else {
+            return false;
+        };
+        let Some(change) = current.changes_since(previous) else {
+            if previous.changes_since(current).is_some() {
+                return false;
+            }
+            self.selection = None;
+            self.click_anchor = None;
+            self.source_history = None;
+            self.dragging = false;
+            self.block_gesture = None;
+            self.drag_pointer_position = None;
+            self.autoscroll = None;
+            self.text.invalidate();
+            self.text.status =
+                TerminalSelectionTextStatus::Failed(TerminalSelectionTextError::StaleHistory);
+            return false;
+        };
+        let old = self.selection;
+        let clipped = old.is_some_and(|selection| {
+            !selection.all_buffer && selection.ordered().0.line < change.evicted
+        });
+        self.selection = old.and_then(|selection| selection.after_eviction(change.evicted));
+        self.click_anchor = self
+            .click_anchor
+            .and_then(|anchor| anchor.after_eviction(change.evicted));
+        self.source_history = Some(current);
+        if clipped {
+            self.text.invalidate_preserving_copy();
+            if self.selection.is_none() {
+                self.dragging = false;
+                self.block_gesture = None;
+                self.drag_pointer_position = None;
+                self.autoscroll = None;
+                self.text.pending_copy = None;
+            }
+        } else if let Some((_, cached)) = self.text.key.as_mut()
+            && Some(*cached) == old
+            && let Some(selection) = self.selection
+        {
+            *cached = selection;
+        }
+        clipped && self.selection.is_some() && self.text.pending_copy.is_some()
+    }
 }
 
 #[derive(Default)]
@@ -147,6 +231,12 @@ pub(super) struct TerminalSelectionText {
 }
 
 impl TerminalSelectionText {
+    pub(super) fn invalidate_preserving_copy(&mut self) {
+        let pending_copy = self.pending_copy.take();
+        self.invalidate();
+        self.pending_copy = pending_copy;
+    }
+
     pub(super) fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.status = TerminalSelectionTextStatus::Unrequested;
@@ -213,6 +303,7 @@ pub(super) struct TerminalMenuState {
     pub(super) actions_open: bool,
     pub(super) actions_focus: FocusHandle,
     pub(super) action_link_menu: Option<ActionLinkMenuState>,
+    pub(super) action_link_menu_generation: u64,
     pub(super) action_link_tooltip: Option<ActionLinkTooltipState>,
     /// Pending action-link hover, with the generation of the timer that owns it. The
     /// timer is the delay; the generation is how a superseded one recognises itself.
@@ -225,8 +316,6 @@ pub(super) struct TerminalMenuState {
 /// Paint-time caches invalidated whenever appearance settings change.
 pub(super) struct TerminalPaintCacheState {
     pub(super) cached_keyword_highlight_rules: Option<Arc<Vec<ResolvedKeywordHighlightRule>>>,
-    /// Hash of `cached_keyword_highlight_rules`, computed once per cached set.
-    pub(super) cached_keyword_highlight_rules_key: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -238,6 +327,27 @@ pub(in crate::features) struct TerminalOverlayVisibility {
 }
 
 impl TerminalFeatureState {
+    /// Push the line-role highlight setting to every open terminal surface.
+    ///
+    /// Each surface compiles the flag into its highlighter, so a settings
+    /// change has to reach them instead of waiting for a new session.
+    pub(in crate::features) fn apply_line_role_highlighting(
+        &mut self,
+        enabled: bool,
+        cx: &mut gpui::Context<crate::features::NyaTermApp>,
+    ) {
+        let surfaces: Vec<_> = self.view.surfaces.values().cloned().collect();
+        for surface in surfaces {
+            surface.update(cx, |surface, cx| surface.set_line_roles(enabled, cx));
+        }
+    }
+
+    pub(in crate::features) fn submit_system_recording(&self, session_id: &str, text: String) {
+        self.view
+            .frame_pipeline
+            .submit_system_recording(session_id, text);
+    }
+
     pub(in crate::features) fn submit_execution_recording(
         &self,
         session_id: &str,
@@ -304,7 +414,7 @@ impl TerminalFeatureState {
                 focus: focus.terminal,
                 focus_active: false,
                 focus_subscriptions: Vec::new(),
-                ime_marked_text: String::new(),
+                ime: TerminalImeState::default(),
             },
             paste: TerminalPasteReviewState::new(),
             assist: TerminalAssistState::new(),
@@ -321,6 +431,8 @@ impl TerminalFeatureState {
                     generation: 0,
                 },
                 dragging: false,
+                block_gesture: None,
+                suppress_action_link_click: false,
                 drag_pointer_position: None,
                 autoscroll: None,
                 autoscroll_generation: 0,
@@ -345,13 +457,13 @@ impl TerminalFeatureState {
                 actions_open: false,
                 actions_focus: focus.actions,
                 action_link_menu: None,
+                action_link_menu_generation: 0,
                 action_link_tooltip: None,
                 action_link_hover_pending: None,
                 action_link_hover_generation: 0,
             },
             paint: TerminalPaintCacheState {
                 cached_keyword_highlight_rules: None,
-                cached_keyword_highlight_rules_key: 0,
             },
         }
     }
@@ -466,6 +578,7 @@ impl TerminalFeatureState {
         self.selection.text.invalidate();
         self.selection.source_history = None;
         self.selection.dragging = false;
+        self.selection.block_gesture = None;
         self.selection.drag_pointer_position = None;
         self.selection.autoscroll = None;
         self.selection.scroll_rehit_armed = false;
@@ -482,6 +595,7 @@ impl TerminalFeatureState {
             return LostTerminalSelectionRecovery::None;
         }
         self.selection.dragging = false;
+        self.selection.block_gesture = None;
         self.selection.drag_pointer_position = None;
         self.selection.autoscroll = None;
         self.selection.scroll_rehit_armed = false;
@@ -584,20 +698,7 @@ impl TerminalFeatureState {
         rules: Arc<Vec<ResolvedKeywordHighlightRule>>,
     ) {
         self.view.frame_pipeline.set_keyword_rules(rules.clone());
-        self.paint.cached_keyword_highlight_rules_key = terminal_keyword_rules_key(&rules);
         self.paint.cached_keyword_highlight_rules = Some(rules);
-    }
-
-    pub(in crate::features) fn keyword_highlight_rules_key(
-        &self,
-        rules: &Arc<Vec<ResolvedKeywordHighlightRule>>,
-    ) -> u64 {
-        match self.paint.cached_keyword_highlight_rules.as_ref() {
-            Some(cached) if Arc::ptr_eq(cached, rules) => {
-                self.paint.cached_keyword_highlight_rules_key
-            }
-            _ => terminal_keyword_rules_key(rules),
-        }
     }
 
     pub(in crate::features) fn invalidate_paint_caches(&mut self) {
@@ -609,6 +710,7 @@ impl TerminalPasteReviewState {
     fn new() -> Self {
         Self {
             editor: None,
+            suggestion: None,
             _subscription: None,
         }
     }
@@ -618,13 +720,23 @@ impl TerminalPasteReviewState {
         editor: Entity<NyaDocumentEditorState>,
         subscription: Subscription,
     ) {
+        self.clear();
         self.editor = Some(editor);
         self._subscription = Some(subscription);
     }
 
     pub(super) fn clear(&mut self) {
         self.editor = None;
+        self.suggestion = None;
         self._subscription = None;
+    }
+
+    pub(super) fn queue_suggestion(&mut self, context: SuggestionPasteContext, text: String) {
+        self.clear();
+        self.suggestion = Some(SuggestionPasteReview {
+            context,
+            pending_text: Some(text),
+        });
     }
 }
 
@@ -771,6 +883,7 @@ mod tests {
             ),
             head: TerminalBufferCellPos::new(4, 3).into(),
             all_buffer: false,
+            mode: nyaterm_terminal::selection::TerminalSelectionMode::Linear,
         });
         assert_eq!(
             state.recover_lost_selection_mouse_up(),

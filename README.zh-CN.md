@@ -20,6 +20,10 @@
   &nbsp;
   <a href="https://docs.qq.com/doc/DYW5TUkZnakxOWUFW" target="_blank"><img src="https://img.shields.io/badge/微信交流群-点击加入-07C160?style=for-the-badge&logo=wechat&logoColor=white" alt="微信交流群" /></a>
   <br/>
+  <a href="https://linux.do" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/LINUX%20DO-论坛-F0B003?style=for-the-badge&logo=discourse&logoColor=white" alt="LINUX DO" />
+  </a>
+  <br/>
   <a href="https://nyaterm.app"><img alt="Version" src="https://img.shields.io/github/v/release/nyakang/nyaterm.svg?style=flat-square&logo=github&color=0EA5E9&labelColor=334155&label=%E7%89%88%E6%9C%AC&cacheSeconds=300"></a>
   &nbsp;
   <a href="https://github.com/nyakang/nyaterm/releases">
@@ -271,6 +275,11 @@ NyaTerm 适合每天在服务器、本地命令、设备调试和配置文件之
 | **Windows** | Windows 10/11，x64 / arm64 |
 | **macOS** | macOS 12+，Intel / Apple Silicon |
 | **Linux** | Ubuntu 20.04+、Fedora 36+、Arch Linux 及类似发行版 |
+
+基于 Ubuntu 20.04、使用 **glibc 2.31** 的定制 x86-64 桌面，请使用专门的
+[focal 离线兼容构建](scripts/compat/linux-focal/README.md)。普通 Linux 发布包在
+更新的发行版上编译，可能要求更高版本的 glibc。兼容包包含全部辅助程序及 ABI
+报告，默认优先系统 GPU 驱动，并保留显式的独立 OpenGL CPU 回退入口；目标机需可用的 X11 会话。
 
 可从 [nyaterm.app](https://nyaterm.app) 或 [Releases](https://github.com/nyakang/nyaterm/releases) 页面下载安装包。
 

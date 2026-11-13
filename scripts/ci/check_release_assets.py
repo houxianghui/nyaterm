@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Verify a release directory holds exactly the artifacts every target produces.
+"""Verify a release directory holds exactly the artifacts CI targets produce.
 
 The per-target contents are already checked by
 ``scripts/release/verify_native_package.py`` inside each packaging job; this is the
 cross-job completeness gate that catches a matrix leg whose upload went missing.
-Expected names come from ``package_native`` itself, so adding a target does not mean
-remembering to update a count here.
+Expected names come from ``package_native`` itself, so changing the CI target set
+also updates this check.
 
 Run from the repository root:
     python3 scripts/ci/check_release_assets.py --dist dist-release --version 2.0.0
@@ -21,13 +21,18 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR / "scripts" / "release"))
 
 import package_native  # noqa: E402
+import artifact_catalog  # noqa: E402
 
 
-def expected_artifacts(version: str) -> set[str]:
-    names: set[str] = set()
-    for target in package_native.TARGETS:
-        names |= package_native.artifact_names(target, version)
-    return names
+def expected_artifacts(version: str, *, include_focal: bool = False) -> set[str]:
+    if include_focal:
+        return artifact_catalog.expected(version, include_focal=True)
+    return set().union(
+        *(
+            artifact_catalog.names(target, "native", version)
+            for target in package_native.CI_TARGETS
+        )
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         "--artifact-version",
         help="optional public filename label, for example main-snapshot",
     )
+    parser.add_argument("--include-focal", action="store_true")
     args = parser.parse_args(argv)
 
     directory = args.dist.resolve()
@@ -58,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     artifact_version = package_native.validate_artifact_version(
         args.artifact_version or args.version
     )
-    expected = expected_artifacts(artifact_version)
+    expected = expected_artifacts(artifact_version, include_focal=args.include_focal)
     actual = {entry.name for entry in directory.iterdir() if entry.is_file()}
 
     problems = [f"missing artifact: {name}" for name in sorted(expected - actual)]

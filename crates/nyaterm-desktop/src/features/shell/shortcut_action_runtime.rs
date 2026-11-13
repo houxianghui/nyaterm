@@ -1,7 +1,7 @@
 use gpui::{Context, Div, InteractiveElement, Stateful, Window};
 
 use crate::features::NyaTermApp;
-use crate::models::{BottomPanelMode, NavItem, StartupCommandAction};
+use crate::models::{NavItem, StartupCommandAction};
 use crate::shortcuts::{
     CloseTab, CopySelectedConnections, DuplicateSession, DuplicateSessionWithCommand, LockScreen,
     ManageSyncGroups, MultiplexSsh, MultiplexSshWithCommand, NewLocalTerminal, NewSession, NextTab,
@@ -15,11 +15,14 @@ use crate::shortcuts::{
 };
 
 fn shortcut_interceptor_dispatches(id: ShortcutId) -> bool {
-    // GPUI still delivers KeyDown after an interceptor stops propagation.
-    // This action must run in the keymap instead, or the terminal sends ^L twice.
+    // In the pinned GPUI fork, stopping an interceptor skips the keymap but
+    // still enters low-level key dispatch. Consuming these actions in the
+    // keymap returns before that path, avoiding duplicate terminal input.
     !matches!(
         id,
-        ShortcutId::TerminalClear
+        ShortcutId::TerminalCopy
+            | ShortcutId::TerminalPaste
+            | ShortcutId::TerminalClear
             | ShortcutId::TerminalClearAll
             | ShortcutId::TerminalCommandPrevious
             | ShortcutId::TerminalCommandNext
@@ -36,10 +39,18 @@ impl NyaTermApp {
         let subscription = cx.intercept_keystrokes(move |event, window, cx| {
             let handled = app
                 .update(cx, |this, cx| {
-                    if this.settings.keybinding_recording_id().is_some()
-                        || this.security.screen_locked()
-                    {
+                    if this.security.screen_locked() {
                         return false;
+                    }
+                    // Interceptors run before GPUI's keymap, so this is the only place
+                    // that can keep a key being recorded (Ctrl+W, Ctrl+Shift+W, ...)
+                    // from also firing the action already bound to it.
+                    if this.settings.keybinding_recording_id().is_some() {
+                        if !this.settings.keybinding_focus().is_focused(window) {
+                            return false;
+                        }
+                        this.record_keybinding_keystroke(&event.keystroke, cx);
+                        return true;
                     }
                     let window_id = window.window_handle().window_id();
                     let editor_window = this
@@ -174,7 +185,7 @@ impl NyaTermApp {
                 self.execute_title_menu_command(&TitleMenuCommand::QuickSwitch, window, cx)
             }
             ShortcutId::NewLocalTerminal => self.start_local_session(window, cx),
-            ShortcutId::CloseTab => self.close_active_session(cx),
+            ShortcutId::CloseTab => self.close_active_session(window, cx),
             ShortcutId::NextTab | ShortcutId::PreviousTab => {
                 self.select_relative_session(
                     if invocation.id == ShortcutId::NextTab {
@@ -247,9 +258,7 @@ impl NyaTermApp {
                 cx.notify();
             }
             ShortcutId::ShowAllCommands => {
-                self.set_bottom_panel_mode(BottomPanelMode::QuickCommands);
-                self.shell.set_status("quick commands opened".to_string());
-                cx.notify();
+                self.toggle_quick_commands_panel(window, cx);
             }
             ShortcutId::RenameFile => {
                 if self.selected_transfer_entries().len() == 1
@@ -377,5 +386,14 @@ mod tests {
     fn terminal_clear_is_dispatched_only_by_the_keymap() {
         assert!(!shortcut_interceptor_dispatches(ShortcutId::TerminalClear));
         assert!(shortcut_interceptor_dispatches(ShortcutId::TerminalFind));
+    }
+
+    #[test]
+    fn local_copy_and_paste_are_dispatched_only_by_the_keymap() {
+        // Keymap consumption returns before low-level key dispatch. Keep copy
+        // and paste on that path so the canvas cannot encode their local chords
+        // as `CSI 2;5~` / `CSI 2;2~`.
+        assert!(!shortcut_interceptor_dispatches(ShortcutId::TerminalCopy));
+        assert!(!shortcut_interceptor_dispatches(ShortcutId::TerminalPaste));
     }
 }

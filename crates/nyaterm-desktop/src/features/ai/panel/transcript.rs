@@ -5,6 +5,7 @@ use std::ops::Range;
 use gpui::{Context, IntoElement};
 use rust_i18n::t;
 
+use crate::features::ai::panel::activity::AiActivitySummary;
 use crate::features::ai::panel::execution::AiExecutionGroup;
 use crate::features::ai::panel::messages::disclosure;
 use crate::features::ai::panel::{AiPanel, AiPanelSnapshot};
@@ -40,6 +41,10 @@ pub(super) enum AiTranscriptRow {
     NativeRun {
         run_id: String,
         history: bool,
+    },
+    NativeApproval {
+        index: usize,
+        request_id: String,
     },
     PendingCommand {
         message_index: usize,
@@ -78,7 +83,7 @@ impl AiTranscriptRow {
                     // Its current plan belongs to the last request's history.
                     if group.messages.end == snapshot.messages.len()
                         && let Some(view) = &snapshot.native_run
-                        && ((open && (!view.plan.tasks.is_empty() || view.verification.is_some()))
+                        && ((open && view.verification.is_some())
                             || view.status
                                 == nyaterm_core::ai::harness::AgentRunStatus::WaitingForUser)
                     {
@@ -138,6 +143,9 @@ impl AiTranscriptRow {
                             id: snapshot.messages[index].id.clone(),
                         });
                     }
+                    if group.messages.end == snapshot.messages.len() {
+                        rows.extend(Self::native_approval_rows(snapshot));
+                    }
                     index = group.messages.end;
                 } else {
                     let message = &snapshot.messages[index];
@@ -148,6 +156,14 @@ impl AiTranscriptRow {
                     index += 1;
                 }
             }
+        }
+
+        // A tool can request approval before a plan or execution group exists.
+        if !rows
+            .iter()
+            .any(|row| matches!(row, Self::NativeApproval { .. }))
+        {
+            rows.extend(Self::native_approval_rows(snapshot));
         }
 
         let steps: Vec<_> = snapshot
@@ -210,6 +226,17 @@ impl AiTranscriptRow {
         rows
     }
 
+    fn native_approval_rows(snapshot: &AiPanelSnapshot) -> impl Iterator<Item = Self> + '_ {
+        snapshot
+            .native_approvals
+            .iter()
+            .enumerate()
+            .map(|(index, view)| Self::NativeApproval {
+                index,
+                request_id: view.approval.request_id.clone(),
+            })
+    }
+
     fn same_item(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Message { id: a, .. }, Self::Message { id: b, .. })
@@ -230,6 +257,10 @@ impl AiTranscriptRow {
             ) => a == b && ar == br,
             (Self::Execution { group: a }, Self::Execution { group: b }) => a.id == b.id,
             (Self::NativeRun { run_id: a, .. }, Self::NativeRun { run_id: b, .. }) => a == b,
+            (
+                Self::NativeApproval { request_id: a, .. },
+                Self::NativeApproval { request_id: b, .. },
+            ) => a == b,
             (Self::AgentStep { step_index: a, .. }, Self::AgentStep { step_index: b, .. }) => {
                 a == b
             }
@@ -245,6 +276,9 @@ impl AiTranscriptRow {
         next: &AiPanelSnapshot,
     ) -> bool {
         match (self, other) {
+            (Self::NativeApproval { index: a, .. }, Self::NativeApproval { index: b, .. }) => {
+                previous.native_approvals[*a] != next.native_approvals[*b]
+            }
             (Self::NativeRun { history: a, .. }, Self::NativeRun { history: b, .. }) => {
                 a != b
                     || match (&previous.native_run, &next.native_run) {
@@ -294,6 +328,8 @@ impl AiTranscriptRow {
             }
             (Self::Execution { group: a }, Self::Execution { group: b }) => {
                 a != b
+                    || AiActivitySummary::project(previous, a)
+                        != AiActivitySummary::project(next, b)
                     || a.is_live(previous) != b.is_live(next)
                     || (b.is_live(next) && previous.response_phase != next.response_phase)
                     || previous.expanded_execution_groups.contains(&a.id)
@@ -446,6 +482,9 @@ impl AiPanel {
                 self.ai_final_message(snapshot, &snapshot.messages[*index], cx)
             }
             AiTranscriptRow::Execution { group } => self.ai_execution_header(snapshot, group, cx),
+            AiTranscriptRow::NativeApproval { index, .. } => self
+                .native_approval_card(snapshot, &snapshot.native_approvals[*index], cx)
+                .into_any_element(),
             AiTranscriptRow::NativeRun { history, .. } => self
                 .native_run_card(
                     snapshot,

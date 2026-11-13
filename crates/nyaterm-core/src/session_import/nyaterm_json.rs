@@ -304,11 +304,13 @@ fn prepare_nyaterm_json_import(file: NyatermJsonImportFile) -> AppResult<Prepare
     }
 
     Ok(PreparedSessionImport {
+        warnings: Vec::new(),
         custom_icons: file.custom_icons,
         groups,
         passwords,
         ssh_keys,
         connections,
+        notices: Vec::new(),
     })
 }
 

@@ -15,6 +15,14 @@ def jobs() -> dict[str, str]:
     return dict(zip(parts[1::2], parts[2::2]))
 
 
+def package_jobs() -> dict[str, str]:
+    snapshot = WORKFLOW.with_name("main-snapshot.yml").read_text(encoding="utf-8")
+    return {
+        "release": jobs()["package"],
+        "snapshot": snapshot.split("  package:\n", 1)[1].split("\n  publish:", 1)[0],
+    }
+
+
 def gate(job: str, values: dict[str, object]) -> bool:
     condition = re.search(r"^    if: (.+(?:\n      [^\n]+)*)", job, flags=re.M).group(1)
     condition = condition.removeprefix(">-").strip().replace("\n", " ")
@@ -30,20 +38,87 @@ def gate(job: str, values: dict[str, object]) -> bool:
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_packaged_portable_zip_runs_the_updater_round_trip_test(self) -> None:
+        for name, package in package_jobs().items():
+            with self.subTest(package=name):
+                validation = re.search(
+                    r"      - name: Test portable updater against packaged ZIP\n(.*?)(?=      - name:)",
+                    package, re.S,
+                ).group(1)
+                self.assertIn("shell: pwsh", validation)
+                self.assertIn("NYATERM_TEST_PORTABLE_ARCHIVE = (Resolve-Path", validation)
+                self.assertIn("NYATERM_TEST_PORTABLE_ARCH =", validation)
+                self.assertIn(
+                    "cargo test -p nyaterm-updater --lib --locked portable_release_archive_round_trip -- --ignored",
+                    validation,
+                )
+
+    def test_windows_packaging_preserves_msvc_path_in_release_and_snapshot(self) -> None:
+        for name, content in package_jobs().items():
+            with self.subTest(package=name):
+                windows = re.search(
+                    r"      - name: Package native application \(Windows MSVC\)\n(.*?)(?=      - name:)",
+                    content, re.S,
+                ).group(1)
+                self.assertIn("shell: pwsh", windows)
+                self.assertIn("Get-Command link.exe -CommandType Application", windows)
+                self.assertIn("Select-Object -First 1).Source", windows)
+                self.assertNotIn("Application -ErrorAction Stop).Source", windows)
+                self.assertIn(r"\\VC\\Tools\\MSVC", windows)
+                linker_pattern = re.search(
+                    r"if \(\$linker -notmatch '([^']+)'\)", windows
+                ).group(1)
+                for arch in ("x64", "arm64"):
+                    with self.subTest(arch=arch):
+                        msvc = rf"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX64\{arch}\link.exe"
+                        self.assertRegex(msvc, re.compile(linker_pattern, re.I))
+                self.assertIsNone(re.search(linker_pattern, r"C:\Program Files\Git\usr\bin\link.exe", re.I))
+                self.assertIn('python scripts/release/package_native.py "$env:TARGET"', windows)
+                self.assertIn("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }", windows)
+
     def test_stable_windows_packages_install_pinned_wix_and_sign_msi(self) -> None:
-        package = jobs()["package"]
+        package = package_jobs()["release"]
         install = re.search(r"      - name: Install WiX\n(.*?)(?=      - name:)", package, re.S).group(1)
-        self.assertIn("runner.os == 'Windows' && needs.preflight.outputs.prerelease == 'false'", install)
+        self.assertIn("needs.preflight.outputs.prerelease == 'false'", install)
         self.assertIn("./scripts/ci/install-wix.ps1", install)
         preparation = jobs()["prepare_release"]
         self.assertIn('if [[ "${PRERELEASE}" == \'false\' ]]; then', preparation)
         for architecture in ("x64", "arm64"):
             self.assertIn(f'"dist-release/NyaTerm_${{VERSION}}_windows_{architecture}.msi"', preparation)
-        self.assertIn("*.msi) content_type='application/x-msi'", jobs()["r2"])
+        self.assertIn('".msi": "application/x-msi"', (WORKFLOW.parents[2] / "scripts/release/release_io.py").read_text(encoding="utf-8"))
         installer = WORKFLOW.parents[2] / "scripts/ci/install-wix.ps1"
         self.assertIn("$version = '6.0.2'", installer.read_text(encoding="utf-8"))
         snapshot = WORKFLOW.with_name("main-snapshot.yml").read_text(encoding="utf-8")
         self.assertNotIn("install-wix", snapshot)
+
+    def test_ci_packages_only_windows_and_disables_unsupported_auto_channels(self) -> None:
+        expected = [
+            ("windows-x64", "windows-2025", "x86_64-pc-windows-msvc"),
+            ("windows-arm64", "windows-2025", "aarch64-pc-windows-msvc"),
+        ]
+        for name, package in package_jobs().items():
+            with self.subTest(package=name):
+                entries = re.findall(
+                    r"- \{ label: ([^,]+), os: ([^,]+), target: ([^}]+) \}",
+                    package,
+                )
+                self.assertEqual(entries, expected)
+                self.assertIn("release_provenance.record_v2", package)
+                self.assertNotIn("native-package.yml", package)
+
+        preparation = jobs()["prepare_release"]
+        self.assertNotIn("_macos_", preparation)
+        self.assertNotIn("_linux_", preparation)
+        self.assertNotIn("--include-focal", preparation)
+        self.assertNotIn("pattern: NyaTerm-*", preparation)
+        self.assertNotIn("pattern: provenance-*", preparation)
+        self.assertEqual(preparation.count("pattern: NyaTerm-windows-*"), 1)
+        self.assertEqual(preparation.count("pattern: provenance-windows-*"), 1)
+        self.assertIn("package_native.CI_TARGETS", preparation)
+        for name in ("homebrew", "aur"):
+            workflow = WORKFLOW.with_name(f"publish-{name}.yml").read_text(encoding="utf-8")
+            self.assertNotIn("workflow_run:", workflow)
+            self.assertIn("workflow_dispatch:", workflow)
 
     def test_rehearsal_never_enables_publication(self) -> None:
         blocks = jobs()
@@ -80,42 +155,53 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("unset TAURI_SIGNING_PRIVATE_KEY", preparation)
 
     def test_later_checkouts_cannot_follow_a_moving_branch(self) -> None:
-        for name in ("package", "prepare_release", "r2"):
-            self.assertIn("ref: ${{ needs.preflight.outputs.source_sha }}", jobs()[name])
-            self.assertNotIn("inputs.source_ref", jobs()[name])
+        blocks = jobs()
+        for name in ("package", "prepare_release", "release", "r2", "publish"):
+            self.assertIn("ref: ${{ needs.preflight.outputs.source_sha }}", blocks[name])
+            self.assertNotIn("inputs.source_ref", blocks[name])
+        self.assertNotIn("focal", blocks)
+        snapshot = WORKFLOW.with_name("main-snapshot.yml").read_text(encoding="utf-8")
+        self.assertIn("ref: ${{ needs.prepare.outputs.main_sha }}", snapshot)
+        self.assertIn("cancel-in-progress: false", snapshot)
 
-    def test_downstream_channels_use_published_release_receipt(self) -> None:
+    def test_downstream_channels_use_the_shared_published_release_resolver(self) -> None:
         publication = jobs()["publish"]
+        self.assertLess(publication.index("name: Publish verified draft"), publication.index("release_receipt.py create"))
+        self.assertLess(publication.index("release_receipt.py create"), publication.index("name: published-release"))
         self.assertIn("name: published-release-tag", publication)
         self.assertIn("path: published-release-tag.txt", publication)
-        self.assertIn('printf \'%s\\n\' "${TAG}" > published-release-tag.txt', publication)
-        self.assertLess(
-            publication.index("name: Save downstream release tag"),
-            publication.index("name: Publish verified draft"),
-        )
-        for name in ("homebrew", "aur", "gitee-release"):
-            with self.subTest(channel=name):
-                workflow = WORKFLOW.with_name(f"publish-{name}.yml").read_text(encoding="utf-8")
-                self.assertIn('gh run download "${RUN_ID}"', workflow)
-                self.assertIn("--name published-release-tag", workflow)
-                self.assertIn('cat "${receipt_dir}/published-release-tag.txt"', workflow)
-                self.assertIn('gh release view', workflow)
-                self.assertIn('--json isDraft', workflow)
-                self.assertNotIn("git ls-remote --tags", workflow)
-                self.assertNotIn("HEAD_SHA:", workflow)
-                self.assertIn("if [[ \"${GITHUB_EVENT_NAME}\" == 'workflow_dispatch' ]]; then", workflow)
+        for filename, channel in (("homebrew", "homebrew"), ("aur", "aur"), ("gitee-release", "gitee")):
+            workflow = WORKFLOW.with_name(f"publish-{filename}.yml").read_text(encoding="utf-8")
+            self.assertIn(f"release_receipt.py resolve --channel {channel}", workflow)
+            self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
+            self.assertNotIn("Publish Cloudflare R2 mirror", workflow)
+        gitee = WORKFLOW.with_name("publish-gitee-release.yml").read_text(encoding="utf-8")
+        self.assertIn("github.event_name != 'workflow_dispatch' || inputs.upload_small_assets", gitee)
 
-    def test_downstream_channels_require_successful_r2_publication(self) -> None:
-        for name in ("homebrew", "aur", "gitee-release"):
-            content = WORKFLOW.with_name(f"publish-{name}.yml").read_text(encoding="utf-8")
-            self.assertIn('select(.name == "Publish Cloudflare R2 mirror" and .conclusion == "success")', content)
-            self.assertIn('if [[ "${r2_success}" == \'1\' ]]', content)
+    def test_publication_lock_covers_publish_and_receipt(self) -> None:
+        publication = jobs()["publish"]
+        self.assertIn("group: release-channel-", publication)
+        self.assertIn("cancel-in-progress: false", publication)
+        self.assertLess(publication.index("name: Publish verified draft"), publication.index("release_receipt.py create"))
+        # Parallel builds, including manual runs from main, must not cancel one another.
+        self.assertNotRegex(WORKFLOW.read_text(encoding="utf-8"), r"(?m)^concurrency:")
+        self.assertNotIn("cancel-in-progress: true", WORKFLOW.with_name("linux-focal.yml").read_text(encoding="utf-8"))
 
+    def test_recovery_can_verify_a_candidate_from_an_interrupted_publication(self) -> None:
+        preflight = jobs()["preflight"]
+        self.assertIn('[[ "${source_status}" == \'completed\' ]]', preflight)
+        self.assertNotIn("source_conclusion", preflight)
+        preparation = jobs()["prepare_release"]
+        self.assertIn("name: release-candidate", preparation)
+        self.assertIn("release_channel.checksums", preparation)
+        self.assertIn("generate_release_metadata.expected_artifacts", preparation)
+        self.assertIn("minisign", preparation)
+        self.assertNotIn("scripts/release/verify_candidate.py", preparation)
 
     def test_draft_notes_are_preserved_until_publish_gate(self) -> None:
         blocks = jobs()
         # A GITHUB_TOKEN with contents:read cannot see unpublished draft releases.
-        for name in ("preflight", "prepare_release", "r2"):
+        for name in ("preflight", "prepare_release", "release", "publish"):
             self.assertIn("contents: write", blocks[name])
         self.assertIn("Wait for populated draft release", blocks["preflight"])
         self.assertIn("gh release view", blocks["prepare_release"])
@@ -139,6 +225,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('for _ in {1..36}; do', preflight)
         self.assertIn('git show "${GITHUB_SHA}:.github/workflows/release.yml"', preflight)
         self.assertIn("docker run --rm", preflight)
+
+    def test_auto_discovered_historical_compatibility_fixtures_have_git_history(self) -> None:
+        for filename, job_name in (("rust.yml", "python"), ("release.yml", "preflight"), ("main-snapshot.yml", "prepare")):
+            content = WORKFLOW.with_name(filename).read_text(encoding="utf-8")
+            checkout = content.split(f"\n  {job_name}:\n", 1)[1].split("      - name: Install Python", 1)[0]
+            with self.subTest(workflow=filename):
+                self.assertIn("fetch-depth: 0", checkout)
 
 if __name__ == "__main__":
     unittest.main()

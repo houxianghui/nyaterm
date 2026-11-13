@@ -7,6 +7,7 @@ use crate::models::WorkspacePaneNode;
 #[cfg(test)]
 mod group_tests;
 mod panes;
+mod session_notices;
 #[cfg(test)]
 mod tab_docking_tests;
 mod terminal_windows;
@@ -148,17 +149,21 @@ impl NyaTermApp {
                 cx,
             );
         }
-        let root =
-            self.shell.workspace_split().cloned().unwrap_or_else(|| {
-                WorkspacePaneNode::leaf(self.session.active_id_owned().unwrap())
-            });
-
+        let active_id = self.session.active_id_owned().unwrap();
         div()
             .flex_1()
             .min_h_0()
             .min_w_0()
+            .flex()
+            .flex_col()
             .bg(self.shell_transparent_color(palette.bg))
-            .child(self.render_workspace_pane_node(root, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .child(self.workspace_tab_session_content(active_id, cx)),
+            )
             .into_any_element()
     }
 }

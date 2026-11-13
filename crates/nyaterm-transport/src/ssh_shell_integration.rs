@@ -7,6 +7,7 @@ use russh::{ChannelMsg, client};
 use super::{SshClientHandler, SshShellHandle};
 
 const READY_MARKER_PREFIX: &str = "7777;NyaTermReady:";
+const SHELL_MARKER_PREFIX: &str = "7777;NyaTermShell:";
 const COMMAND_MARKER_PREFIX: &str = "7777;NyaTermCommand:";
 const LEGACY_READY_MARKER_PREFIX: &str = "7777;DflyReady:";
 const LEGACY_COMMAND_MARKER_PREFIX: &str = "7777;DflyCommand:";
@@ -71,9 +72,9 @@ impl PreparedSshShellIntegration {
         let remote_dir = sh_single_quote(remote_dir);
         let source = match self.shell {
             ShellKind::Bash | ShellKind::Zsh => {
-                format!(". {remote_path}; rm -rf {remote_dir}")
+                format!(". {remote_path}; command rm -rf {remote_dir}")
             }
-            ShellKind::Fish => format!("source {remote_path}; rm -rf {remote_dir}"),
+            ShellKind::Fish => format!("source {remote_path}; command rm -rf {remote_dir}"),
             ShellKind::PosixSh | ShellKind::Unknown => {
                 unreachable!("prepared shell integration uses a supported shell")
             }
@@ -110,11 +111,22 @@ impl ShellKind {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct ShellIdentity {
+    pub program: String,
+    pub user: String,
+}
+impl std::fmt::Debug for ShellIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ShellIdentity([REDACTED])")
+    }
+}
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct SshIntegrationOutput {
     pub(super) visible: Vec<u8>,
     pub(super) cwd_paths: Vec<String>,
     pub(super) accepted_commands: Vec<String>,
+    pub(super) shell_identities: Vec<ShellIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +136,7 @@ pub(super) struct OscResult {
     pub(super) cwd_paths: Vec<String>,
     pub(super) ready: bool,
     pub(super) accepted_commands: Vec<String>,
+    pub(super) shell_identities: Vec<ShellIdentity>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,6 +272,7 @@ impl SshShellIntegrationState {
                 let result = self.stripper.push(bytes);
                 let cwd_paths = result.cwd_paths;
                 let accepted_commands = result.accepted_commands;
+                let shell_identities = result.shell_identities;
                 if result.ready {
                     let visible = result.visible_after_ready;
                     self.force_normal();
@@ -266,6 +280,7 @@ impl SshShellIntegrationState {
                         visible,
                         cwd_paths,
                         accepted_commands,
+                        shell_identities,
                     }
                 } else {
                     self.suppressed_visible_bytes = self
@@ -290,6 +305,7 @@ impl SshShellIntegrationState {
                         visible: Vec::new(),
                         cwd_paths,
                         accepted_commands,
+                        shell_identities,
                     }
                 }
             }
@@ -401,6 +417,7 @@ impl OscResult {
             visible: self.visible,
             cwd_paths: self.cwd_paths,
             accepted_commands: self.accepted_commands,
+            shell_identities: self.shell_identities,
         }
     }
 }
@@ -587,7 +604,10 @@ fn wrap_shell_integration_payload(
         ShellKind::Bash => {
             " if [[ -o history ]]; then NYATERM_INJ_HISTORY_WAS_ENABLED=1; NYATERM_PRUNE_HISTORY=1; else unset NYATERM_INJ_HISTORY_WAS_ENABLED NYATERM_PRUNE_HISTORY; fi; NYATERM_LAST_HISTCMD=\"${HISTCMD-}\"; export NYATERM_INJ=1; set +o history\n"
         }
-        ShellKind::Zsh => " fc -p /dev/null 2>/dev/null\n export NYATERM_INJ=1;\n",
+        // The first physical line pushes an anonymous in-memory history list.
+        // Record its status only on the next line, after history has switched, so
+        // injection variables never enter the user's original history.
+        ShellKind::Zsh => " fc -p\n NYATERM_INJ_HISTORY_PUSHED=$?; export NYATERM_INJ=1;\n",
         ShellKind::Fish => " set -gx NYATERM_INJ 1\n",
         ShellKind::PosixSh | ShellKind::Unknown => return None,
     };
@@ -597,8 +617,11 @@ fn wrap_shell_integration_payload(
                 "\nif [ -n \"${{NYATERM_INJ_HISTORY_WAS_ENABLED:-}}\" ]; then set -o history; __nyaterm_prune_history; else unset NYATERM_PRUNE_HISTORY; fi; unset NYATERM_INJ_HISTORY_WAS_ENABLED; __nyaterm_install_prompt {install_arg} 2>/dev/null || true; printf '{ready}'\n"
             )
         }
+        // The ready marker must be emitted before `fc -P`: a failed pop aborts the
+        // remainder of its physical line, which previously swallowed the marker and
+        // stalled startup for the full integration timeout.
         ShellKind::Zsh => format!(
-            "\n__nyaterm_install_prompt {install_arg} 2>/dev/null || true; fc -P 2>/dev/null; printf '{ready}'\n"
+            "\n__nyaterm_install_prompt {install_arg} 2>/dev/null || true\nprintf '{ready}'\nif [ \"${{NYATERM_INJ_HISTORY_PUSHED:-1}}\" = 0 ]; then unset NYATERM_INJ_HISTORY_PUSHED NYATERM_INJ; fc -P 2>/dev/null; else unset NYATERM_INJ_HISTORY_PUSHED NYATERM_INJ; fi\n"
         ),
         ShellKind::Fish => format!(
             "\n __nyaterm_install_prompt {install_arg} 2>/dev/null; or true\n printf '{ready}'\n"
@@ -1086,7 +1109,7 @@ __nyaterm_emit_command(){
 }
 __nyaterm_cwd_prompt(){
   [ -n "${NYATERM_ZSH_CWD_READY:-}" ] || return 0
-  printf '\033]7;file://%s%s\007' "$(__nyaterm_host)" "${PWD//%/%25}"
+  printf '\033]7;file://%s%s\007' "$(__nyaterm_host)" "${PWD//\%/%25}"
 }
 __nyaterm_cwd_preexec(){
   [ -n "${NYATERM_ZSH_CWD_READY:-}" ] || return 0
@@ -1103,7 +1126,7 @@ __nyaterm_precmd_d(){
 }
 __nyaterm_prompt(){
   [ -n "${NYATERM_ZSH_HOOKS_READY:-}" ] || return 0
-  printf '\033]7;file://%s%s\007' "$(__nyaterm_host)" "${PWD//%/%25}"
+  printf '\033]7;file://%s%s\007' "$(__nyaterm_host)" "${PWD//\%/%25}"
   printf '\033]133;A\007'
   [[ "$PS1" == *$'\033]133;B\007'* ]] || PS1="$PS1"$'%{\033]133;B\007%}'
 }
@@ -1290,7 +1313,7 @@ __nyaterm_emit_command(){
 }
 __nyaterm_cwd_prompt(){
   [ -n "${NYATERM_ZSH_CWD_READY:-}" ] || return 0
-  printf '\033]7;file://%s%s\007' "$(__nyaterm_host)" "${PWD//%/%25}"
+  printf '\033]7;file://%s%s\007' "$(__nyaterm_host)" "${PWD//\%/%25}"
 }
 __nyaterm_cwd_preexec(){
   [ -n "${NYATERM_ZSH_CWD_READY:-}" ] || return 0
@@ -1361,6 +1384,7 @@ impl OscStripper {
                 cwd_paths: Vec::new(),
                 ready: false,
                 accepted_commands: Vec::new(),
+                shell_identities: Vec::new(),
             };
         }
 
@@ -1370,6 +1394,7 @@ impl OscStripper {
         let mut ready = false;
         let mut after_ready = false;
         let mut accepted_commands = Vec::new();
+        let mut shell_identities = Vec::new();
 
         loop {
             let Some(esc_pos) = find_subsequence(&self.buf, b"\x1b]") else {
@@ -1409,6 +1434,10 @@ impl OscStripper {
                 || inner.starts_with(LEGACY_READY_MARKER_PREFIX.as_bytes())
             {
                 // Private marker for another session. Strip it but do not mark ready.
+            } else if let Some(payload) = inner.strip_prefix(SHELL_MARKER_PREFIX.as_bytes()) {
+                if let Some(identity) = parse_shell_identity(payload) {
+                    shell_identities.push(identity);
+                }
             } else if let Some(command) = parse_command_marker(inner) {
                 accepted_commands.push(command);
             } else {
@@ -1426,6 +1455,7 @@ impl OscStripper {
             cwd_paths,
             ready,
             accepted_commands,
+            shell_identities,
         }
     }
 
@@ -1457,6 +1487,23 @@ fn find_osc_terminator(bytes: &[u8]) -> Option<(usize, usize)> {
         .position(|byte| *byte == b'\x07')
         .map(|index| (index, 1))
         .or_else(|| find_subsequence(&bytes[2..], b"\x1b\\").map(|index| (index + 2, 2)))
+}
+
+fn parse_shell_identity(payload: &[u8]) -> Option<ShellIdentity> {
+    if payload.len() > 4096 {
+        return None;
+    }
+    let encoded = std::str::from_utf8(payload).ok()?;
+    let (program, user) = encoded.split_once(':')?;
+    let program = String::from_utf8(BASE64_STANDARD.decode(program).ok()?).ok()?;
+    let user = String::from_utf8(BASE64_STANDARD.decode(user).ok()?).ok()?;
+    if program.is_empty()
+        || user.is_empty()
+        || program.chars().chain(user.chars()).any(char::is_control)
+    {
+        return None;
+    }
+    Some(ShellIdentity { program, user })
 }
 
 fn parse_osc7_payload(payload: &[u8]) -> Option<String> {
@@ -1626,7 +1673,8 @@ mod tests {
                     assert!(uploaded.contains("set -o history; __nyaterm_prune_history"));
                 }
                 ShellKind::Zsh => {
-                    assert!(uploaded.starts_with(" fc -p /dev/null"));
+                    assert!(uploaded.starts_with(" fc -p\n"));
+                    assert!(!uploaded.contains("mktemp"));
                     assert!(uploaded.contains("fc -P 2>/dev/null"));
                 }
                 ShellKind::Fish => {
@@ -1669,10 +1717,52 @@ mod tests {
             assert!(script.contains("NyaTermReady:rc-history-guard"));
             match shell {
                 ShellKind::Bash => assert!(script.contains("if [[ -o history ]]")),
-                ShellKind::Zsh => assert!(script.starts_with(" fc -p /dev/null")),
+                ShellKind::Zsh => {
+                    assert!(script.starts_with(" fc -p\n"));
+                    assert!(!script.contains("mktemp"));
+                }
                 ShellKind::Fish => assert!(script.starts_with(" set -gx NYATERM_INJ 1")),
                 ShellKind::PosixSh | ShellKind::Unknown => unreachable!(),
             }
+        }
+    }
+
+    #[test]
+    fn zsh_history_guard_is_anonymous_and_emits_ready_before_guarded_pop() {
+        let ready_marker = build_ssh_ready_marker("zsh-history-lock");
+        for mode in [ShellIntegrationMode::Full, ShellIntegrationMode::CwdOnly] {
+            let integration =
+                super::prepare_shell_integration(ShellKind::Zsh, &ready_marker, mode).unwrap();
+            let script = String::from_utf8(integration.inline_script()).unwrap();
+            assert_eq!(script.lines().next(), Some(" fc -p"));
+            assert!(
+                script
+                    .lines()
+                    .nth(1)
+                    .unwrap()
+                    .starts_with(" NYATERM_INJ_HISTORY_PUSHED=$?;")
+            );
+            assert!(!script.contains("mktemp"));
+            assert!(!script.contains(".LOCK"));
+            let ready = script.find("NyaTermReady:zsh-history-lock").unwrap();
+            let pop = script.find("fc -P 2>/dev/null").unwrap();
+            assert!(ready < pop);
+            assert!(script.contains("unset NYATERM_INJ_HISTORY_PUSHED NYATERM_INJ; fc -P"));
+        }
+    }
+
+    #[test]
+    fn zsh_scripts_escape_percent_in_pwd_substitution() {
+        // In zsh a leading `%` in a `//` pattern anchors the match at the end
+        // of the string, so `${PWD//%/%25}` appends `%25` to the path instead
+        // of encoding literal percent signs; the pattern must be `\%`. Bash
+        // has no such anchor and keeps the plain `%` pattern.
+        for script in [super::ZSH_PERSISTENT_SCRIPT, super::ZSH_CWD_ONLY_SCRIPT] {
+            assert!(script.contains("${PWD//\\%/%25}"));
+            assert!(!script.contains("${PWD//%/%25}"));
+        }
+        for script in [super::BASH_PERSISTENT_SCRIPT, super::BASH_CWD_ONLY_SCRIPT] {
+            assert!(script.contains("${PWD//%/%25}"));
         }
     }
 

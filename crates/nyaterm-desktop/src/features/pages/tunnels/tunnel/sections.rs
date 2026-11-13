@@ -6,13 +6,15 @@ use std::collections::{HashMap, HashSet};
 use gpui::prelude::*;
 use gpui::{Context, FontWeight, IntoElement, SharedString, div, px, rgb, rgba, svg};
 
-use super::super::common::{NetworkItemMenuConfig, network_item_overflow_menu};
+use super::super::common::NetworkItemMenuConfig;
 use super::row::{TunnelNetworkRow, tunnel_network_row};
+use crate::features::tunnels::TunnelBatchAction;
 use crate::features::{NyaTermApp, formatting::tunnel_name};
 use crate::models::NetworkTab;
 use crate::widgets::{small_button, status_pill};
 use nyaterm_core::{TunnelConfig, TunnelGroup, truncate_preview};
 use nyaterm_transport::SshTunnelInfo;
+use nyaterm_ui::{NyaDropdownMenu, NyaMenuItem};
 
 #[derive(Debug, Clone)]
 pub(in crate::features::pages::tunnels) struct TunnelSection {
@@ -230,6 +232,7 @@ pub(in crate::features::pages::tunnels) fn tunnel_section(
                 .child(
                     div()
                         .min_w_0()
+                        .flex_1()
                         .flex()
                         .items_center()
                         .gap_2()
@@ -262,29 +265,90 @@ pub(in crate::features::pages::tunnels) fn tunnel_section(
                         ),
                 )
                 .when_some(section.group.clone(), |this, group| {
-                    let rename_id = group.id.clone();
-                    let delete_id = group.id.clone();
-                    let delete_label = group.name.clone();
-                    this.child(network_item_overflow_menu(
-                        NetworkItemMenuConfig {
-                            palette,
-                            id: format!("tunnel-group-actions-{}", group.id),
-                            more_label: t!("common.more"),
-                            edit_label: t!("network.renameGroup"),
-                            move_label: t!("network.moveToGroup"),
-                            delete_label: t!("network.deleteGroup"),
-                            can_move: false,
+                    this.when_some(
+                        app.tunnel_state.batch_progress(&group.id),
+                        |this, progress| {
+                            this.child(
+                                div()
+                                    .flex_none()
+                                    .text_size(px(10.))
+                                    .text_color(rgb(palette.text_muted))
+                                    .child(t!(
+                                        "network.batchProgress",
+                                        done = progress.done,
+                                        total = progress.total
+                                    )),
+                            )
                         },
-                        cx.listener(move |this, _, window, cx| {
+                    )
+                    .child(tunnel_group_overflow_menu(group, cx))
+                }),
+        )
+        .when(!collapsed, |this| this.child(rows))
+}
+
+fn tunnel_group_overflow_menu(
+    group: TunnelGroup,
+    cx: &mut Context<NyaTermApp>,
+) -> impl IntoElement {
+    let menu_app = cx.entity();
+    NyaDropdownMenu::new(format!("tunnel-group-actions-{}", group.id))
+        .icon("icons/session/more.svg")
+        .icon_size(px(14.))
+        .tooltip(t!("common.more"))
+        .min_width(px(164.))
+        .items_dynamic(move |_, cx| {
+            menu_app.update(cx, |app, cx| {
+                let item_count = app
+                    .tunnel_state
+                    .tunnels()
+                    .iter()
+                    .filter(|tunnel| tunnel.group_id.as_deref() == Some(group.id.as_str()))
+                    .count();
+                let running = app
+                    .tunnel_state
+                    .batch_progress(&group.id)
+                    .map(|progress| progress.action);
+                let start_group_id = group.id.clone();
+                let stop_group_id = group.id.clone();
+                let rename_id = group.id.clone();
+                let delete_id = group.id.clone();
+                let delete_label = group.name.clone();
+                let mut items = Vec::new();
+                if item_count > 0 {
+                    // Keep the opposite action available to supersede a running batch.
+                    items.extend([
+                        NyaMenuItem::action(t!("network.startAll"))
+                            .icon("icons/transfer/play.svg")
+                            .disabled(running == Some(TunnelBatchAction::Start))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.start_tunnel_group(start_group_id.clone(), cx);
+                            })),
+                        NyaMenuItem::action(t!("network.stopAll"))
+                            .icon("icons/transfer/stop.svg")
+                            .disabled(running == Some(TunnelBatchAction::Stop))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.stop_tunnel_group(stop_group_id.clone(), cx);
+                            })),
+                        NyaMenuItem::separator(),
+                    ]);
+                }
+                items.extend([
+                    NyaMenuItem::action(t!("network.renameGroup"))
+                        .icon("icons/net/edit.svg")
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_network_group_editor(
                                 NetworkTab::Tunnels,
                                 Some(rename_id.clone()),
                                 window,
                                 cx,
                             );
-                        }),
-                        cx.listener(|_, _, _, _| {}),
-                        cx.listener(move |this, _, window, cx| {
+                        })),
+                    NyaMenuItem::separator(),
+                    NyaMenuItem::action(t!("network.deleteGroup"))
+                        .icon("icons/net/delete.svg")
+                        .danger()
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_network_group_delete_confirm(
                                 NetworkTab::Tunnels,
                                 delete_id.clone(),
@@ -293,11 +357,11 @@ pub(in crate::features::pages::tunnels) fn tunnel_section(
                                 window,
                                 cx,
                             );
-                        }),
-                    ))
-                }),
-        )
-        .when(!collapsed, |this| this.child(rows))
+                        })),
+                ]);
+                items
+            })
+        })
 }
 
 fn tunnel_move_picker(

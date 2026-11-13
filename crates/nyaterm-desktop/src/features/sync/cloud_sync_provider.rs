@@ -1,7 +1,4 @@
-use crate::http::cloud_sync::{
-    NativeAliyunDriveRemote, NativeGoogleDriveRemote, NativeOneDriveRemote, NativeS3Remote,
-    NativeSnippetHttpClient, NativeWebdavRemote,
-};
+use crate::http::cloud_sync::{NativeSnippetHttpClient, OpenDalDriveRemote, OpenDalRemote};
 use nyaterm_core::cloud_sync::control::CloudSyncOperationControl;
 use nyaterm_core::cloud_sync::{self, CloudSyncRemote};
 use nyaterm_core::{
@@ -50,23 +47,26 @@ macro_rules! with_provider_remote {
                 }
             });
         let result = (|| {
-            let native: Box<dyn CloudSyncRemote> = match $settings.provider.as_str() {
-                "webdav" => Box::new(NativeWebdavRemote::new(&$settings.webdav)?),
-                "s3" => Box::new(NativeS3Remote::new_with_stats(
-                    &$settings.s3,
+            let backend: Box<dyn CloudSyncRemote> = match $settings.provider.as_str() {
+                "webdav" => Box::new(OpenDalRemote::webdav(
+                    &$settings.webdav,
                     io_scope.stats.clone(),
                 )?),
-                "google_drive" => Box::new(NativeGoogleDriveRemote::new_with_token_sink(
+                "s3" => Box::new(OpenDalRemote::s3(&$settings.s3, io_scope.stats.clone())?),
+                "google_drive" => Box::new(OpenDalDriveRemote::google_drive(
                     &$settings.google_drive,
                     token_sink.clone(),
+                    io_scope.stats.clone(),
                 )?),
-                "onedrive" => Box::new(NativeOneDriveRemote::new_with_token_sink(
+                "onedrive" => Box::new(OpenDalDriveRemote::onedrive(
                     &$settings.onedrive,
                     token_sink.clone(),
+                    io_scope.stats.clone(),
                 )?),
-                "aliyun_drive" => Box::new(NativeAliyunDriveRemote::new_with_token_sink(
+                "aliyun_drive" => Box::new(OpenDalDriveRemote::aliyun_drive(
                     &$settings.aliyun_drive,
                     token_sink.clone(),
+                    io_scope.stats.clone(),
                 )?),
                 "gitee_snippet" => Box::new(SnippetRemote::new(
                     "gitee_snippet",
@@ -84,12 +84,12 @@ macro_rules! with_provider_remote {
                 )),
                 provider => {
                     return Err(CloudSyncError::Remote(format!(
-                        "native cloud provider '{provider}' is not wired yet"
+                        "cloud provider '{provider}' is not wired yet"
                     )));
                 }
             };
             let observed = super::io_runtime::ObservedRemote {
-                inner: native.as_ref(),
+                inner: backend.as_ref(),
                 stats: io_scope.stats.clone(),
                 heads_checked: std::cell::Cell::new(false),
             };
@@ -129,7 +129,7 @@ macro_rules! with_provider_remote {
     }};
 }
 
-fn with_remote<T>(
+pub(super) fn with_remote<T>(
     local_store: &StoreBlockingClient,
     settings: &CloudSyncSettings,
     options: &LocalCloudSyncOptions,
@@ -139,6 +139,14 @@ fn with_remote<T>(
         &super::io_runtime::IoCaches,
     ) -> Result<T, CloudSyncError>,
 ) -> Result<T, CloudSyncError> {
+    if super::effective_protocol_version(settings) != 3
+        && !label.starts_with("v4_")
+        && label != "connection_test"
+    {
+        return Err(CloudSyncError::Remote(
+            "Legacy sync writing is disabled for this protocol".into(),
+        ));
+    }
     if settings.provider == "local_directory" {
         let remote = nyaterm_core::LocalDirectoryRemote::new(options.remote_dir.clone());
         let caches = super::io_runtime::CloudSyncIoRuntime::shared().caches(
@@ -236,7 +244,7 @@ pub(in crate::features) fn test_provider_connection(
         remote,
         caches,
         {
-            cloud_sync::load_sync_pointer_from_remote(
+            cloud_sync::probe_remote_sync(
                 &control.local_store(local_store),
                 &control.remote(&remote),
                 &settings.remote_root,
@@ -365,3 +373,6 @@ pub(in crate::features) fn resolve_provider_conflict(
         )
     })
 }
+
+#[cfg(test)]
+mod tests;

@@ -9,6 +9,7 @@ use gpui::{
     },
     px, rgb, svg,
 };
+use nyaterm_core::connection_search::ConnectionSearch;
 use nyaterm_core::{Group, SavedConnection, natural_compare};
 use rust_i18n::t;
 
@@ -21,8 +22,8 @@ use crate::models::{
     ConnectionGroupEditorState, ConnectionSortMode,
 };
 use nyaterm_ui::{
-    NYA_FORM_CONTROL_HEIGHT_PX, NyaInput, NyaInputState, NyaNumberInput, NyaNumberInputState,
-    NyaSelect, NyaSelectState, NyaSwitch, radius_md, radius_sm,
+    NYA_FORM_CONTROL_HEIGHT_PX, NyaInput, NyaInputShell, NyaInputState, NyaNumberInput,
+    NyaNumberInputState, NyaSelect, NyaSelectState, NyaSwitch, radius_md, radius_sm,
 };
 
 #[derive(Clone)]
@@ -195,9 +196,10 @@ pub(in crate::features) fn connection_sections(
     query: &str,
     sort_mode: ConnectionSortMode,
 ) -> Vec<ConnectionSection> {
+    let search = ConnectionSearch::new(query, groups);
     let mut by_group: HashMap<Option<String>, Vec<SavedConnection>> = HashMap::new();
     for connection in connections {
-        if !connection_matches(connection, query) {
+        if !search.matches_connection(connection) {
             continue;
         }
         by_group
@@ -235,7 +237,7 @@ pub(in crate::features) fn connection_sections(
             0,
             &children_by_parent,
             &mut by_group,
-            query,
+            &search,
             &mut visited,
         );
         sections.append(&mut group_sections);
@@ -268,7 +270,7 @@ fn build_connection_group_sections(
     depth: usize,
     children_by_parent: &HashMap<Option<String>, Vec<Group>>,
     by_group: &mut HashMap<Option<String>, Vec<SavedConnection>>,
-    query: &str,
+    search: &ConnectionSearch,
     visited: &mut std::collections::HashSet<String>,
 ) -> (Vec<ConnectionSection>, usize) {
     if !visited.insert(group.id.clone()) {
@@ -288,14 +290,14 @@ fn build_connection_group_sections(
             depth + 1,
             children_by_parent,
             by_group,
-            query,
+            search,
             visited,
         );
         total_count += child_count;
         child_sections.append(&mut sections);
     }
 
-    if !query.is_empty() && total_count == 0 {
+    if !search.includes_group(&group.id) && total_count == 0 && child_sections.is_empty() {
         return (Vec::new(), 0);
     }
 
@@ -330,22 +332,6 @@ fn sort_groups(groups: &mut [Group], mode: ConnectionSortMode) {
             groups.sort_by(|left, right| natural_compare(&right.name, &left.name));
         }
     }
-}
-
-pub(super) fn connection_matches(connection: &SavedConnection, query: &str) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-    let haystack = format!(
-        "{} {} {} {} {}",
-        connection.name,
-        connection.endpoint(),
-        connection.kind_label(),
-        connection.description.clone().unwrap_or_default(),
-        connection.id
-    )
-    .to_ascii_lowercase();
-    haystack.contains(query)
 }
 
 pub(super) fn sort_connections(connections: &mut [SavedConnection], mode: ConnectionSortMode) {
@@ -410,12 +396,13 @@ pub(in crate::features) fn widest_connection_row(
 }
 
 #[derive(Clone)]
-pub(super) struct ConnectionEditorChoice {
+pub(in crate::features) struct ConnectionEditorChoice {
     pub value: Option<String>,
     pub label: String,
     pub search_text: Option<String>,
     pub subtitle: Option<String>,
     pub selected: bool,
+    pub disabled: bool,
 }
 
 impl ConnectionEditorChoice {
@@ -426,6 +413,7 @@ impl ConnectionEditorChoice {
             search_text: None,
             subtitle: None,
             selected,
+            disabled: false,
         }
     }
 
@@ -521,11 +509,115 @@ mod tests {
 
     use nyaterm_core::{Group, SavedConnection};
 
-    use crate::models::{ConnectionGroupEditorMode, ConnectionGroupEditorState};
+    use crate::models::{
+        ConnectionGroupEditorMode, ConnectionGroupEditorState, ConnectionSortMode,
+    };
 
     use super::{
         ConnectionListRow, connection_sections, flatten_connection_rows, widest_connection_row,
     };
+
+    #[test]
+    fn group_search_includes_the_whole_subtree_and_unions_connection_hits() {
+        let groups = vec![
+            group("region", "Region", None, 0),
+            group("prod", "Production", Some("region"), 0),
+            group("child", "Services", Some("prod"), 0),
+            group("empty", "Empty", Some("child"), 0),
+            group("staging", "Staging", Some("region"), 1),
+        ];
+        let connections = vec![
+            connection("direct", "Production host", Some("prod"), 0),
+            connection("nested", "Database", Some("child"), 0),
+            connection("other", "Staging host", Some("staging"), 0),
+            connection("root-hit", "Production gateway", None, 0),
+        ];
+        let sections = connection_sections(
+            &connections,
+            &groups,
+            "  PrOD  ",
+            ConnectionSortMode::Default,
+        );
+        assert_eq!(
+            sections
+                .iter()
+                .filter_map(|s| s.group_id.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["region", "prod", "child", "empty"]
+        );
+        assert_eq!(sections[0].total_count, 2);
+        assert_eq!(sections[1].total_count, 2);
+        assert_eq!(sections[2].total_count, 1);
+        assert_eq!(sections[3].total_count, 0);
+        let expanded = groups.iter().map(|g| g.id.clone()).collect();
+        let rows = flatten_connection_rows(&sections, &expanded, None);
+        let ids = rows
+            .iter()
+            .filter_map(|row| match row {
+                ConnectionListRow::Connection { connection_id, .. } => Some(connection_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["nested", "direct", "root-hit"]);
+        assert!(
+            rows.iter()
+                .any(|row| matches!(row, ConnectionListRow::EmptyGroup { depth: 4 }))
+        );
+    }
+
+    #[test]
+    fn empty_group_search_keeps_ancestors_without_unrelated_branches() {
+        let groups = vec![
+            group("region", "Region", None, 0),
+            group("parent", "Parent", Some("region"), 0),
+            group("empty", "生产环境", Some("parent"), 0),
+            group("sibling", "Sibling", Some("parent"), 1),
+        ];
+        let connections = vec![connection("other", "Host", Some("parent"), 0)];
+        let sections =
+            connection_sections(&connections, &groups, "生产", ConnectionSortMode::Default);
+        assert_eq!(
+            sections
+                .iter()
+                .filter_map(|s| s.group_id.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["region", "parent", "empty"]
+        );
+        assert!(
+            sections
+                .iter()
+                .all(|s| s.total_count == 0 && s.connections.is_empty())
+        );
+        assert!(sections[0].has_child_groups);
+        assert!(sections[1].has_child_groups);
+    }
+
+    #[test]
+    fn connection_only_search_keeps_its_path_without_including_other_connections() {
+        let groups = vec![
+            group("parent", "Parent", None, 0),
+            group("child", "Child", Some("parent"), 0),
+            group("empty", "Empty", Some("parent"), 1),
+        ];
+        let connections = vec![
+            connection("hit", "Bastion", Some("child"), 0),
+            connection("other", "Database", Some("child"), 1),
+        ];
+        let sections = connection_sections(
+            &connections,
+            &groups,
+            "bastion",
+            ConnectionSortMode::Default,
+        );
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].group_id.as_deref(), Some("parent"));
+        assert_eq!(sections[0].total_count, 1);
+        assert_eq!(sections[1].connections.len(), 1);
+        assert_eq!(sections[1].connections[0].id, "hit");
+        let no_hits =
+            connection_sections(&connections, &groups, "absent", ConnectionSortMode::Default);
+        assert!(flatten_connection_rows(&no_hits, &HashSet::new(), None).is_empty());
+    }
 
     #[test]
     fn nested_groups_render_children_before_connections_and_root_last() {
@@ -1036,6 +1128,7 @@ mod tests {
             auth: None,
             recording: None,
             ssh_algorithms: None,
+            ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
             sftp: Default::default(),
@@ -1211,7 +1304,7 @@ pub(super) fn editor_field(
     label: impl Into<FieldLabel>,
     field: ConnectionEditorField,
     fields: &ConnectionEditorFields,
-    cx: &App,
+    cx: &Context<NyaTermApp>,
 ) -> impl IntoElement {
     let label = label.into();
     div()
@@ -1282,109 +1375,6 @@ pub(super) fn connection_editor_select_on_open(
         )
 }
 
-pub(super) struct EditorSecretFieldOptions<Clear> {
-    disabled: bool,
-    clear_tooltip: SharedString,
-    on_clear: Clear,
-}
-
-impl<Clear> EditorSecretFieldOptions<Clear> {
-    pub(super) fn new(
-        disabled: bool,
-        clear_tooltip: impl Into<SharedString>,
-        on_clear: Clear,
-    ) -> Self {
-        Self {
-            disabled,
-            clear_tooltip: clear_tooltip.into(),
-            on_clear,
-        }
-    }
-}
-
-pub(super) fn editor_secret_field<Clear>(
-    palette: crate::theme::ThemePalette,
-    label: impl Into<FieldLabel>,
-    field: ConnectionEditorField,
-    fields: &ConnectionEditorFields,
-    options: EditorSecretFieldOptions<Clear>,
-    cx: &App,
-) -> impl IntoElement
-where
-    Clear: Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-{
-    let EditorSecretFieldOptions {
-        disabled,
-        clear_tooltip,
-        on_clear,
-    } = options;
-    let label = label.into();
-    let entity = fields.get(&field).cloned();
-    let focused = entity
-        .as_ref()
-        .is_some_and(|field| field.read(cx).has_focus());
-    div()
-        .id(SharedString::from(format!(
-            "connection-editor-field-{field:?}"
-        )))
-        .debug_selector(move || format!("connection-editor-field-{field:?}"))
-        .anchor_scroll(
-            fields
-                .anchors
-                .get(&ConnectionEditorFocusTarget::Field(field))
-                .cloned(),
-        )
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .when(!label.is_empty(), |this| {
-            this.child(field_caption(palette, &label))
-        })
-        .child(
-            div()
-                .h(px(EDITOR_CONTROL_HEIGHT_PX))
-                .min_w_0()
-                .px(px(ORDINARY_INPUT_SHELL_PADDING_X_PX))
-                .flex()
-                .items_center()
-                .gap_1()
-                .opacity(if disabled { 0.55 } else { 1.0 })
-                .rounded(radius_sm())
-                .border_1()
-                .border_color(ordinary_input_shell_border_color(palette, focused))
-                .when(focused, |this| {
-                    this.shadow(ordinary_input_focus_ring(palette))
-                })
-                .bg(rgb(palette.input))
-                .children(entity.map(|field| {
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .text_xs()
-                        .text_color(rgb(palette.text))
-                        .child(NyaInput::new(&field))
-                }))
-                .child(
-                    nyaterm_ui::NyaIconButton::new(
-                        "connection-editor-password-clear",
-                        "icons/delete.svg",
-                    )
-                    .disabled(disabled)
-                    .tooltip(clear_tooltip)
-                    .on_click(on_clear),
-                ),
-        )
-        .when_some(fields.errors.get(&field), |this, error| {
-            this.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(palette.danger))
-                    .child(error.clone()),
-            )
-        })
-}
-
 pub(super) fn forwarding_endpoint_editor_field(
     palette: crate::theme::ThemePalette,
     label: impl Into<FieldLabel>,
@@ -1429,7 +1419,7 @@ pub(super) fn forwarding_endpoint_editor_field(
                 .when(focused, |this| {
                     this.shadow(ordinary_input_focus_ring(palette))
                 })
-                .bg(rgb(palette.input))
+                .bg(rgb(palette.input_surface()))
                 .cursor_text()
                 .on_click(move |_, window, cx| {
                     window.focus(&handle, cx);
@@ -1450,22 +1440,34 @@ pub(super) fn editor_field_box(
     palette: crate::theme::ThemePalette,
     field: ConnectionEditorField,
     fields: &ConnectionEditorFields,
-    cx: &App,
+    cx: &Context<NyaTermApp>,
 ) -> impl IntoElement {
     let entity = fields.get(&field);
+    if field == ConnectionEditorField::PostLoginCommand {
+        let app = cx.weak_entity();
+        return div()
+            .w_full()
+            .min_w_0()
+            .flex_none()
+            .children(entity.map(|field| {
+                NyaInputShell::new("connection-editor-post-login-command", field)
+                    .multi_line()
+                    .height(px(168.))
+                    .tab_navigation()
+                    .on_secondary_enter(move |window, cx| {
+                        let _ = app.update(cx, |app, cx| app.save_connection_editor(window, cx));
+                    })
+            }))
+            .into_any_element();
+    }
     let handle = entity.map(|field| field.read(cx).focus_handle());
     let focused = entity.is_some_and(|field| field.read(cx).has_focus());
     div()
-        .h(px(
-            if matches!(
-                field,
-                ConnectionEditorField::Description | ConnectionEditorField::PostLoginCommand
-            ) {
-                112.
-            } else {
-                EDITOR_CONTROL_HEIGHT_PX
-            },
-        ))
+        .h(px(if field == ConnectionEditorField::Description {
+            112.
+        } else {
+            EDITOR_CONTROL_HEIGHT_PX
+        }))
         .id("connection-list-search-input-shell")
         .min_w_0()
         .px(px(ORDINARY_INPUT_SHELL_PADDING_X_PX))
@@ -1477,7 +1479,7 @@ pub(super) fn editor_field_box(
         .when(focused, |this| {
             this.shadow(ordinary_input_focus_ring(palette))
         })
-        .bg(rgb(palette.input))
+        .bg(rgb(palette.input_surface()))
         .cursor_text()
         .when_some(handle, |row, handle| {
             row.on_click(move |_, window, cx| {
@@ -1492,6 +1494,7 @@ pub(super) fn editor_field_box(
                 .text_color(rgb(palette.text))
                 .child(NyaInput::new(field))
         }))
+        .into_any_element()
 }
 
 /// A numeric field backed by gpui-kit's spinner control.

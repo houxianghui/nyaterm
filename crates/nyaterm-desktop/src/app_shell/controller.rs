@@ -13,12 +13,15 @@ use gpui::Context;
 use gpui::Task;
 use gpui::WeakEntity;
 use nyaterm_core::ACTIVATION_QUEUE_CAPACITY;
+use nyaterm_core::ActivationOpenBehavior;
 use nyaterm_core::ActivationReceiver;
 use nyaterm_core::ActivationRequest;
 use nyaterm_core::AppRuntime;
 use nyaterm_core::DeviceWindowManifest;
 use nyaterm_core::MoveTabTreeRequest;
+use nyaterm_core::OpenWorkspaceRequest;
 use nyaterm_core::WorkspaceId;
+use nyaterm_core::activation::{ActivationParseError, ParsedActivationRequest};
 use nyaterm_store::BootstrapSnapshot;
 use nyaterm_store::StoreTask;
 use std::collections::HashMap;
@@ -26,8 +29,11 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 mod auto_sync;
 mod bootstrap;
+mod configuration_replacement;
 pub(crate) mod native_menu;
 mod shutdown;
+#[cfg(test)]
+mod shutdown_tests;
 #[cfg(test)]
 mod tab_drag_tests;
 mod tab_moves;
@@ -89,6 +95,7 @@ impl RecentActivationCache {
 }
 
 pub struct DesktopController {
+    pub(crate) ai_runtime: Result<crate::ai_runtime::AiRuntime, String>,
     runtime: AppRuntime,
     startup: AppShellStartup,
     session_hub: gpui::Entity<SessionHub>,
@@ -96,11 +103,14 @@ pub struct DesktopController {
     windows: HashMap<WorkspaceId, WorkspaceWindow>,
     pending_tab_moves: HashMap<WorkspaceId, MoveTabTreeRequest>,
     tab_drag: TabDragCoordinator,
-    settings_owner_workspace_id: Option<WorkspaceId>,
+    /// Workspaces whose settings tab is open, oldest first. The last entry owns
+    /// the process-wide settings preview.
+    settings_owners: Vec<WorkspaceId>,
     tray: Option<SystemTray>,
     screen_locked: bool,
     most_recent_workspace_id: Option<WorkspaceId>,
     recent_activations: RecentActivationCache,
+    recent_connections: nyaterm_core::activation::RecentConnectionRequests,
     closing_workspaces: HashSet<WorkspaceId>,
     process_quitting: bool,
     pending_bootstrap: Option<StoreTask<BootstrapSnapshot>>,
@@ -122,6 +132,7 @@ impl DesktopController {
             .shared_store_runtime()
             .map_or(0, |store| store.sync_mutation_generation());
         Self {
+            ai_runtime: crate::ai_runtime::AiRuntime::new(),
             native_menu: Default::default(),
             plugin_process: cx
                 .new(|cx| crate::features::plugins::PluginProcess::new(runtime.clone(), cx)),
@@ -136,10 +147,11 @@ impl DesktopController {
             windows: HashMap::new(),
             pending_tab_moves: HashMap::new(),
             tab_drag: TabDragCoordinator::default(),
-            settings_owner_workspace_id: None,
+            settings_owners: Vec::new(),
             tray: None,
             screen_locked: false,
             recent_activations: RecentActivationCache::default(),
+            recent_connections: Default::default(),
             closing_workspaces: HashSet::new(),
             process_quitting: false,
             pending_bootstrap,
@@ -158,17 +170,9 @@ impl DesktopController {
         activation_rx: ActivationReceiver,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        let mut ids = self.startup.restored_workspace_ids();
-        if let Some(recent) = self.most_recent_workspace_id
-            && let Some(index) = ids.iter().position(|id| *id == recent)
-        {
-            ids.swap(0, index);
-        }
-        for workspace_id in ids {
-            let startup = self.startup.for_workspace(workspace_id);
-            self.open_workspace_with_startup(startup, None, false, None, cx)?;
-        }
-        let _ = self.activate_and_deliver(self.most_recent_workspace_id, initial_activation, cx);
+        self.recent_activations
+            .remember(initial_activation.request_id);
+        self.open_startup_workspaces(initial_activation.parse(), cx)?;
         self.launch_initial_bootstrap(cx);
         if let Some(recent) = self.most_recent_workspace_id
             && let Some(entry) = self.windows.get(&recent)
@@ -198,6 +202,49 @@ impl DesktopController {
         Ok(())
     }
 
+    fn open_startup_workspaces(
+        &mut self,
+        mut initial_activation: ParsedActivationRequest,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        if initial_activation.has_conflicting_window_options() {
+            return Err(ActivationParseError::ConflictingWindowOptions.into());
+        }
+        let new_window = initial_activation.open_behavior == ActivationOpenBehavior::NewWindow
+            && self.startup.recovery.is_none()
+            && !self.startup.saved_workspace_ids().is_empty();
+        let mut ids = self.startup.restored_workspace_ids();
+        if let Some(recent) = self.most_recent_workspace_id
+            && let Some(index) = ids.iter().position(|id| *id == recent)
+        {
+            ids.swap(0, index);
+        }
+        for workspace_id in ids {
+            let startup = self.startup.for_workspace(workspace_id);
+            self.open_workspace_with_startup(startup, None, false, None, cx)?;
+        }
+        self.deduplicate_connections(&mut initial_activation);
+        if new_window {
+            self.open_workspace(
+                OpenWorkspaceRequest {
+                    activation: Some(initial_activation),
+                    ..Default::default()
+                },
+                cx,
+            )?;
+        } else {
+            let _ =
+                self.activate_and_deliver(self.most_recent_workspace_id, initial_activation, cx);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn sync_operations(
+        &self,
+    ) -> crate::features::sync::operation::CloudSyncOperationRegistry {
+        self.auto_sync.operations.clone()
+    }
+
     pub(crate) fn update_store(&self) -> gpui::Entity<UpdateStore> {
         self.update_store.clone()
     }
@@ -214,6 +261,7 @@ impl DesktopController {
             }
         })
     }
+    #[cfg(test)]
     pub(crate) fn restart_plugins(&mut self, cx: &mut gpui::App) {
         let runtime = self.runtime.clone();
         self.plugin_process

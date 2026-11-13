@@ -1,12 +1,10 @@
-use rust_i18n::t;
-
-use gpui::Context;
-use nyaterm_store::StoreDomain;
-use nyaterm_transport::SftpDuplicatePolicy;
-
 use crate::features::NyaTermApp;
 use crate::features::app_state::SettingsDraftSnapshot;
 use crate::models::TranslationSecretDraft;
+use gpui::Context;
+use nyaterm_files::sftp_transfer_types::SftpDuplicatePolicy;
+use nyaterm_store::StoreDomain;
+use rust_i18n::t;
 
 impl NyaTermApp {
     pub(in crate::features) fn begin_settings_draft(&mut self, cx: &mut Context<Self>) {
@@ -245,6 +243,18 @@ impl NyaTermApp {
         close_after_apply: bool,
         cx: &mut Context<Self>,
     ) {
+        // Theme saves commit independently before resuming this intent. Reject an
+        // invalid ordinary draft before starting that flow, but allow theme-only saves.
+        if self.settings_draft_dirty()
+            && let Some(error) = self.pending_settings_validation_error()
+        {
+            self.settings.update_store_status(error.clone(), false);
+            self.shell
+                .set_status(t!("settings.applyBlocked", detail = error));
+            cx.notify();
+            self.request_settings_panel_refresh(cx);
+            return;
+        }
         if self.settings.theme_designer().dirty() {
             self.theme_designer_action(
                 crate::features::settings::theme_designer::ThemeIntent::Apply(close_after_apply),
@@ -259,24 +269,16 @@ impl NyaTermApp {
             self.request_settings_panel_refresh(cx);
             return;
         }
-        if let Some(error) = self.pending_settings_validation_error() {
-            self.settings.update_store_status(error.clone(), false);
-            self.shell
-                .set_status(t!("settings.applyBlocked", detail = error));
-            cx.notify();
-            self.request_settings_panel_refresh(cx);
-            return;
-        }
-
         self.hide_ai_provider_secret(cx);
         self.ai.invalidate_provider_jobs();
         let settings = self.settings.summary().clone();
-        let base_settings = self
+        let mut base_settings = self
             .shell
             .settings_draft_snapshot()
             .expect("settings draft checked above")
             .settings
             .clone();
+        crate::models::ActivityBarLayoutState::complete_settings_layout(&mut base_settings);
         let base = self
             .shell
             .settings_draft_snapshot()
@@ -331,10 +333,31 @@ impl NyaTermApp {
         } else {
             Some(Some(master_password.draft.to_string()))
         };
+        let password_rotation =
+            (crate::features::sync::effective_protocol_version(&base.cloud_sync_settings) == 4
+                && base.settings.has_master_password)
+                .then(|| {
+                    master_password_update
+                        .as_ref()
+                        .and_then(|value| value.as_ref())
+                        .cloned()
+                })
+                .flatten()
+                .map(nyaterm_core::SecretString::from);
+        let sync_configuration_changed = cloud_changed || master_password_update.is_some();
+        if password_rotation.is_some() && cloud_changed {
+            let message = t!("settings.syncV3RotateSeparately").to_string();
+            self.settings.update_store_status(message.clone(), false);
+            self.shell.set_status(message);
+            self.request_settings_panel_refresh(cx);
+            cx.notify();
+            return;
+        }
         self.settings
             .update_store_status(t!("settings.applying").to_string(), false);
-        self.submit_store_request(
+        self.submit_store_request_with_password_rotation(
             0,
+            password_rotation,
             nyaterm_store::store_mutation(StoreDomain::Settings, move |store| {
                 let conflict = || {
                     nyaterm_store::StorageError::InvalidData(
@@ -356,6 +379,7 @@ impl NyaTermApp {
                     shared_settings.ui_right_panel_collapsed =
                         persisted_settings.ui_right_panel_collapsed;
                     let mut persisted = persisted_settings;
+                    crate::models::ActivityBarLayoutState::complete_settings_layout(&mut persisted);
                     // These fields are workspace-local projections, not shared settings.
                     persisted.ui_left_panel_width = base_settings.ui_left_panel_width;
                     persisted.ui_right_panel_width = base_settings.ui_right_panel_width;
@@ -464,6 +488,7 @@ impl NyaTermApp {
                     saved_keyword_highlights,
                     saved_translation_settings,
                     saved_cloud_sync_settings,
+                    store.load_cloud_sync_state()?,
                     saved_ai_settings,
                 ))
             }),
@@ -473,15 +498,25 @@ impl NyaTermApp {
                     saved_keyword_highlights,
                     saved_translation_settings,
                     saved_cloud_sync_settings,
+                    saved_cloud_sync_state,
                     saved_ai_settings,
                 )) => {
                     this.apply_gpui_settings(saved_settings.clone(), cx);
                     this.publish_shared_settings(saved_settings, cx);
+                    if sync_configuration_changed
+                        && let Some(controller) = this.desktop_controller.clone()
+                    {
+                        cx.defer(move |cx| {
+                            let _ = controller.update(cx, |controller, _| {
+                                controller.cloud_sync_settings_changed();
+                            });
+                        });
+                    }
                     this.request_shared_state_refresh(crate::app_shell::SharedStateDomain::All, cx);
                     this.settings.rebase_master_password();
                     this.ai.replace_settings_config(saved_ai_settings, true);
                     this.cloud_sync
-                        .replace_settings(saved_cloud_sync_settings, Default::default());
+                        .replace_loaded(saved_cloud_sync_settings, saved_cloud_sync_state);
                     this.translation.replace_settings(
                         saved_translation_settings,
                         TranslationSecretDraft::default(),
@@ -645,6 +680,7 @@ impl NyaTermApp {
 
     fn finish_settings_page(&mut self, cx: &mut Context<Self>) {
         let browser_was_visible = self.transfer_browser_is_visible();
+        self.collapse_open_search_engine(cx);
         self.hide_secret_inputs(cx);
         self.settings.theme_designer_mut().reset();
         self.forget_text_inputs("theme.designer.");
@@ -656,9 +692,7 @@ impl NyaTermApp {
         self.forget_text_inputs("ai.settings.action.");
         self.forget_text_inputs("ai.settings.manual-model.");
         self.forget_text_inputs("keyword.highlight.");
-        if self.shell.finish_settings_navigation() {
-            self.persist_ui_layout();
-        }
+        self.close_settings_workspace_tab(cx);
         self.transfer_browser_visibility_changed(browser_was_visible, cx);
         self.shell
             .set_status(t!("settings.settingsClosed").to_string());
@@ -685,13 +719,12 @@ fn drive_validation_key(
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, TestAppContext};
-    use nyaterm_core::{AppRuntime, RuntimeMode, uuid};
-
     use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
     use crate::features::NyaTermApp;
     use crate::features::settings::SettingsSaveKind;
     use crate::models::HeaderStatusMode;
+    use gpui::{AppContext as _, TestAppContext};
+    use nyaterm_core::{AppRuntime, RuntimeMode, uuid};
 
     /// A real store runtime, because these tests are about what reaches disk.
     fn app(cx: &mut TestAppContext) -> gpui::Entity<NyaTermApp> {
@@ -716,6 +749,221 @@ mod tests {
             overlays: cx.new(|_| OverlayStore::default()),
         };
         cx.new(|cx| NyaTermApp::new(runtime, stores, cx))
+    }
+
+    #[test]
+    fn command_output_highlighting_draft_cancel_and_apply_preserve_committed_preferences() {
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx);
+        let load = |cx: &mut TestAppContext| {
+            app.update(cx, |app, _| {
+                app.store_blocking_client()
+                    .request_fn(nyaterm_store::StoreDomain::Settings, |store| {
+                        store.load_app_settings_summary()
+                    })
+                    .unwrap()
+                    .ui_highlight_line_roles
+            })
+        };
+        app.update(&mut cx, |app, cx| {
+            let mut keywords = app.settings.keyword_config().clone();
+            keywords.enabled = true;
+            let keywords = app
+                .store_blocking_client()
+                .request_fn(nyaterm_store::StoreDomain::Settings, move |store| {
+                    store.save_keyword_highlights(&keywords)
+                })
+                .unwrap();
+            app.settings.replace_keyword_config(keywords);
+            assert!(app.settings.summary().ui_highlight_line_roles);
+            app.begin_settings_draft(cx);
+            app.toggle_line_role_highlights(cx);
+            assert!(!app.settings.summary().ui_highlight_line_roles);
+            assert!(app.settings_draft_dirty());
+            app.cancel_settings(cx);
+            assert!(app.settings.summary().ui_highlight_line_roles);
+        });
+        assert!(load(&mut cx));
+        for enabled in [false, true, false] {
+            app.update(&mut cx, |app, cx| {
+                app.begin_settings_draft(cx);
+                app.toggle_line_role_highlights(cx);
+                assert_eq!(app.settings.summary().ui_highlight_line_roles, enabled);
+                assert!(app.settings_draft_dirty());
+            });
+            assert_eq!(load(&mut cx), !enabled);
+            app.update(&mut cx, |app, cx| app.apply_settings_draft(false, cx));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                cx.run_until_parked();
+                if app.read_with(&cx, |app, _| !app.settings_draft_dirty()) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "command-output highlighting save did not finish"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            assert_eq!(load(&mut cx), enabled);
+            app.update(&mut cx, |app, _| {
+                assert_eq!(app.settings.summary().ui_highlight_line_roles, enabled);
+                assert!(!app.settings_draft_dirty());
+            });
+        }
+    }
+
+    #[test]
+    fn terminal_wrapping_draft_cancel_and_save_preserve_committed_preferences() {
+        use nyaterm_core::models::settings::TerminalWrapMode;
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx);
+        app.update(&mut cx, |app, cx| {
+            app.begin_settings_draft(cx);
+            app.set_terminal_wrap_mode(TerminalWrapMode::None, cx);
+            app.toggle_terminal_wrap_markers(cx);
+            assert!(app.settings_draft_dirty());
+            app.cancel_settings(cx);
+            assert_eq!(
+                app.settings.summary().terminal_wrap_mode,
+                TerminalWrapMode::Character
+            );
+            assert!(!app.settings.summary().terminal_show_wrap_markers);
+            app.begin_settings_draft(cx);
+            app.set_terminal_wrap_mode(TerminalWrapMode::None, cx);
+            app.toggle_terminal_wrap_markers(cx);
+        });
+        let before_save = app.update(&mut cx, |app, _| {
+            app.store_blocking_client()
+                .request_fn(nyaterm_store::StoreDomain::Settings, |store| {
+                    store.load_app_settings_summary()
+                })
+                .unwrap()
+        });
+        assert_eq!(before_save.terminal_wrap_mode, TerminalWrapMode::Character);
+        assert!(!before_save.terminal_show_wrap_markers);
+        app.update(&mut cx, |app, cx| app.apply_settings_draft(false, cx));
+        cx.run_until_parked();
+        let saved = app.update(&mut cx, |app, _| {
+            app.store_blocking_client()
+                .request_fn(nyaterm_store::StoreDomain::Settings, |store| {
+                    store.load_app_settings_summary()
+                })
+                .unwrap()
+        });
+        assert_eq!(saved.terminal_wrap_mode, TerminalWrapMode::None);
+        assert!(saved.terminal_show_wrap_markers);
+    }
+
+    #[test]
+    fn provider_draft_cancel_preserves_receipt_and_save_refreshes_it_before_another_sync() {
+        use nyaterm_core::{CloudSyncSettings, CloudSyncState};
+        use nyaterm_store::StoreDomain;
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx);
+        app.update(&mut cx, |app, cx| {
+            let (settings, state) = app
+                .store_blocking_client()
+                .request_fn(StoreDomain::CloudSync, |store| {
+                    let settings = store.save_cloud_sync_settings(CloudSyncSettings {
+                        provider: "webdav".into(),
+                        protocol_version: 4,
+                        ..Default::default()
+                    })?;
+                    let state = CloudSyncState {
+                        device_id: "stable".into(),
+                        last_synced_payload_hash: Some("previous-provider".into()),
+                        last_synced_content_hash: Some("previous-content".into()),
+                        ..Default::default()
+                    };
+                    store.save_cloud_sync_state(&state)?;
+                    Ok((settings, state))
+                })
+                .unwrap();
+            app.cloud_sync.replace_loaded(settings, state.clone());
+            app.begin_settings_draft(cx);
+            app.cloud_sync.select_provider("github_gist");
+            assert_eq!(app.cloud_sync.state(), &state);
+            app.cancel_settings(cx);
+            assert_eq!(app.cloud_sync.settings().provider, "webdav");
+            assert_eq!(app.cloud_sync.state(), &state);
+        });
+        for (provider, protocol) in [("github_gist", 3), ("webdav", 4)] {
+            app.update(&mut cx, |app, cx| {
+                app.begin_settings_draft(cx);
+                app.cloud_sync.select_provider(provider);
+                app.apply_settings_draft(false, cx);
+            });
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                cx.run_until_parked();
+                if app.read_with(&cx, |app, _| {
+                    app.cloud_sync.state().last_synced_payload_hash.is_none()
+                        && !app.settings_draft_dirty()
+                }) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "provider save did not finish"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            app.update(&mut cx, |app, _| {
+                assert_eq!(app.cloud_sync.settings().provider, provider);
+                assert_eq!(app.cloud_sync.settings().protocol_version, 4);
+                assert_eq!(
+                    crate::features::sync::effective_protocol_version(app.cloud_sync.settings()),
+                    protocol
+                );
+                assert_eq!(app.cloud_sync.state().device_id, "stable");
+                assert!(app.cloud_sync.state().last_synced_payload_hash.is_none());
+                assert!(app.cloud_sync.state().last_synced_content_hash.is_none());
+                let state = app
+                    .store_blocking_client()
+                    .request_fn(StoreDomain::CloudSync, |store| {
+                        store.load_cloud_sync_state()
+                    })
+                    .unwrap();
+                assert_eq!(&state, app.cloud_sync.state());
+            });
+        }
+    }
+
+    #[test]
+    fn row_stripes_draft_cancel_and_apply_preserve_committed_preferences() {
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx);
+        app.update(&mut cx, |app, cx| {
+            app.begin_settings_draft(cx);
+            app.toggle_terminal_zebra_stripes_by_row(cx);
+            app.toggle_terminal_zebra_stripes(cx);
+            assert!(app.settings.summary().terminal_zebra_stripes_by_row);
+            assert!(!app.settings.summary().terminal_zebra_stripes_enabled);
+            assert!(app.settings_draft_dirty());
+            app.cancel_settings(cx);
+            assert!(!app.settings.summary().terminal_zebra_stripes_by_row);
+            assert!(app.settings.summary().terminal_zebra_stripes_enabled);
+            app.begin_settings_draft(cx);
+            app.toggle_terminal_zebra_stripes_by_row(cx);
+        });
+        let load = |cx: &mut TestAppContext| {
+            app.update(cx, |app, _| {
+                app.store_blocking_client()
+                    .request_fn(nyaterm_store::StoreDomain::Settings, |store| {
+                        store.load_app_settings_summary()
+                    })
+                    .unwrap()
+            })
+        };
+        assert!(!load(&mut cx).terminal_zebra_stripes_by_row);
+        app.update(&mut cx, |app, cx| app.apply_settings_draft(false, cx));
+        cx.run_until_parked();
+        assert!(load(&mut cx).terminal_zebra_stripes_by_row);
     }
 
     #[test]
@@ -1003,6 +1251,39 @@ mod tests {
         );
     }
 
+    /// Editing only the word separators must still be written when the draft is applied.
+    ///
+    /// The box used to update memory and nothing else, so no persistence domain was
+    /// marked dirty and applying the draft saved no interaction settings at all. The
+    /// assertion is on disk for the same reason as the header-status test above.
+    #[test]
+    fn applying_a_draft_persists_word_separators() {
+        const SEPARATORS: &str = " ()[]{}\"':=,;|&<>";
+        let mut cx = TestAppContext::single();
+        let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx);
+        let stored = |app: &gpui::Entity<NyaTermApp>, cx: &mut TestAppContext| {
+            cx.update_entity(app, |app, _| {
+                app.store_blocking_client()
+                    .request_fn(nyaterm_store::StoreDomain::Settings, |store| {
+                        store.load_app_settings_summary()
+                    })
+            })
+            .expect("load stored settings")
+            .interaction_word_separators
+        };
+        assert_ne!(stored(&app, &mut cx), SEPARATORS, "fixture baseline");
+
+        cx.update_entity(&app, |app, cx| {
+            app.begin_settings_draft(cx);
+            app.apply_interaction_word_separators(SEPARATORS.to_string(), cx);
+            app.apply_settings_draft(false, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(stored(&app, &mut cx), SEPARATORS);
+    }
+
     #[test]
     fn canceling_a_draft_restores_ui_typography_source() {
         let mut cx = TestAppContext::single();
@@ -1203,6 +1484,64 @@ mod tests {
             ("host".to_string(), true),
             "apply must write the header back on, not leave it hidden on disk"
         );
+    }
+
+    #[test]
+    fn completing_host_tool_slots_does_not_mask_concurrent_visibility_or_placement_changes() {
+        for move_left in [false, true] {
+            let mut cx = TestAppContext::single();
+            let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+            let app = app(&mut cx);
+            let (store, mut external) = cx.update_entity(&app, |app, cx| {
+                app.begin_settings_draft(cx);
+                app.apply_interaction_word_separators("fixture changed separators".into(), cx);
+                (
+                    app.store_blocking_client().clone(),
+                    app.settings.summary().clone(),
+                )
+            });
+            if move_left {
+                external
+                    .ui_activity_bar_right_top
+                    .retain(|id| id != "portsManager");
+                external
+                    .ui_activity_bar_left_top
+                    .push("portsManager".into());
+            } else {
+                external
+                    .ui_activity_bar_hidden_items
+                    .retain(|id| id != "portsManager");
+            }
+            let original_separators = store
+                .request_fn(nyaterm_store::StoreDomain::Settings, |store| {
+                    store.load_app_settings_summary()
+                })
+                .unwrap()
+                .interaction_word_separators;
+            let expected = external.clone();
+            store
+                .request_fn(nyaterm_store::StoreDomain::Settings, move |store| {
+                    store.save_ui_layout_settings(&external)
+                })
+                .unwrap();
+            cx.update_entity(&app, |app, cx| app.apply_settings_draft(false, cx));
+            cx.run_until_parked();
+            let saved = store
+                .request_fn(nyaterm_store::StoreDomain::Settings, |store| {
+                    store.load_app_settings_summary()
+                })
+                .unwrap();
+            assert_eq!(saved.interaction_word_separators, original_separators);
+            assert_eq!(
+                saved.ui_activity_bar_left_top,
+                expected.ui_activity_bar_left_top
+            );
+            assert_eq!(
+                saved.ui_activity_bar_hidden_items,
+                expected.ui_activity_bar_hidden_items
+            );
+            cx.update_entity(&app, |app, _| assert!(app.shell.has_settings_draft()));
+        }
     }
 
     #[test]
@@ -1555,6 +1894,267 @@ mod tests {
         cx.run_until_parked();
     }
 
+    fn stage_invalid_cloud_draft(app: &mut NyaTermApp, cx: &mut gpui::Context<NyaTermApp>) {
+        app.settings
+            .toggle_master_password(false)
+            .expect("stage master password");
+        assert!(
+            app.settings
+                .edit_master_password_draft("fixture password".into())
+        );
+        app.cloud_sync.toggle_enabled();
+        app.apply_cloud_sync_input(
+            crate::models::CloudSyncInputField::WebdavEndpoint,
+            "   ".into(),
+            cx,
+        );
+        assert!(app.settings_draft_dirty());
+        assert!(app.pending_settings_validation_error().is_some());
+    }
+
+    fn stored_settings_and_cloud(
+        app: &gpui::Entity<NyaTermApp>,
+        cx: &mut TestAppContext,
+    ) -> (
+        nyaterm_core::AppSettingsSummary,
+        nyaterm_core::CloudSyncSettings,
+    ) {
+        app.update(cx, |app, _| {
+            app.store_blocking_client()
+                .request_fn(nyaterm_store::StoreDomain::Settings, |store| {
+                    Ok((
+                        store.load_app_settings_summary()?,
+                        store.load_cloud_sync_settings()?,
+                    ))
+                })
+                .expect("load saved settings and cloud configuration")
+        })
+    }
+
+    fn finish_settings_apply(app: &gpui::Entity<NyaTermApp>, cx: &mut TestAppContext) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            cx.run_until_parked();
+            if app.read_with(cx, |app, _| {
+                app.settings.store_status().message == rust_i18n::t!("settings.applied")
+            }) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "settings apply did not complete"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn invalid_settings_actions_preserve_both_drafts_without_starting_a_theme_save() {
+        use crate::features::settings::theme_designer::ThemeIntent;
+
+        for close in [false, true] {
+            for edit_theme in [false, true] {
+                let mut cx = TestAppContext::single();
+                let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+                let app = app(&mut cx);
+                app.update(&mut cx, |app, cx| {
+                    app.open_page(crate::models::NavItem::Settings, cx);
+                    if edit_theme {
+                        app.theme_designer_action(ThemeIntent::Copy("dracula".into()), cx);
+                        assert!(app.save_theme_designer(None, cx));
+                    }
+                });
+                finish_theme_jobs(&app, &mut cx);
+                let (original_settings, original_cloud) = stored_settings_and_cloud(&app, &mut cx);
+                let (theme_draft, error) = app.update(&mut cx, |app, cx| {
+                    if edit_theme {
+                        app.edit_theme_designer("primary", "#123456".into(), cx);
+                    }
+                    stage_invalid_cloud_draft(app, cx);
+                    let theme_draft = app.settings.theme_designer().draft.clone();
+                    let error = app.pending_settings_validation_error().unwrap();
+                    if close {
+                        app.confirm_settings_draft(cx);
+                    } else {
+                        app.apply_settings_draft(false, cx);
+                    }
+                    assert_eq!(app.settings.store_status().message, error);
+                    assert!(app.shell.status().contains(&error));
+                    assert!(app.settings.theme_designer().pending.is_none());
+                    assert!(!app.settings.theme_designer().submitting);
+                    (theme_draft, error)
+                });
+                cx.run_until_parked();
+                let (saved_settings, saved_cloud) = stored_settings_and_cloud(&app, &mut cx);
+                assert_eq!(saved_settings, original_settings);
+                assert!(
+                    saved_cloud == original_cloud,
+                    "cloud configuration must not be saved"
+                );
+                app.read_with(&cx, |app, _| {
+                    assert!(app.settings_tab_is_open());
+                    assert!(app.shell.has_settings_draft());
+                    assert!(app.settings_draft_dirty());
+                    assert_eq!(app.cloud_sync.settings().webdav.endpoint, "   ");
+                    assert!(app.settings.master_password().enabled);
+                    assert!(!app.settings.master_password().draft.is_empty());
+                    assert!(app.settings.theme_designer().draft == theme_draft);
+                    assert_eq!(app.settings.theme_designer().dirty(), edit_theme);
+                    assert_eq!(app.pending_settings_validation_error(), Some(error));
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn corrected_cloud_drafts_apply_and_confirm_successfully() {
+        for close in [false, true] {
+            let mut cx = TestAppContext::single();
+            let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+            let app = app(&mut cx);
+            app.update(&mut cx, |app, cx| {
+                app.open_page(crate::models::NavItem::Settings, cx);
+                stage_invalid_cloud_draft(app, cx);
+                app.confirm_settings_draft(cx);
+                assert!(app.settings_tab_is_open());
+                app.apply_cloud_sync_input(
+                    crate::models::CloudSyncInputField::WebdavEndpoint,
+                    "https://dav.example.com".into(),
+                    cx,
+                );
+                assert!(app.pending_settings_validation_error().is_none());
+                if close {
+                    app.confirm_settings_draft(cx);
+                } else {
+                    app.apply_settings_draft(false, cx);
+                }
+            });
+            finish_settings_apply(&app, &mut cx);
+            let (saved, cloud) = stored_settings_and_cloud(&app, &mut cx);
+            assert!(saved.has_master_password);
+            assert!(cloud.enabled);
+            assert_eq!(cloud.webdav.endpoint, "https://dav.example.com");
+            app.read_with(&cx, |app, _| {
+                assert_eq!(app.settings_tab_is_open(), !close);
+                assert_eq!(app.shell.has_settings_draft(), !close);
+                assert!(!app.settings_draft_dirty());
+            });
+        }
+    }
+
+    #[test]
+    fn theme_save_resumes_valid_apply_and_confirm_intents() {
+        use crate::features::settings::theme_designer::ThemeIntent;
+
+        for close in [false, true] {
+            let mut cx = TestAppContext::single();
+            let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+            let app = app(&mut cx);
+            app.update(&mut cx, |app, cx| {
+                app.open_page(crate::models::NavItem::Settings, cx);
+                app.set_header_status_mode(HeaderStatusMode::Host, cx);
+                app.theme_designer_action(ThemeIntent::Copy("dracula".into()), cx);
+                app.edit_theme_designer("primary", "#123456".into(), cx);
+                if close {
+                    app.confirm_settings_draft(cx);
+                } else {
+                    app.apply_settings_draft(false, cx);
+                }
+                assert_eq!(
+                    app.settings.theme_designer().pending,
+                    Some(ThemeIntent::Apply(close))
+                );
+                app.resolve_theme_designer_pending(Some(true), cx);
+            });
+            finish_theme_jobs(&app, &mut cx);
+            finish_settings_apply(&app, &mut cx);
+            let (saved, _) = stored_settings_and_cloud(&app, &mut cx);
+            assert_eq!(saved.ui_header_status_mode, "host");
+            assert_eq!(saved.custom_themes.available()[0].colors.primary, "#123456");
+            app.read_with(&cx, |app, _| {
+                assert_eq!(app.settings_tab_is_open(), !close);
+                assert!(!app.settings_draft_dirty());
+                assert!(!app.settings.theme_designer().dirty());
+                assert!(app.settings.theme_designer().pending.is_none());
+                assert!(!app.settings.theme_designer().submitting);
+            });
+        }
+    }
+
+    #[test]
+    fn theme_only_actions_do_not_validate_unchanged_ordinary_settings() {
+        use crate::features::settings::theme_designer::ThemeIntent;
+
+        for invalid_baseline in [false, true] {
+            for close in [false, true] {
+                let mut cx = TestAppContext::single();
+                let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+                let app = app(&mut cx);
+                app.update(&mut cx, |app, cx| {
+                    if invalid_baseline {
+                        app.cloud_sync.toggle_enabled();
+                    }
+                    app.open_page(crate::models::NavItem::Settings, cx);
+                    assert!(!app.settings_draft_dirty());
+                    assert_eq!(
+                        app.pending_settings_validation_error().is_some(),
+                        invalid_baseline
+                    );
+                    app.theme_designer_action(ThemeIntent::Copy("dracula".into()), cx);
+                    if close {
+                        app.confirm_settings_draft(cx);
+                    } else {
+                        app.apply_settings_draft(false, cx);
+                    }
+                    assert_eq!(
+                        app.settings.theme_designer().pending,
+                        Some(ThemeIntent::Apply(close))
+                    );
+                    app.resolve_theme_designer_pending(Some(true), cx);
+                });
+                finish_theme_jobs(&app, &mut cx);
+                finish_settings_apply(&app, &mut cx);
+                let (saved, cloud) = stored_settings_and_cloud(&app, &mut cx);
+                assert_eq!(saved.custom_themes.available().len(), 1);
+                assert!(
+                    !cloud.enabled,
+                    "unchanged cloud configuration must not be persisted"
+                );
+                app.read_with(&cx, |app, _| {
+                    assert_eq!(app.settings_tab_is_open(), !close);
+                    assert!(!app.settings.theme_designer().dirty());
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_theme_save_still_succeeds_with_an_invalid_ordinary_draft() {
+        use crate::features::settings::theme_designer::ThemeIntent;
+
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx);
+        let (original, original_cloud) = stored_settings_and_cloud(&app, &mut cx);
+        app.update(&mut cx, |app, cx| {
+            app.open_page(crate::models::NavItem::Settings, cx);
+            stage_invalid_cloud_draft(app, cx);
+            app.theme_designer_action(ThemeIntent::Copy("dracula".into()), cx);
+            assert!(app.save_theme_designer(None, cx));
+        });
+        finish_theme_jobs(&app, &mut cx);
+        let (saved, cloud) = stored_settings_and_cloud(&app, &mut cx);
+        assert_eq!(saved.custom_themes.available().len(), 1);
+        assert_eq!(saved.has_master_password, original.has_master_password);
+        assert!(cloud == original_cloud);
+        app.read_with(&cx, |app, _| {
+            assert!(app.settings_tab_is_open());
+            assert!(app.settings_draft_dirty());
+            assert!(app.pending_settings_validation_error().is_some());
+            assert!(!app.settings.theme_designer().dirty());
+        });
+    }
+
     #[test]
     fn theme_browsing_is_local_and_saved_themes_survive_settings_cancel() {
         use crate::features::settings::theme_designer::ThemeIntent;
@@ -1797,6 +2397,86 @@ mod tests {
             assert_eq!(app.settings.summary().terminal_font_size, 28);
             app.cancel_settings(cx);
             assert!(app.settings.summary().custom_themes.available().is_empty());
+        });
+    }
+
+    /// Write settings straight into the store, the way a cloud pull does.
+    fn pull_terminal_scrollback_into_store(
+        app: &gpui::Entity<NyaTermApp>,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update_entity(app, |app, _| {
+            app.store_blocking_client()
+                .request_fn(nyaterm_store::StoreDomain::Settings, |store| {
+                    let mut settings = store.load_app_settings_summary()?;
+                    settings.terminal_scrollback_lines = 4242;
+                    store.save_terminal_settings(&settings)
+                })
+                .unwrap();
+        });
+    }
+
+    /// Store replies are delivered from another thread, so `run_until_parked`
+    /// alone does not wait for them (`applying_a_draft_persists_the_header_status_mode`).
+    fn wait_for_the_pulled_settings(app: &gpui::Entity<NyaTermApp>, cx: &mut TestAppContext) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            cx.run_until_parked();
+            if cx.update_entity(app, |app, _| {
+                app.settings.summary().terminal_scrollback_lines == 4242
+            }) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the store refresh never reached the in-memory settings"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn store_refresh_after_a_pull_rebases_an_untouched_settings_draft() {
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx);
+        cx.update_entity(&app, |app, cx| {
+            app.begin_settings_draft(cx);
+            assert!(!app.settings_draft_dirty());
+        });
+        pull_terminal_scrollback_into_store(&app, &mut cx);
+        cx.update_entity(&app, |app, cx| {
+            app.refresh_store_from_runtime_and_sync_theme(cx)
+        });
+        wait_for_the_pulled_settings(&app, &mut cx);
+        cx.update_entity(&app, |app, _| {
+            assert!(
+                !app.settings_draft_dirty(),
+                "a pull must not turn an untouched draft into unsaved edits"
+            );
+        });
+    }
+
+    #[test]
+    fn store_refresh_keeps_a_draft_the_user_actually_edited() {
+        let mut cx = TestAppContext::single();
+        let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx);
+        cx.update_entity(&app, |app, cx| {
+            app.begin_settings_draft(cx);
+            app.set_transfer_internal_editor_font_size(19, cx);
+            assert!(app.settings_draft_dirty());
+        });
+        pull_terminal_scrollback_into_store(&app, &mut cx);
+        cx.update_entity(&app, |app, cx| {
+            app.refresh_store_from_runtime_and_sync_theme(cx)
+        });
+        wait_for_the_pulled_settings(&app, &mut cx);
+        cx.update_entity(&app, |app, _| {
+            assert!(
+                app.settings_draft_dirty(),
+                "refreshing must not silently drop the user's edit"
+            );
         });
     }
 }

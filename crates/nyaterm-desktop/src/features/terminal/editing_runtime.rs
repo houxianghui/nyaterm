@@ -17,16 +17,40 @@ use super::editing_state::SnapshotEvidence;
 use crate::features::NyaTermApp;
 
 impl NyaTermApp {
-    /// This runs once after a successful logical write, regardless of suggestions.
+    /// Test adapter for callers that do not own a transport write.
+    #[cfg(test)]
     pub(in crate::features) fn note_shell_editing_input(
         &mut self,
         bytes: &[u8],
+        cx: &mut Context<Self>,
+    ) {
+        let candidate = self.prepare_command_navigation_input(bytes);
+        self.note_shell_editing_input_with_navigation(bytes, candidate, cx);
+    }
+
+    pub(in crate::features) fn note_shell_editing_input_with_navigation(
+        &mut self,
+        bytes: &[u8],
+        candidate: Option<nyaterm_terminal::command_navigation::CommandSubmissionEvidence>,
         cx: &mut Context<Self>,
     ) {
         let Some(id) = self.session.active_id_owned() else {
             return;
         };
         self.terminal.editing.activate(&id);
+        self.terminal.editing.state_mut().suggestion_fill = None;
+        let fallback = candidate.as_ref().and_then(|evidence| {
+            self.terminal
+                .editing
+                .state_mut()
+                .command_navigation
+                .accept_submission(evidence)
+        });
+        self.terminal
+            .view
+            .frame_pipeline
+            .note_command_input(id.clone(), fallback);
+        self.terminal.view.frame_pipeline.arm_event_wakes();
         if self.active_terminal_uses_alternate_screen()
             || self.is_credential_prompt_input_mode()
             || self.terminal.assist.credential_suggestions.is_some()
@@ -44,29 +68,6 @@ impl NyaTermApp {
         }
         let submitted_for_navigation =
             get_tracked_submission_command(self.terminal.editing.predicted_input());
-        let interactive = self
-            .terminal
-            .editing
-            .state_mut()
-            .command_navigation_interactive;
-        let eligible = text == "\r"
-            && !submitted_for_navigation.is_empty()
-            && !interactive
-            && !self.mcp.capabilities.terminal_executions.capturing(&id)
-            && self
-                .session
-                .metadata(&id)
-                .is_some_and(|metadata| match &metadata.launch_config {
-                    crate::models::SessionLaunchConfig::Local(_) => true,
-                    crate::models::SessionLaunchConfig::Ssh(config) => {
-                        !config.effective_terminal_shell_integration()
-                    }
-                    _ => false,
-                });
-        self.terminal
-            .view
-            .frame_pipeline
-            .note_command_input(id.clone(), eligible);
         if text.contains(['\r', '\n']) {
             let state = self.terminal.editing.state_mut();
             state.launched_line_editor = command_starts_line_editor(&submitted_for_navigation);
@@ -74,25 +75,11 @@ impl NyaTermApp {
         } else if matches!(text, "\u{3}" | "\u{4}") {
             self.terminal.editing.state_mut().launched_line_editor = false;
         }
-        if text == "\u{4}"
-            || (text == "\r"
-                && matches!(
-                    submitted_for_navigation.trim(),
-                    "exit" | "quit" | "exit()" | "quit()" | ".exit" | ".quit" | "\\q"
-                ))
-        {
-            self.terminal
-                .editing
-                .state_mut()
-                .command_navigation_interactive = false;
-        } else if text == "\r"
-            && nyaterm_core::command_starts_interactive_input(&submitted_for_navigation)
-        {
-            self.terminal
-                .editing
-                .state_mut()
-                .command_navigation_interactive = true;
-        }
+        self.terminal
+            .editing
+            .state_mut()
+            .command_navigation
+            .note_input(text);
         let was_suppressed = self.terminal.assist.command_suggestions_suppressed;
         if text == "\u{3}" || (was_suppressed && text == "q") {
             self.terminal.assist.command_suggestions_suppressed = false;
@@ -120,6 +107,7 @@ impl NyaTermApp {
         state.selection_origin_version = None;
         state.mapping = None;
         self.schedule_shell_edit_confirmation_timeout(cx);
+        self.reconcile_command_suggestion_availability(cx);
     }
 
     pub(in crate::features) fn schedule_shell_edit_confirmation_timeout(
@@ -130,6 +118,8 @@ impl NyaTermApp {
             return;
         };
         let version = self.terminal.editing.state_mut().model.version;
+        let confirmation_id = self.terminal.editing.allocate_confirmation_id();
+        self.terminal.editing.state_mut().confirmation_id = confirmation_id;
         let task = cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(EDIT_CONFIRMATION_TIMEOUT)
@@ -137,12 +127,17 @@ impl NyaTermApp {
             let _ = this.update(cx, |this, cx| {
                 if let Some(state) = this.terminal.editing.sessions.get_mut(&id)
                     && state.model.version == version
+                    && state.confirmation_id == confirmation_id
                     && state.model.expire(Instant::now())
                 {
+                    let suggestion_expired = state.suggestion_fill.take().is_some();
                     state.mapping = None;
                     state.selection = None;
                     if this.session.active_id() == Some(id.as_str()) {
                         this.dismiss_command_suggestions(cx);
+                        if suggestion_expired {
+                            this.shell.set_status("Suggestion confirmation timed out; inspect the input before executing");
+                        }
                     }
                     cx.notify();
                 }
@@ -161,6 +156,39 @@ impl NyaTermApp {
         if self.session.active_id() != Some(id) {
             return;
         }
+        let before = self.command_suggestion_input_is_confirmed().then(|| {
+            (
+                self.command_suggestion_fill_policy(id),
+                self.terminal.editing.state().unwrap().model.version,
+            )
+        });
+        let filling = self
+            .terminal
+            .editing
+            .state()
+            .is_some_and(|state| state.suggestion_fill.is_some());
+        self.reconcile_shell_editing_snapshot(id, cx);
+        self.reconcile_command_suggestion_availability(cx);
+        let after = self.command_suggestion_input_is_confirmed().then(|| {
+            (
+                self.command_suggestion_fill_policy(id),
+                self.terminal.editing.state().unwrap().model.version,
+            )
+        });
+        if after.is_some()
+            && after != before
+            && !filling
+            && self.command_suggestions_allowed_for_session(id)
+            && !self.terminal.editing.assist_input().value.is_empty()
+        {
+            self.refresh_command_suggestions(cx);
+        }
+    }
+
+    fn reconcile_shell_editing_snapshot(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.session.active_id() != Some(id) {
+            return;
+        }
         self.terminal.editing.activate(id);
         if self.session.is_disconnected(id)
             || self.active_terminal_uses_alternate_screen()
@@ -171,6 +199,11 @@ impl NyaTermApp {
             return;
         }
         let snapshot = self.terminal_snapshot_for_session(Some(id), 0);
+        self.terminal
+            .editing
+            .state_mut()
+            .command_navigation
+            .observe(&snapshot);
         let Some(cursor_row) = snapshot.row(snapshot.cursor.row) else {
             return;
         };
@@ -178,6 +211,7 @@ impl NyaTermApp {
             return;
         };
         let geometry = (snapshot.cols, snapshot.viewport_rows, line_id.epoch);
+        let sync_revision = self.sync_input.revision();
         let shell_session = self.session.metadata(id).is_some_and(|metadata| {
             matches!(
                 metadata.launch_config,
@@ -186,6 +220,7 @@ impl NyaTermApp {
             )
         });
         let state = self.terminal.editing.state_mut();
+        state.cancel_stale_suggestion_fill(Instant::now(), sync_revision);
         if state.awaiting_snapshot {
             return;
         }
@@ -209,6 +244,7 @@ impl NyaTermApp {
         }
         state.observed_anchor = Some(snapshot.shell_input_anchor);
         if state.model.expire(Instant::now()) {
+            state.suggestion_fill = None;
             state.mapping = None;
             state.selection = None;
         }
@@ -263,7 +299,7 @@ impl NyaTermApp {
             });
             let known_prompt = prompt.as_ref().is_some_and(|prefix| {
                 !prefix.trim().is_empty()
-                    && (strip_terminal_command_prompt(prefix).is_empty()
+                    && (strip_terminal_command_prompt(prefix).trim().is_empty()
                         || state.line_editor_prompt.as_ref() == Some(prefix))
             });
             let has_prompt = prompt
@@ -291,6 +327,15 @@ impl NyaTermApp {
             };
             state.model.confirm()
         } else {
+            // An incomplete or different redraw cannot acknowledge this
+            // suggestion. Ordinary typing reconciliation may continue, but the
+            // cancelled request must never be revived by a later matching frame.
+            if state.suggestion_fill.take().is_some() {
+                self.shell.set_status(
+                    "Suggestion echo is not confirmed; inspect the input before executing",
+                );
+                cx.notify();
+            }
             if state.model.phase == EditPhase::Ready {
                 state.invalidate();
             }
@@ -298,6 +343,21 @@ impl NyaTermApp {
         };
         if let Some(target) = queued {
             let _ = self.move_smart_input_cursor(target, cx);
+        }
+        if let Some(execute_requested) = self
+            .terminal
+            .editing
+            .state_mut()
+            .take_confirmed_suggestion_fill(Instant::now(), sync_revision)
+        {
+            // Echo proves the fill only. No current capability proves that the
+            // foreground program would interpret a synthetic Enter as intended.
+            self.shell.set_status(if execute_requested {
+                "Suggestion confirmed; press Enter again to execute"
+            } else {
+                "Suggestion fill confirmed"
+            });
+            cx.notify();
         }
     }
 }
@@ -378,6 +438,7 @@ mod tests {
                         end_side,
                     ),
                     all_buffer: false,
+                    mode: nyaterm_terminal::selection::TerminalSelectionMode::Linear,
                 });
                 app.begin_smart_input_selection();
                 app.commit_smart_input_selection();
@@ -517,6 +578,7 @@ mod tests {
                 anchor: TerminalBufferCellPos::new(0, 3).into(),
                 head: TerminalBufferCellPos::new(0, 6).into(),
                 all_buffer: false,
+                mode: nyaterm_terminal::selection::TerminalSelectionMode::Linear,
             });
             app.begin_smart_input_selection();
             app.commit_smart_input_selection();
@@ -530,7 +592,11 @@ mod tests {
                 app.settings.replace_summary(settings);
                 let version = app.terminal.editing.state().unwrap().model.version;
                 app.replace_and_mark_text_in_range(None, "zhong", None, window, cx);
-                assert_eq!(app.terminal.input.ime_marked_text, "zhong");
+                assert_eq!(app.terminal.input.ime.text(), "zhong");
+                assert_eq!(
+                    app.selected_text_range(false, window, cx).unwrap().range,
+                    5..5
+                );
                 assert_eq!(app.terminal.editing.state().unwrap().model.version, version);
                 let key = gpui::KeyDownEvent {
                     keystroke: gpui::Keystroke {
@@ -543,7 +609,8 @@ mod tests {
                 };
                 assert!(app.terminal_should_defer_key_text_to_input_handler(&key));
                 app.replace_text_in_range(None, "中文", window, cx);
-                assert!(app.terminal.input.ime_marked_text.is_empty());
+                assert!(app.terminal.input.ime.text().is_empty());
+                assert_eq!(app.terminal.input.ime.selection(), 0..0);
                 assert_eq!(app.terminal.editing.predicted_input().value, "a中文ef");
                 assert_eq!(
                     app.terminal.editing.state().unwrap().model.version,

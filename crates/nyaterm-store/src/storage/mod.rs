@@ -1,3 +1,4 @@
+pub mod runtime_auth;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -23,11 +24,15 @@ use nyaterm_core::{
 
 mod ai_history;
 mod app_settings;
+pub use app_settings::WorkspaceStartupRestore;
 mod cloud_sync;
+mod cloud_sync_v4;
 mod command_history;
+mod completion_history;
 mod config_backup;
 mod keyword_highlights;
 mod known_hosts;
+pub mod maintenance;
 mod notes;
 mod portable;
 mod remote_file_backend;
@@ -119,6 +124,10 @@ const IDX_CONNECTIONS_BY_LAST_USED_TABLE: TableDefinition<&str, &str> =
 const IDX_CONNECTIONS_BY_PROTOCOL_TABLE: TableDefinition<&str, &str> =
     TableDefinition::new("idx_connections_by_protocol");
 
+// Older proxy records store a plaintext password. Only this explicit marker
+// selects encrypted decoding; malformed new ciphertext must never fall back.
+const PROXY_SECRET_PREFIX: &str = "nyaterm-proxy-secret-v4:";
+
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("failed to create storage directory {path}: {source}")]
@@ -139,6 +148,8 @@ pub enum StorageError {
     Transaction(#[from] redb::TransactionError),
     #[error("redb commit error: {0}")]
     Commit(#[from] redb::CommitError),
+    #[error("completion history error: {0}")]
+    CompletionHistory(&'static str),
     #[error("JSON serialization error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("portable snapshot error: {0}")]
@@ -190,6 +201,7 @@ pub struct ConnectionStore {
     db: Database,
     db_path: PathBuf,
     portable_key_path: Option<PathBuf>,
+    completion_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -226,8 +238,10 @@ impl ConnectionStore {
             db,
             db_path,
             portable_key_path,
+            completion_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         store.ensure_tables()?;
+        store.initialize_completion_history()?;
         store.ensure_portable_key()?;
         store.migrate_legacy_panel_visibility()?;
         store.migrate_legacy_rdp_known_hosts()?;
@@ -296,6 +310,11 @@ impl ConnectionStore {
 
     pub fn delete_connection_custom_icon(&self, id: &str) -> Result<(), StorageError> {
         let txn = self.db.begin_write()?;
+        cloud_sync_v4::record_remove(
+            &txn,
+            CONNECTIONS_TABLE,
+            &entity_key("connection_custom_icons/", id),
+        )?;
         txn.open_table(CONNECTIONS_TABLE)?
             .remove(entity_key("connection_custom_icons/", id).as_str())?;
         let connections = {
@@ -381,6 +400,24 @@ impl ConnectionStore {
     pub fn list_proxies(&self) -> Result<Vec<ProxyConfig>, StorageError> {
         let mut proxies: Vec<ProxyConfig> =
             self.list_json_by_prefix(PROXIES_TABLE, PROXY_PREFIX)?;
+        let crypto = self.credential_crypto()?;
+        let token = self.load_master_key_token()?;
+        for proxy in &mut proxies {
+            if let Some(ciphertext) = proxy
+                .password
+                .as_deref()
+                .and_then(|value| value.strip_prefix(PROXY_SECRET_PREFIX))
+            {
+                proxy.password = Some(
+                    crypto
+                        .decrypt_secret(
+                            token.as_deref().ok_or(StorageError::MissingMasterKey)?,
+                            ciphertext,
+                        )?
+                        .into(),
+                );
+            }
+        }
         proxies.sort_by(|left, right| {
             left.group_id
                 .cmp(&right.group_id)
@@ -404,9 +441,39 @@ impl ConnectionStore {
     }
 
     pub fn replace_proxies(&self, proxies: &[ProxyConfig]) -> Result<(), StorageError> {
+        let crypto = self.credential_crypto()?;
+        let token = if proxies.iter().any(|proxy| {
+            proxy
+                .password
+                .as_ref()
+                .is_some_and(|password| !password.is_empty())
+        }) {
+            Some(self.get_or_create_master_key_token(&crypto)?)
+        } else {
+            None
+        };
+        let mut encrypted = proxies.to_vec();
+        for proxy in &mut encrypted {
+            if let Some(password) = proxy
+                .password
+                .as_ref()
+                .filter(|password| !password.is_empty())
+            {
+                proxy.password = Some(
+                    format!(
+                        "{PROXY_SECRET_PREFIX}{}",
+                        crypto.encrypt_secret(
+                            token.as_deref().ok_or(StorageError::MissingMasterKey)?,
+                            password.expose_secret()
+                        )?
+                    )
+                    .into(),
+                );
+            }
+        }
         let txn = self.db.begin_write()?;
         clear_prefix_in_txn(&txn, PROXIES_TABLE, PROXY_PREFIX)?;
-        for proxy in proxies {
+        for proxy in &encrypted {
             write_json_in_txn(
                 &txn,
                 PROXIES_TABLE,
@@ -480,9 +547,11 @@ impl ConnectionStore {
             delete_connection_in_txn(&txn, &connection.id)?;
         }
         for id in group_ids {
+            cloud_sync_v4::record_remove(&txn, GROUPS_TABLE, &entity_key(GROUP_PREFIX, &id))?;
             txn.open_table(GROUPS_TABLE)?
                 .remove(entity_key(GROUP_PREFIX, &id).as_str())?;
         }
+        cloud_sync_v4::record_change(&txn)?;
         txn.commit()?;
         Ok(())
     }
@@ -526,6 +595,164 @@ impl ConnectionStore {
         Ok(())
     }
 
+    /// Persist a prepared batch in one transaction, including secrets, indexes and sync changes.
+    /// No catalog-wide replacement is performed; unselected records are untouched.
+    pub fn save_connections_atomic(
+        &self,
+        connections: &[SavedConnection],
+    ) -> Result<(), StorageError> {
+        let mut ids = std::collections::HashSet::new();
+        for connection in connections {
+            if connection.id.is_empty() || !ids.insert(&connection.id) {
+                return Err(StorageError::InvalidData(
+                    "empty or duplicate connection id in batch".into(),
+                ));
+            }
+            self.validate_changed_connection_references(connection)?;
+        }
+        // Validate changed Agent settings, while retaining unrelated legacy or
+        // foreign-platform settings verbatim during common-field edits.
+        let mut validate_agents = Vec::with_capacity(connections.len());
+        for connection in connections {
+            let previous = self.get_connection(&connection.id)?;
+            validate_agents.push(previous.as_ref().is_none_or(|old| {
+                match (&old.config, &connection.config) {
+                    (
+                        ConnectionType::Ssh {
+                            agent_forwarding_config: old,
+                            ..
+                        },
+                        ConnectionType::Ssh {
+                            agent_forwarding_config: new,
+                            ..
+                        },
+                    ) => old != new,
+                    _ => true,
+                }
+            }));
+        }
+        let prepared = self.prepare_connections_for_storage(connections)?;
+        let txn = self.db.begin_write()?;
+        for (connection, validate_agent) in prepared.iter().zip(validate_agents) {
+            remove_connection_index_entries(&txn, &connection.0.id)?;
+            save_connection_with_clean_indexes_checked_in_txn(&txn, connection, validate_agent)?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Validate only explicit reference patches; legacy references on untouched fields are retained.
+    pub fn validate_connection_batch_references(
+        &self,
+        edit: &nyaterm_core::models::connection_batch::ConnectionBatchEdit,
+    ) -> Result<(), StorageError> {
+        use nyaterm_core::models::connection_batch::BatchField;
+        let missing = |label: &str| {
+            StorageError::InvalidData(format!(
+                "missing {label} reference; reopen the batch editor"
+            ))
+        };
+        for field in [&edit.account_id, &edit.password_id] {
+            if let BatchField::Set(id) = field
+                && self.load_password_by_id(id)?.is_none()
+            {
+                return Err(missing("account"));
+            }
+        }
+        if let BatchField::Set(id) = &edit.key_id
+            && self.load_ssh_key_by_id(id)?.is_none()
+        {
+            return Err(missing("SSH key"));
+        }
+        if let BatchField::Set(id) = &edit.otp_id
+            && self.load_otp_entry_by_id(id)?.is_none()
+        {
+            return Err(missing("OTP"));
+        }
+        if let BatchField::Set(id) = &edit.proxy_id
+            && !self
+                .list_json_by_prefix::<ProxyConfig>(PROXIES_TABLE, PROXY_PREFIX)?
+                .iter()
+                .any(|value| &value.id == id)
+        {
+            return Err(missing("proxy"));
+        }
+        if let BatchField::Set(id) = &edit.group_id
+            && !self.list_groups()?.iter().any(|value| &value.id == id)
+        {
+            return Err(missing("group"));
+        }
+        if let BatchField::Set(id) = &edit.proxy_jump_id {
+            let jump = self
+                .get_connection(id)?
+                .ok_or_else(|| missing("jump host"))?;
+            if !matches!(jump.config, ConnectionType::Ssh { .. }) {
+                return Err(missing("SSH jump host"));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_changed_connection_references(
+        &self,
+        connection: &SavedConnection,
+    ) -> Result<(), StorageError> {
+        let previous = self.get_connection(&connection.id)?;
+        let old_auth = previous.as_ref().and_then(|value| value.auth.as_ref());
+        let missing = |label: &str| {
+            StorageError::InvalidData(format!(
+                "missing {label} reference; reopen the batch editor"
+            ))
+        };
+        if let Some(auth) = &connection.auth {
+            for id in [&auth.account_id, &auth.password_id].into_iter().flatten() {
+                let unchanged = old_auth.is_some_and(|old| {
+                    old.account_id.as_ref() == Some(id) || old.password_id.as_ref() == Some(id)
+                });
+                if !unchanged && self.load_password_by_id(id)?.is_none() {
+                    return Err(missing("account"));
+                }
+            }
+            if let Some(id) = &auth.key_id
+                && old_auth.and_then(|old| old.key_id.as_ref()) != Some(id)
+                && self.load_ssh_key_by_id(id)?.is_none()
+            {
+                return Err(missing("SSH key"));
+            }
+            if let Some(id) = &auth.otp_id
+                && old_auth.and_then(|old| old.otp_id.as_ref()) != Some(id)
+                && self.load_otp_entry_by_id(id)?.is_none()
+            {
+                return Err(missing("OTP"));
+            }
+        }
+        if let Some(network) = &connection.network {
+            let old = previous.as_ref().and_then(|value| value.network.as_ref());
+            if let Some(id) = &network.proxy_id
+                && old.and_then(|old| old.proxy_id.as_ref()) != Some(id)
+                && !self
+                    .list_json_by_prefix::<ProxyConfig>(PROXIES_TABLE, PROXY_PREFIX)?
+                    .iter()
+                    .any(|proxy| &proxy.id == id)
+            {
+                return Err(missing("proxy"));
+            }
+            if let Some(id) = &network.proxy_jump_id
+                && old.and_then(|old| old.proxy_jump_id.as_ref()) != Some(id)
+            {
+                let jump = self
+                    .get_connection(id)?
+                    .ok_or_else(|| missing("jump host"))?;
+                if id == &connection.id || !matches!(jump.config, ConnectionType::Ssh { .. }) {
+                    return Err(StorageError::InvalidData(
+                        "jump host must reference another SSH connection".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn save_group_and_connection(
         &self,
         group: &Group,
@@ -558,12 +785,42 @@ impl ConnectionStore {
         };
         migrate_legacy_ssh_agent_settings(&mut connection);
         connection.last_used_at_ms = Some(current_time_ms());
-        connection.updated_at_ms = Some(current_time_ms());
         write_json_in_txn(&txn, CONNECTIONS_TABLE, &key, &connection)?;
         remove_connection_index_entries(&txn, connection_id)?;
         insert_connection_indexes(&txn, &connection)?;
         txn.commit()?;
         Ok(())
+    }
+
+    /// Update only an automatically detected icon, preserving concurrent user
+    /// edits, unknown fields, timestamps and the separately stored password.
+    pub fn update_auto_detected_connection_icon(
+        &self,
+        connection_id: &str,
+        icon: &str,
+    ) -> Result<bool, StorageError> {
+        let txn = self.db.begin_write()?;
+        let key = entity_key(CONNECTION_PREFIX, connection_id);
+        let mut value: serde_json::Value = {
+            let table = txn.open_table(CONNECTIONS_TABLE)?;
+            let Some(raw) = table.get(key.as_str())? else {
+                return Ok(false);
+            };
+            deserialize_json(raw.value())?
+        };
+        let connection: SavedConnection = serde_json::from_value(value.clone())?;
+        if !matches!(connection.config, ConnectionType::Ssh { .. })
+            || connection.ssh_profile == nyaterm_core::SshProfile::NetworkDevice
+            || !connection.icon_auto_detect_enabled()
+            || connection.icon.as_deref() == Some(icon)
+        {
+            return Ok(false);
+        }
+        value["icon"] = serde_json::Value::String(icon.to_string());
+        value["icon_auto_detect"] = serde_json::Value::Bool(true);
+        write_json_in_txn(&txn, CONNECTIONS_TABLE, &key, &value)?;
+        txn.commit()?;
+        Ok(true)
     }
 
     /// Merges a monitoring-derived asset patch into one connection atomically.
@@ -598,7 +855,6 @@ impl ConnectionStore {
             return Ok(false);
         }
         connection.asset = Some(next_asset);
-        connection.updated_at_ms = Some(current_time_ms());
 
         write_json_in_txn(&txn, CONNECTIONS_TABLE, &key, &connection)?;
         remove_connection_index_entries(&txn, connection_id)?;
@@ -851,6 +1107,7 @@ impl ConnectionStore {
         txn.open_table(VNC_KNOWN_HOSTS_TABLE)?;
         txn.open_table(PORTABLE_OPAQUE_ENTITIES_TABLE)?;
         txn.open_table(COMMAND_HISTORY_TABLE)?;
+        txn.open_table(completion_history::COMPLETION_HISTORY_TABLE)?;
         txn.open_table(NOTE_FOLDERS_TABLE)?;
         txn.open_table(NOTES_TABLE)?;
         txn.open_table(NOTE_SUMMARIES_TABLE)?;
@@ -1480,7 +1737,7 @@ fn replace_sessions_in_txn(
         save_group_in_txn(txn, group)?;
     }
     for connection in prepared_connections {
-        save_connection_in_txn(txn, connection)?;
+        save_connection_with_clean_indexes_in_txn(txn, connection)?;
     }
     Ok(())
 }
@@ -1493,7 +1750,28 @@ fn save_group_in_txn(txn: &redb::WriteTransaction, group: &Group) -> Result<(), 
         group.created_at_ms = existing_group_created_at(txn, &key)?.or(Some(now));
     }
     group.updated_at_ms = Some(now);
-    write_json_in_txn(txn, GROUPS_TABLE, &key, &group)
+    let current = txn
+        .open_table(GROUPS_TABLE)?
+        .get(key.as_str())?
+        .map(|raw| serde_json::from_slice::<serde_json::Value>(raw.value()))
+        .transpose()?;
+    let mut next = serde_json::to_value(&group)?;
+    if let (Some(current), Some(next)) = (
+        current.as_ref().and_then(serde_json::Value::as_object),
+        next.as_object_mut(),
+    ) {
+        // Group has no extension map. Preserve unknown persisted properties
+        // while allowing every known optional field to be explicitly cleared.
+        for (field, value) in current {
+            if !matches!(
+                field.as_str(),
+                "id" | "name" | "parent_id" | "sort_order" | "created_at_ms" | "updated_at_ms"
+            ) {
+                next.insert(field.clone(), value.clone());
+            }
+        }
+    }
+    write_json_in_txn(txn, GROUPS_TABLE, &key, &next)
 }
 
 fn existing_group_created_at(
@@ -1512,14 +1790,38 @@ fn save_connection_in_txn(
     txn: &redb::WriteTransaction,
     connection: &PreparedConnectionForStorage,
 ) -> Result<(), StorageError> {
+    remove_connection_index_entries(txn, &connection.0.id)?;
+    save_connection_with_clean_indexes_in_txn(txn, connection)
+}
+
+/// Call only after removing every index entry for the affected identities in
+/// this transaction. Bulk writers clean the indexes once, including stale
+/// entries written by older versions, instead of scanning for every resource.
+fn save_connection_with_clean_indexes_in_txn(
+    txn: &redb::WriteTransaction,
+    connection: &PreparedConnectionForStorage,
+) -> Result<(), StorageError> {
+    save_connection_with_clean_indexes_checked_in_txn(txn, connection, true)
+}
+
+fn save_connection_with_clean_indexes_checked_in_txn(
+    txn: &redb::WriteTransaction,
+    connection: &PreparedConnectionForStorage,
+    validate_agent: bool,
+) -> Result<(), StorageError> {
+    // User configuration writes also invalidate an in-flight V4 Apply when
+    // only a device-local binding changed. Runtime usage/monitoring writes use
+    // their own paths and do not pass through this user-save boundary.
+    cloud_sync_v4::record_change(txn)?;
     let mut connection = connection.0.clone();
     // Canonicalize legacy fields before every write so input-only aliases are
     // never silently discarded by unrelated updates.
     migrate_legacy_ssh_agent_settings(&mut connection);
-    if let ConnectionType::Ssh {
-        agent_forwarding_config: Some(config),
-        ..
-    } = &connection.config
+    if validate_agent
+        && let ConnectionType::Ssh {
+            agent_forwarding_config: Some(config),
+            ..
+        } = &connection.config
     {
         validate_ssh_agent_forwarding_config(config).map_err(|error| {
             StorageError::InvalidData(format!(
@@ -1535,7 +1837,6 @@ fn save_connection_in_txn(
     }
     connection.updated_at_ms = Some(now);
 
-    remove_connection_index_entries(txn, &connection.id)?;
     delete_connection_password_in_txn(txn, &connection.id)?;
     if let Some(auth) = connection.auth.as_mut() {
         if let Some(password) = auth.password.take().filter(|value| !value.is_empty()) {
@@ -1583,6 +1884,11 @@ fn delete_connection_in_txn(
     txn: &redb::WriteTransaction,
     connection_id: &str,
 ) -> Result<(), StorageError> {
+    cloud_sync_v4::record_remove(
+        txn,
+        CONNECTIONS_TABLE,
+        &entity_key(CONNECTION_PREFIX, connection_id),
+    )?;
     txn.open_table(CONNECTIONS_TABLE)?
         .remove(entity_key(CONNECTION_PREFIX, connection_id).as_str())?;
     delete_connection_password_in_txn(txn, connection_id)?;
@@ -1593,6 +1899,7 @@ fn delete_connection_password_in_txn(
     txn: &redb::WriteTransaction,
     connection_id: &str,
 ) -> Result<(), StorageError> {
+    cloud_sync_v4::record_change(txn)?;
     txn.open_table(CREDENTIALS_TABLE)?
         .remove(entity_key(CONNECTION_PASSWORD_PREFIX, connection_id).as_str())?;
     Ok(())
@@ -1633,37 +1940,39 @@ fn remove_connection_index_entries(
     txn: &redb::WriteTransaction,
     connection_id: &str,
 ) -> Result<(), StorageError> {
-    remove_connection_index_entries_from_table(txn, IDX_CONNECTIONS_BY_GROUP_TABLE, connection_id)?;
-    remove_connection_index_entries_from_table(
-        txn,
-        IDX_CONNECTIONS_BY_LAST_USED_TABLE,
-        connection_id,
-    )?;
-    remove_connection_index_entries_from_table(
-        txn,
-        IDX_CONNECTIONS_BY_PROTOCOL_TABLE,
-        connection_id,
-    )
+    remove_connection_indexes_for_ids(txn, &std::collections::BTreeSet::from([connection_id]))
 }
 
-fn remove_connection_index_entries_from_table(
+fn remove_connection_indexes_for_ids(
     txn: &redb::WriteTransaction,
-    definition: TableDefinition<&str, &str>,
-    connection_id: &str,
+    connection_ids: &std::collections::BTreeSet<&str>,
 ) -> Result<(), StorageError> {
-    let table = txn.open_table(definition)?;
-    let mut keys = Vec::new();
-    for entry in table.iter()? {
-        let (key, value) = entry?;
-        if value.value() == connection_id || key.value().ends_with(&format!("|{connection_id}")) {
-            keys.push(key.value().to_string());
-        }
+    if connection_ids.is_empty() {
+        return Ok(());
     }
-    drop(table);
-
-    let mut table = txn.open_table(definition)?;
-    for key in keys {
-        table.remove(key.as_str())?;
+    // Match suffixes at every separator, preserving the compatibility cleanup
+    // even for legacy IDs containing `|` or rows with an inconsistent value.
+    for definition in [
+        IDX_CONNECTIONS_BY_GROUP_TABLE,
+        IDX_CONNECTIONS_BY_LAST_USED_TABLE,
+        IDX_CONNECTIONS_BY_PROTOCOL_TABLE,
+    ] {
+        let mut table = txn.open_table(definition)?;
+        let mut keys = Vec::new();
+        for entry in table.iter()? {
+            let (key, value) = entry?;
+            if connection_ids.contains(value.value())
+                || key
+                    .value()
+                    .match_indices('|')
+                    .any(|(index, _)| connection_ids.contains(&key.value()[index + 1..]))
+            {
+                keys.push(key.value().to_string());
+            }
+        }
+        for key in keys {
+            table.remove(key.as_str())?;
+        }
     }
     Ok(())
 }
@@ -1683,6 +1992,9 @@ fn clear_prefix_in_txn(
     }
     drop(table);
 
+    for key in &keys {
+        cloud_sync_v4::record_remove(txn, definition, key)?;
+    }
     let mut table = txn.open_table(definition)?;
     for key in keys {
         table.remove(key.as_str())?;
@@ -1802,6 +2114,7 @@ where
     T: Serialize,
 {
     let bytes = serde_json::to_vec(value)?;
+    cloud_sync_v4::record_write(txn, definition, key, &bytes)?;
     txn.open_table(definition)?.insert(key, bytes.as_slice())?;
     Ok(())
 }

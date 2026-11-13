@@ -1,10 +1,9 @@
-use gpui::{Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity};
-use nyaterm_core::FileManagerPaneSide;
-use nyaterm_transport::{RemoteFilePath, SftpFileEntry};
-
 use super::inputs::FileManagerPaneInputs;
 use super::pane::{BrowserPaneState, PaneEndpoint, PaneId, PaneNavigationSnapshot};
 use crate::features::NyaTermApp;
+use gpui::{Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity};
+use nyaterm_core::FileManagerPaneSide;
+use nyaterm_files::sftp::{RemoteFilePath, SftpFileEntry};
 
 pub(in crate::features) struct FileManagerSeed {
     pub left: PaneEndpoint,
@@ -140,6 +139,7 @@ impl FileManagerWorkspace {
         self.pane(self.active)
     }
 
+    #[cfg(test)]
     pub(in crate::features) fn set_active(&mut self, id: PaneId) {
         self.active = id;
     }
@@ -195,7 +195,11 @@ impl FileManagerWorkspace {
         self.right.restore_view_settings(&settings.right_view);
     }
 
-    pub(in crate::features) fn apply_list_result(&mut self, result: FileManagerListResult) -> bool {
+    pub(in crate::features) fn apply_list_result(
+        &mut self,
+        result: FileManagerListResult,
+        show_hidden: bool,
+    ) -> bool {
         let FileManagerListResult {
             pane,
             generation,
@@ -206,7 +210,7 @@ impl FileManagerWorkspace {
         } = result;
         let pane = self.pane_mut(pane);
         match result {
-            Ok(entries) => pane.apply_listing(generation, &endpoint, &path, entries),
+            Ok(entries) => pane.apply_listing(generation, &endpoint, &path, entries, show_hidden),
             Err(error) => pane.apply_error(generation, &endpoint, snapshot, error),
         }
     }

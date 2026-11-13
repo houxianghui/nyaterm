@@ -52,6 +52,7 @@ target/
 nyaterm-portable
 /gen/schemas
 /src-tauri
+docs/
 
 # Local snapshot verification downloads (merge-upstream skill)
 dist-verify/

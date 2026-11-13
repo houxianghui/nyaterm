@@ -1,6 +1,7 @@
-use nyaterm_transport::{SftpDuplicateDecision, SftpDuplicatePolicy, SftpTransferProgress};
-
 use crate::models::TransferJobKind;
+use nyaterm_files::sftp_transfer_types::{
+    SftpDuplicateDecision, SftpDuplicatePolicy, SftpTransferProgress,
+};
 
 pub(in crate::features) fn duplicate_policy_label(policy: SftpDuplicatePolicy) -> &'static str {
     match policy {
@@ -69,7 +70,10 @@ pub(in crate::features) fn transfer_job_title(kind: &TransferJobKind) -> String 
         TransferJobKind::OpenExternal {
             remote_path,
             local_path,
-        } => format!("Open {remote_path} -> {}", local_path.display()),
+        } => match local_path {
+            Some(local_path) => format!("Open {remote_path} -> {}", local_path.display()),
+            None => format!("Open {remote_path}"),
+        },
         TransferJobKind::AiFileAction {
             remote_path,
             action_name,

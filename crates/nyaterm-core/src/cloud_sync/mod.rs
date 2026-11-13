@@ -10,6 +10,7 @@ pub mod cache;
 pub mod conflict;
 pub mod control;
 pub mod credentials;
+pub mod error;
 mod gc;
 mod heads;
 mod history;
@@ -57,6 +58,12 @@ pub const REMOTE_SYNC_POINTER_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Error)]
 pub enum CloudSyncError {
+    #[error("{provider} {operation} failed ({kind})")]
+    Storage {
+        provider: String,
+        operation: String,
+        kind: error::CloudStorageErrorKind,
+    },
     #[error("{provider} {operation} failed (HTTP {status})")]
     Http {
         provider: String,
@@ -246,15 +253,20 @@ impl CloudSyncError {
 impl CloudSyncError {
     pub fn classification(&self) -> &'static str {
         match self {
+            Self::Storage { kind, .. } => kind.classification(),
             Self::Authentication { .. } => "authentication",
             Self::Http {
                 status: 403 | 429,
                 retry_after_seconds: Some(_),
                 ..
             } => "rate_limited",
+            Self::Http { status: 401, .. } => "authentication",
+            Self::Http { status: 403, .. } => "permission_denied",
+            Self::Http { status: 404, .. } => "not_found",
             Self::Http {
-                status: 401 | 403, ..
-            } => "authentication",
+                status: 409 | 412, ..
+            } => "conflict",
+            Self::Http { status: 501, .. } => "unsupported",
             Self::Http { status: 429, .. } => "rate_limited",
             Self::Http {
                 status: 500..=599, ..
@@ -524,6 +536,22 @@ fn decide_snapshot_check(
     let local_changed = local_content_changed(state, &local_hash);
     let remote_changed =
         state.last_applied_remote_revision.as_deref() != Some(&pointer.revision_id);
+    // Adopting the remote cannot lose anything when the local snapshot holds
+    // no user content, so a first-connect device takes it instead of being
+    // asked which side to keep.
+    if remote_changed && local_changed && !local.has_user_content() {
+        return Ok(if allow_auto_pull {
+            CloudRemoteCheckDecision::AutoPull
+        } else {
+            CloudRemoteCheckDecision::RemoteAvailable
+        });
+    }
+    // An empty remote has nothing to adopt, so the local side pushes instead
+    // of being offered a conflict whose "keep the cloud" answer would only
+    // discard local content.
+    if remote_changed && local_changed && !remote.has_user_content() {
+        return Ok(CloudRemoteCheckDecision::LocalChanged);
+    }
     Ok(match (remote_changed, local_changed, allow_auto_pull) {
         (true, true, _) => CloudRemoteCheckDecision::Conflict,
         (true, false, true) => CloudRemoteCheckDecision::AutoPull,
@@ -574,6 +602,15 @@ pub struct RemoteFileCapacity {
 }
 
 pub trait CloudSyncRemote {
+    /// Publish immutable V4 bytes. Implementations must expose a complete object
+    /// or no object after an interrupted write; retries use the same bytes.
+    fn write_sync_file(&self, path: &str, bytes: &[u8]) -> Result<(), CloudSyncError> {
+        self.write(path, bytes)
+    }
+    /// Uncached listing for the V4 registry and immutable publication objects.
+    fn list_sync_files(&self, path: &str) -> Result<Vec<String>, CloudSyncError> {
+        self.list_files(path)
+    }
     fn file_capacity(&self) -> Result<Option<RemoteFileCapacity>, CloudSyncError> {
         Ok(None)
     }
@@ -606,6 +643,37 @@ pub trait CloudSyncRemote {
     fn write(&self, path: &str, bytes: &[u8]) -> Result<(), CloudSyncError>;
     fn delete(&self, path: &str) -> Result<(), CloudSyncError>;
     fn list_files(&self, path: &str) -> Result<Vec<String>, CloudSyncError>;
+}
+
+/// Read every causal legacy branch through the existing compatibility codec.
+/// This is a migration reader; it never resolves a branch by overwriting data.
+pub fn read_legacy_sync_branches(
+    store: &dyn CloudLocalStore,
+    remote: &dyn CloudSyncRemote,
+    options: &LocalCloudSyncOptions,
+) -> Result<Vec<RawPortableSnapshot>, CloudSyncError> {
+    let heads = heads::read(store, remote, &options.remote_root)?;
+    let mut pointers = heads.maximal();
+    if pointers.is_empty()
+        && let Some(pointer) = heads.selected
+    {
+        pointers.push(pointer);
+    }
+    let mut snapshots = Vec::new();
+    for pointer in pointers {
+        match protocol::resolve_remote_snapshot(store, remote, options, &pointer)? {
+            protocol::RemoteSnapshotResolution::Current(snapshot)
+            | protocol::RemoteSnapshotResolution::LegacyMigrated(snapshot) => {
+                snapshots.push(snapshot)
+            }
+            _ => {
+                return Err(CloudSyncError::Remote(
+                    "Legacy cloud data is incomplete; migration was stopped".into(),
+                ));
+            }
+        }
+    }
+    Ok(snapshots)
 }
 
 pub trait CloudLocalStore: Send + Sync {
@@ -746,6 +814,7 @@ fn push_snapshot_prepared(
             remote: None,
         },
     };
+    local = crate::portable_snapshot::project_fixed_sync_snapshot(&local)?;
     local.recalculate_hash()?;
     let mut snapshot = local;
     let local_hash = snapshot.meta.payload_hash.clone();
@@ -839,13 +908,23 @@ fn push_snapshot_prepared(
     }
 
     if remote_changed && !force {
-        let remote_pointer = latest.expect("remote changed requires remote pointer");
-        if local_changed {
+        // Overwriting an unseen remote revision that holds no user content
+        // loses nothing, so the local side pushes instead of being asked to
+        // resolve a conflict whose "keep the cloud" answer would only discard
+        // local content.
+        if local_changed
+            && remote_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.has_user_content())
+        {
+            let remote_pointer = latest.expect("remote changed requires remote pointer");
             let conflict =
                 conflict_preview(options, remote.provider(), &local_hash, &remote_pointer);
             return Err(CloudSyncError::Conflict(Box::new(conflict)));
         }
-        return Err(CloudSyncError::RemoteNewer);
+        if !local_changed {
+            return Err(CloudSyncError::RemoteNewer);
+        }
     }
 
     snapshot.meta.device_name = options.device_name.clone();
@@ -1069,7 +1148,16 @@ fn pull_snapshot_prepared(
         .as_deref()
         .is_none_or(|revision| revision != latest.revision_id);
 
-    if remote_changed && local_changed && !force {
+    // Adopting the remote cannot lose anything when the local snapshot holds
+    // no user content, so a first-connect (or self-wiped) device pulls it
+    // instead of being asked which side to keep.
+    if remote_changed && local_changed && !force && local_snapshot.has_user_content() {
+        // An empty remote holds nothing to adopt, so pulling cannot be the
+        // answer; report that there is nothing newer instead of offering a
+        // resolution that would only discard local content.
+        if !remote_snapshot.has_user_content() {
+            return Err(CloudSyncError::NoNewerRemoteSnapshot);
+        }
         let conflict = conflict_preview(
             options,
             remote.provider(),
@@ -1098,6 +1186,7 @@ fn pull_snapshot_prepared(
     before_apply()?;
     let mut snapshot = remote_snapshot;
     if requires_resolution {
+        snapshot = crate::portable_snapshot::project_fixed_sync_snapshot(&snapshot)?;
         snapshot.meta.revision_id = uuid_v4();
         snapshot.meta.created_at_ms = current_time_ms();
         snapshot.meta.device_id = options.device_id.clone();
@@ -1378,12 +1467,25 @@ fn check_snapshot_inner(
             let local_changed = local_content_changed(state, &local_hash);
             let remote_changed =
                 state.last_applied_remote_revision.as_deref() != Some(&pointer.revision_id);
-            match (remote_changed, local_changed, allow_auto_pull) {
-                (true, true, _) => CloudRemoteCheckDecision::Conflict,
-                (true, false, true) => CloudRemoteCheckDecision::AutoPull,
-                (true, false, false) => CloudRemoteCheckDecision::RemoteAvailable,
-                (false, true, _) => CloudRemoteCheckDecision::LocalChanged,
-                _ => CloudRemoteCheckDecision::UpToDate,
+            // Same rule as `decide_snapshot_check`: an empty local snapshot
+            // adopts the remote instead of raising a conflict, and an empty
+            // remote lets the local side push instead of raising one.
+            if remote_changed && local_changed && !local.has_user_content() {
+                if allow_auto_pull {
+                    CloudRemoteCheckDecision::AutoPull
+                } else {
+                    CloudRemoteCheckDecision::RemoteAvailable
+                }
+            } else if remote_changed && local_changed && !receipt.remote_has_user_content {
+                CloudRemoteCheckDecision::LocalChanged
+            } else {
+                match (remote_changed, local_changed, allow_auto_pull) {
+                    (true, true, _) => CloudRemoteCheckDecision::Conflict,
+                    (true, false, true) => CloudRemoteCheckDecision::AutoPull,
+                    (true, false, false) => CloudRemoteCheckDecision::RemoteAvailable,
+                    (false, true, _) => CloudRemoteCheckDecision::LocalChanged,
+                    _ => CloudRemoteCheckDecision::UpToDate,
+                }
             }
         };
         if decision == CloudRemoteCheckDecision::Conflict {
@@ -1481,6 +1583,20 @@ pub fn load_sync_pointer_from_remote(
     local_store.decode_sync_pointer(bytes.as_slice()).map(Some)
 }
 
+/// Verify that the configured root exposes the sync metadata the engine reads.
+///
+/// The connection test uses this instead of reading the shared compatibility
+/// pointer directly, so a pointer that was truncated by an interrupted upload
+/// does not mask working credentials once device heads are present.
+pub fn probe_remote_sync(
+    local_store: &dyn CloudLocalStore,
+    remote: &dyn CloudSyncRemote,
+    remote_root: &str,
+) -> Result<(), CloudSyncError> {
+    heads::read(local_store, remote, remote_root)?;
+    Ok(())
+}
+
 fn ensure_enabled(options: &LocalCloudSyncOptions) -> Result<(), CloudSyncError> {
     if options.enabled {
         Ok(())
@@ -1520,9 +1636,14 @@ fn write_sync_pointer(
         if capacity_limited || attempt == 0 {
             remote.write(&path, &bytes)?;
         }
-        if load_sync_pointer_from_remote(local_store, remote, remote_root)?.as_ref()
-            == Some(pointer)
-        {
+        let verified = match load_sync_pointer_from_remote(local_store, remote, remote_root) {
+            Ok(readback) => readback.as_ref() == Some(pointer),
+            // A corrupt readback is an unverified read, not a terminal error:
+            // re-read on the next attempt instead of aborting the retry budget.
+            Err(CloudSyncError::PortableSnapshot(_) | CloudSyncError::Json(_)) => false,
+            Err(error) => return Err(error),
+        };
+        if verified {
             return Ok(());
         }
         if attempt + 1 < attempts && !capacity_limited {

@@ -15,6 +15,17 @@ import check_release_assets  # noqa: E402
 
 
 class CheckReleaseAssetsTests(unittest.TestCase):
+    def test_ci_asset_set_contains_only_windows_packages(self) -> None:
+        self.assertEqual(
+            check_release_assets.expected_artifacts("main-snapshot"),
+            {
+                "NyaTerm_main-snapshot_windows_x64_portable.zip",
+                "NyaTerm_main-snapshot_windows_x64-setup.exe",
+                "NyaTerm_main-snapshot_windows_arm64_portable.zip",
+                "NyaTerm_main-snapshot_windows_arm64-setup.exe",
+            },
+        )
+
     def test_snapshot_label_accepts_exact_set_and_rejects_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

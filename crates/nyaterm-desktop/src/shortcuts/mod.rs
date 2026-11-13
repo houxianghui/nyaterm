@@ -2,7 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gpui::{App, Global, KeyBinding, KeyContext, KeyDownEvent, Keystroke, Modifiers};
+use gpui::{
+    Action, App, Global, KeyBinding, KeyBindingContextPredicate, KeyContext, Keystroke, Modifiers,
+};
 
 mod actions;
 pub(crate) use actions::*;
@@ -163,7 +165,7 @@ impl ShortcutScope {
         match self {
             Self::Global => None,
             Self::Workspace => Some("NyaWorkspace && !Dialog && !NyaModal && !ScreenLocked"),
-            Self::Terminal => Some("Terminal && !Input"),
+            Self::Terminal => Some("Terminal && !Input && !Dialog && !NyaModal && !ScreenLocked"),
             Self::TextInput => Some("Input"),
             Self::FileExplorer => Some(FILE_EXPLORER_KEY_CONTEXT),
             Self::SavedConnections => Some(SAVED_CONNECTIONS_KEY_CONTEXT),
@@ -384,7 +386,7 @@ pub(crate) const SHORTCUT_REGISTRY: [ShortcutDefinition; 41] = [
         "settings.shortcutLabels.copy",
         Terminal,
         ShortcutKind::Direct,
-        "ctrl+shift+c",
+        "ctrl+insert,ctrl+shift+c",
         "meta+shift+c",
         Supported,
         "Copies the current selection, otherwise the visible terminal text."
@@ -794,7 +796,7 @@ pub(crate) const SHORTCUT_REGISTRY: [ShortcutDefinition; 41] = [
         "ctrl+shift+p",
         "meta+shift+p",
         Supported,
-        "Opens quick commands."
+        "Shows or hides the bottom quick commands panel."
     ),
     shortcut!(
         RenameFile,
@@ -880,14 +882,7 @@ impl ResolvedKeymap {
                 None => definition.default_binding(),
             };
             let candidate_chords = expanded_chords(&definition, &binding);
-            let conflict = candidate_chords.iter().find_map(|chord| {
-                accepted
-                    .iter()
-                    .find(|(_, scope, accepted_chord)| {
-                        definition.scope.overlaps(*scope) && chord == accepted_chord
-                    })
-                    .map(|(id, _, _)| *id)
-            });
+            let conflict = shortcut_conflict(definition.scope, &candidate_chords, &accepted);
             if let Some(first) = conflict {
                 resolved.diagnostics.push(ShortcutDiagnostic {
                     id: definition.id,
@@ -905,6 +900,37 @@ impl ResolvedKeymap {
                 binding,
             });
         }
+        // Preserve local copy on Windows/Linux after copy customization, but
+        // yield to accepted bindings that can actually run in the terminal.
+        // Resolve this last so the fallback does not displace user bindings.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let chord = parse_chord("ctrl+insert").expect("copy fallback must be valid");
+            if shortcut_conflict(
+                ShortcutScope::Terminal,
+                std::slice::from_ref(&chord),
+                &accepted,
+            )
+            .is_none()
+            {
+                if let Some(copy) = resolved
+                    .shortcuts
+                    .iter_mut()
+                    .find(|shortcut| shortcut.id == ShortcutId::TerminalCopy)
+                {
+                    copy.binding.chords.push(chord);
+                } else {
+                    // An invalid/rejected copy override still keeps the existing
+                    // local fallback; retain its diagnostic and discard its chords.
+                    resolved.shortcuts.push(ResolvedShortcut {
+                        id: ShortcutId::TerminalCopy,
+                        binding: ShortcutBinding {
+                            chords: vec![chord],
+                        },
+                    });
+                }
+            }
+        }
         resolved
     }
 
@@ -914,6 +940,21 @@ impl ResolvedKeymap {
             .find(|diagnostic| diagnostic.id == id)
             .map(|diagnostic| &diagnostic.kind)
     }
+}
+
+fn shortcut_conflict(
+    scope: ShortcutScope,
+    chords: &[ShortcutChord],
+    accepted: &[(ShortcutId, ShortcutScope, ShortcutChord)],
+) -> Option<ShortcutId> {
+    chords.iter().find_map(|chord| {
+        accepted
+            .iter()
+            .find(|(_, accepted_scope, accepted_chord)| {
+                scope.overlaps(*accepted_scope) && chord == accepted_chord
+            })
+            .map(|(id, _, _)| *id)
+    })
 }
 
 struct ShortcutKeymapGlobal {
@@ -943,7 +984,7 @@ pub(crate) fn rebuild_keymap(overrides: &HashMap<String, String>, cx: &mut App) 
     ensure_global(cx);
     let resolved = ResolvedKeymap::resolve(overrides);
     let baseline = cx.global::<ShortcutKeymapGlobal>().baseline.clone();
-    let bindings = gpui_bindings(&resolved);
+    let bindings = gpui_bindings(&resolved, cx);
     cx.clear_key_bindings();
     cx.bind_keys(baseline.clone());
     cx.bind_keys(bindings);
@@ -1030,7 +1071,7 @@ fn keystroke_matches(event: &Keystroke, binding: &Keystroke) -> bool {
     event.modifiers == binding.modifiers && normalize_key_name(&event.key) == binding.key
 }
 
-fn gpui_bindings(resolved: &ResolvedKeymap) -> Vec<KeyBinding> {
+fn gpui_bindings(resolved: &ResolvedKeymap, cx: &App) -> Vec<KeyBinding> {
     let mut bindings = Vec::new();
     for shortcut in &resolved.shortcuts {
         let definition = SHORTCUT_REGISTRY
@@ -1044,6 +1085,7 @@ fn gpui_bindings(resolved: &ResolvedKeymap) -> Vec<KeyBinding> {
                         definition.action,
                         chord,
                         definition.scope.context(),
+                        cx,
                     ));
                 }
             }
@@ -1051,12 +1093,13 @@ fn gpui_bindings(resolved: &ResolvedKeymap) -> Vec<KeyBinding> {
                 for template in shortcut.binding.chords() {
                     for index in first..=last {
                         let chord = template.with_key(index.to_string());
-                        bindings.push(KeyBinding::new(
+                        bindings.push(dynamic_key_binding(
                             &chord.gpui_source(),
                             SwitchToTab {
                                 index: usize::from(index),
                             },
                             definition.scope.context(),
+                            cx,
                         ));
                     }
                 }
@@ -1066,11 +1109,31 @@ fn gpui_bindings(resolved: &ResolvedKeymap) -> Vec<KeyBinding> {
     bindings
 }
 
-fn binding_for_action(id: ShortcutId, chord: &ShortcutChord, context: Option<&str>) -> KeyBinding {
+fn dynamic_key_binding(
+    source: &str,
+    action: impl Action,
+    context: Option<&str>,
+    cx: &App,
+) -> KeyBinding {
+    let predicate = context.map(|context| {
+        KeyBindingContextPredicate::parse(context)
+            .expect("shortcut registry context must be valid")
+            .into()
+    });
+    KeyBinding::load(source, Box::new(action), predicate, false, None, cx)
+        .expect("resolved shortcut must remain a valid GPUI binding")
+}
+
+fn binding_for_action(
+    id: ShortcutId,
+    chord: &ShortcutChord,
+    context: Option<&str>,
+    cx: &App,
+) -> KeyBinding {
     let source = chord.gpui_source();
     macro_rules! binding {
         ($action:ident) => {
-            KeyBinding::new(&source, $action, context)
+            dynamic_key_binding(&source, $action, context, cx)
         };
     }
     match id {
@@ -1120,6 +1183,16 @@ fn binding_for_action(id: ShortcutId, chord: &ShortcutChord, context: Option<&st
 
 pub(crate) fn shortcut_keys_for(id: &str, overrides: &HashMap<String, String>) -> Option<String> {
     let id = ShortcutId::parse(id)?;
+    // Copy labels include the same fallback used by both dispatch paths.
+    // Preserve the raw override when it needs a validation diagnostic.
+    if id == ShortcutId::TerminalCopy {
+        let resolved = ResolvedKeymap::resolve(overrides);
+        if resolved.diagnostic(id).is_none()
+            && let Some(shortcut) = resolved.shortcuts.iter().find(|shortcut| shortcut.id == id)
+        {
+            return Some(shortcut.binding.canonical());
+        }
+    }
     if let Some(raw) = overrides.get(id.as_str()) {
         return Some(raw.clone());
     }
@@ -1190,8 +1263,8 @@ fn expanded_chords(
     }
 }
 
-pub(crate) fn event_to_hotkey_string(event: &KeyDownEvent) -> Option<String> {
-    ShortcutBinding::from_keystroke(event.keystroke.clone())
+pub(crate) fn keystroke_to_hotkey_string(keystroke: &Keystroke) -> Option<String> {
+    ShortcutBinding::from_keystroke(keystroke.clone())
         .ok()
         .map(|binding| binding.canonical())
 }
@@ -1370,6 +1443,8 @@ mod tests {
         TerminalPaste, WORKSPACE_KEY_CONTEXT, gpui_bindings, is_default_binding,
         reset_known_overrides, resolve_invocation,
     };
+    #[cfg(not(target_os = "macos"))]
+    use super::{conflicting_shortcut, shortcut_keys_for};
     use std::collections::{HashMap, HashSet};
 
     #[test]
@@ -1446,6 +1521,33 @@ mod tests {
     }
 
     #[test]
+    fn tab_shortcuts_keep_platform_defaults() {
+        let cases = [
+            (ShortcutId::NextTab, "ctrl+tab", "meta+tab"),
+            (ShortcutId::PreviousTab, "ctrl+shift+tab", "meta+shift+tab"),
+            (ShortcutId::CloseTab, "ctrl+shift+w", "meta+w,meta+shift+w"),
+        ];
+        for (id, windows, macos) in cases {
+            let definition = SHORTCUT_REGISTRY
+                .iter()
+                .find(|definition| definition.id == id)
+                .expect("tab shortcut stays registered");
+            assert_eq!(
+                definition
+                    .default_binding_for(ShortcutPlatform::Windows)
+                    .canonical(),
+                windows
+            );
+            assert_eq!(
+                definition
+                    .default_binding_for(ShortcutPlatform::MacOs)
+                    .canonical(),
+                macos
+            );
+        }
+    }
+
+    #[test]
     fn tauri_aligned_defaults_are_platform_specific() {
         let recording = SHORTCUT_REGISTRY
             .iter()
@@ -1477,11 +1579,11 @@ mod tests {
             .expect("new session shortcut must be registered")
             .default_keys();
         let mut overrides = HashMap::new();
-        overrides.insert("terminal.copy".to_string(), "ctrl".to_string());
+        overrides.insert("terminal.find".to_string(), "ctrl".to_string());
         overrides.insert("tab.close".to_string(), new_session_binding);
         let resolved = ResolvedKeymap::resolve(&overrides);
         assert!(matches!(
-            resolved.diagnostic(ShortcutId::TerminalCopy),
+            resolved.diagnostic(ShortcutId::TerminalFind),
             Some(ShortcutDiagnosticKind::Invalid(_))
         ));
         assert!(matches!(
@@ -1492,7 +1594,7 @@ mod tests {
             !resolved
                 .shortcuts
                 .iter()
-                .any(|item| { matches!(item.id, ShortcutId::TerminalCopy | ShortcutId::CloseTab) })
+                .any(|item| { matches!(item.id, ShortcutId::TerminalFind | ShortcutId::CloseTab) })
         );
     }
 
@@ -1505,10 +1607,10 @@ mod tests {
         assert!(!ShortcutScope::Modal.overlaps(ShortcutScope::Workspace));
     }
 
-    #[test]
-    fn indexed_tab_binding_expands_one_template_to_nine_actions() {
+    #[gpui::test]
+    fn indexed_tab_binding_expands_one_template_to_nine_actions(cx: &mut gpui::TestAppContext) {
         let resolved = ResolvedKeymap::resolve(&HashMap::new());
-        let bindings = gpui_bindings(&resolved);
+        let bindings = cx.update(|cx| gpui_bindings(&resolved, cx));
         let indexed = bindings
             .iter()
             .filter(|binding| binding.action().as_any().is::<SwitchToTab>())
@@ -1553,10 +1655,12 @@ mod tests {
         assert_eq!(overrides["plugin.futureAction"], " win+Q ");
     }
 
-    #[test]
-    fn gpui_contexts_dispatch_local_actions_and_allow_workspace_in_inputs() {
+    #[gpui::test]
+    fn gpui_contexts_dispatch_local_actions_and_allow_workspace_in_inputs(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let resolved = ResolvedKeymap::resolve(&HashMap::new());
-        let mut keymap = Keymap::new(gpui_bindings(&resolved));
+        let mut keymap = Keymap::new(cx.update(|cx| gpui_bindings(&resolved, cx)));
 
         let terminal_copy = SHORTCUT_REGISTRY
             .iter()
@@ -1624,6 +1728,298 @@ mod tests {
         assert_eq!(keymap.bindings().len(), 0);
     }
 
+    /// Windows terminals treat Ctrl+Insert as local copy. The terminal surface
+    /// forwards any key the keymap does not consume, so an unbound Ctrl+Insert
+    /// reaches the PTY as `CSI 2;5~`.
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn ctrl_insert_copies_locally_without_displacing_existing_copy_chords(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let resolved = ResolvedKeymap::resolve(&HashMap::new());
+        let keymap = Keymap::new(cx.update(|cx| gpui_bindings(&resolved, cx)));
+        let terminal_contexts = [
+            KeyContext::parse(WORKSPACE_KEY_CONTEXT).unwrap(),
+            KeyContext::parse("Terminal").unwrap(),
+        ];
+
+        let ctrl_insert = gpui::Keystroke::parse("ctrl-insert").unwrap();
+        let (actions, pending) =
+            keymap.bindings_for_input(std::slice::from_ref(&ctrl_insert), &terminal_contexts);
+        assert!(!pending);
+        assert!(actions[0].action().partial_eq(&TerminalCopy));
+        assert_eq!(
+            resolve_invocation(&resolved, &ctrl_insert, &terminal_contexts),
+            Some(ShortcutInvocation {
+                id: ShortcutId::TerminalCopy,
+                tab_index: None,
+            })
+        );
+
+        // Adding the Windows alternative must keep the existing chords bound.
+        let ctrl_shift_c = gpui::Keystroke::parse("ctrl-shift-c").unwrap();
+        let (actions, pending) =
+            keymap.bindings_for_input(std::slice::from_ref(&ctrl_shift_c), &terminal_contexts);
+        assert!(!pending);
+        assert!(actions[0].action().partial_eq(&TerminalCopy));
+
+        // Nested search inputs keep Ctrl+Insert for their own editing.
+        let input_contexts = [
+            KeyContext::parse(WORKSPACE_KEY_CONTEXT).unwrap(),
+            KeyContext::parse("Terminal").unwrap(),
+            KeyContext::parse("Input").unwrap(),
+        ];
+        assert_eq!(
+            resolve_invocation(&resolved, &ctrl_insert, &input_contexts),
+            None
+        );
+
+        // A persisted override of terminal.copy replaces the default chords but
+        // must not restore the PTY leak: Ctrl+Insert has to stay bound to copy.
+        let overridden = ResolvedKeymap::resolve(&HashMap::from([(
+            "terminal.copy".to_string(),
+            "ctrl-shift-c".to_string(),
+        )]));
+        let keymap = Keymap::new(cx.update(|cx| gpui_bindings(&overridden, cx)));
+        let (actions, pending) =
+            keymap.bindings_for_input(std::slice::from_ref(&ctrl_insert), &terminal_contexts);
+        assert!(!pending);
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].action().partial_eq(&TerminalCopy));
+        assert_eq!(
+            resolve_invocation(&overridden, &ctrl_insert, &terminal_contexts),
+            Some(ShortcutInvocation {
+                id: ShortcutId::TerminalCopy,
+                tab_index: None,
+            })
+        );
+        assert_eq!(
+            shortcut_keys_for(
+                "terminal.copy",
+                &HashMap::from([("terminal.copy".into(), "ctrl+shift+c".into())])
+            )
+            .as_deref(),
+            Some("ctrl+shift+c,ctrl+insert")
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn ctrl_insert_fallback_respects_resolved_scopes_and_conflicts(cx: &mut gpui::TestAppContext) {
+        let chord = ShortcutBinding::parse("ctrl+insert").unwrap();
+        let terminal_contexts = [
+            KeyContext::parse(WORKSPACE_KEY_CONTEXT).unwrap(),
+            KeyContext::parse("Terminal").unwrap(),
+        ];
+        for (id, expected) in [
+            (ShortcutId::RenameFile, ShortcutId::TerminalCopy),
+            (ShortcutId::TerminalPaste, ShortcutId::TerminalPaste),
+            (ShortcutId::OpenSettings, ShortcutId::OpenSettings),
+        ] {
+            let overrides = HashMap::from([
+                ("terminal.copy".into(), "ctrl+shift+c".into()),
+                (id.as_str().into(), "ctrl+insert".into()),
+            ]);
+            // The fallback must not make the settings editor reject an
+            // otherwise valid assignment to another terminal/workspace action.
+            assert_eq!(conflicting_shortcut(&chord, id, &overrides), None);
+            let resolved = ResolvedKeymap::resolve(&overrides);
+            assert_eq!(resolved.diagnostic(id), None);
+            assert_eq!(resolved.diagnostic(ShortcutId::TerminalCopy), None);
+            let keymap = Keymap::new(cx.update(|cx| gpui_bindings(&resolved, cx)));
+            let (actions, pending) = keymap.bindings_for_input(
+                std::slice::from_ref(chord.chords()[0].keystroke()),
+                &terminal_contexts,
+            );
+            assert!(!pending);
+            assert_eq!(actions.len(), 1, "{id:?}");
+            let expected_action: &dyn gpui::Action = match expected {
+                ShortcutId::TerminalCopy => &TerminalCopy,
+                ShortcutId::TerminalPaste => &TerminalPaste,
+                ShortcutId::OpenSettings => &OpenSettings,
+                _ => unreachable!(),
+            };
+            assert!(actions[0].action().partial_eq(expected_action));
+            assert_eq!(
+                resolve_invocation(&resolved, chord.chords()[0].keystroke(), &terminal_contexts),
+                Some(ShortcutInvocation {
+                    id: expected,
+                    tab_index: None,
+                })
+            );
+            let displayed = shortcut_keys_for("terminal.copy", &overrides).unwrap();
+            assert_eq!(
+                ShortcutBinding::parse(&displayed)
+                    .unwrap()
+                    .contains(&chord.chords()[0]),
+                expected == ShortcutId::TerminalCopy
+            );
+            if id == ShortcutId::RenameFile {
+                let file_contexts = [
+                    KeyContext::parse(WORKSPACE_KEY_CONTEXT).unwrap(),
+                    KeyContext::parse(FILE_EXPLORER_KEY_CONTEXT).unwrap(),
+                ];
+                let (actions, _) = keymap.bindings_for_input(
+                    std::slice::from_ref(chord.chords()[0].keystroke()),
+                    &file_contexts,
+                );
+                assert_eq!(actions.len(), 1);
+                assert!(actions[0].action().partial_eq(&RenameFile));
+            }
+        }
+
+        // Rejected bindings must neither claim the fallback nor be revived.
+        let overrides = HashMap::from([
+            ("terminal.copy".into(), "ctrl+shift+c".into()),
+            ("terminal.paste".into(), "ctrl+insert,ctrl+shift+c".into()),
+        ]);
+        let resolved = ResolvedKeymap::resolve(&overrides);
+        assert_eq!(
+            resolved.diagnostic(ShortcutId::TerminalPaste),
+            Some(&ShortcutDiagnosticKind::Conflict(ShortcutId::TerminalCopy))
+        );
+        assert_eq!(
+            resolve_invocation(&resolved, chord.chords()[0].keystroke(), &terminal_contexts)
+                .unwrap()
+                .id,
+            ShortcutId::TerminalCopy
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn ctrl_insert_fallback_preserves_input_and_modal_shortcuts(cx: &mut gpui::TestAppContext) {
+        let overrides = HashMap::from([("terminal.copy".into(), "ctrl+alt+c".into())]);
+        let resolved = ResolvedKeymap::resolve(&overrides);
+        let mut bindings = vec![KeyBinding::new(
+            "ctrl-insert",
+            nyaterm_ui::NyaCopy,
+            Some("Input"),
+        )];
+        bindings.extend(cx.update(|cx| gpui_bindings(&resolved, cx)));
+        let keymap = Keymap::new(bindings);
+        let chord = gpui::Keystroke::parse("ctrl-insert").unwrap();
+        for nested in [
+            "Input",
+            "Dialog",
+            MODAL_KEY_CONTEXT,
+            SCREEN_LOCKED_KEY_CONTEXT,
+        ] {
+            let contexts = [
+                KeyContext::parse(WORKSPACE_KEY_CONTEXT).unwrap(),
+                KeyContext::parse("Terminal").unwrap(),
+                KeyContext::parse(nested).unwrap(),
+            ];
+            assert_eq!(resolve_invocation(&resolved, &chord, &contexts), None);
+            let (actions, pending) =
+                keymap.bindings_for_input(std::slice::from_ref(&chord), &contexts);
+            assert!(!pending);
+            if nested == "Input" {
+                assert_eq!(actions.len(), 1);
+                assert!(actions[0].action().partial_eq(&nyaterm_ui::NyaCopy));
+            } else {
+                assert!(actions.is_empty(), "{nested} must suppress terminal copy");
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn ctrl_insert_fallback_keeps_invalid_override_diagnostics_and_matches_all_modifiers(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for copy in ["ctrl", "ctrl+shift+c"] {
+            let overrides = HashMap::from([
+                ("terminal.copy".into(), copy.into()),
+                ("terminal.paste".into(), "fn+ctrl+insert".into()),
+            ]);
+            let resolved = ResolvedKeymap::resolve(&overrides);
+            let contexts = [
+                KeyContext::parse(WORKSPACE_KEY_CONTEXT).unwrap(),
+                KeyContext::parse("Terminal").unwrap(),
+            ];
+            let chord = gpui::Keystroke::parse("ctrl-insert").unwrap();
+            let keymap = Keymap::new(cx.update(|cx| gpui_bindings(&resolved, cx)));
+            let (actions, _) = keymap.bindings_for_input(std::slice::from_ref(&chord), &contexts);
+            assert_eq!(actions.len(), 1);
+            assert!(actions[0].action().partial_eq(&TerminalCopy));
+            assert_eq!(
+                resolve_invocation(&resolved, &chord, &contexts).unwrap().id,
+                ShortcutId::TerminalCopy
+            );
+            if copy == "ctrl" {
+                assert!(matches!(
+                    resolved.diagnostic(ShortcutId::TerminalCopy),
+                    Some(ShortcutDiagnosticKind::Invalid(_))
+                ));
+                assert_eq!(
+                    shortcut_keys_for("terminal.copy", &overrides).as_deref(),
+                    Some("ctrl")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn copy_and_paste_defaults_match_each_platform() {
+        for (platform, copy, paste) in [
+            (
+                ShortcutPlatform::Windows,
+                "ctrl+insert,ctrl+shift+c",
+                "ctrl+shift+v,shift+insert",
+            ),
+            (
+                ShortcutPlatform::Linux,
+                "ctrl+insert,ctrl+shift+c",
+                "ctrl+shift+v,shift+insert",
+            ),
+            (
+                ShortcutPlatform::MacOs,
+                "meta+shift+c",
+                "meta+shift+v,shift+insert",
+            ),
+        ] {
+            for (id, expected) in [
+                (ShortcutId::TerminalCopy, copy),
+                (ShortcutId::TerminalPaste, paste),
+            ] {
+                assert_eq!(
+                    SHORTCUT_REGISTRY
+                        .iter()
+                        .find(|item| item.id == id)
+                        .unwrap()
+                        .default_binding_for(platform)
+                        .canonical(),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    fn ctrl_insert_has_no_implicit_macos_copy_binding(cx: &mut gpui::TestAppContext) {
+        for overrides in [
+            HashMap::new(),
+            HashMap::from([("terminal.copy".into(), "meta+alt+c".into())]),
+        ] {
+            let resolved = ResolvedKeymap::resolve(&overrides);
+            let keymap = Keymap::new(cx.update(|cx| gpui_bindings(&resolved, cx)));
+            let contexts = [
+                KeyContext::parse(WORKSPACE_KEY_CONTEXT).unwrap(),
+                KeyContext::parse("Terminal").unwrap(),
+            ];
+            let chord = gpui::Keystroke::parse("ctrl-insert").unwrap();
+            assert!(
+                keymap
+                    .bindings_for_input(std::slice::from_ref(&chord), &contexts)
+                    .0
+                    .is_empty()
+            );
+            assert_eq!(resolve_invocation(&resolved, &chord, &contexts), None);
+        }
+    }
+
     #[test]
     fn terminal_paste_override_yields_to_nested_search_input_in_interceptor() {
         let resolved = ResolvedKeymap::resolve(&HashMap::from([(
@@ -1649,14 +2045,16 @@ mod tests {
         assert_eq!(resolve_invocation(&resolved, &paste, &contexts), None);
     }
 
-    #[test]
-    fn terminal_paste_override_preserves_nested_input_paste_in_keymap() {
+    #[gpui::test]
+    fn terminal_paste_override_preserves_nested_input_paste_in_keymap(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let resolved = ResolvedKeymap::resolve(&HashMap::from([(
             "terminal.paste".to_string(),
             "ctrl+v".to_string(),
         )]));
         let mut bindings = vec![KeyBinding::new("ctrl-v", NyaPaste, Some("Input"))];
-        bindings.extend(gpui_bindings(&resolved));
+        bindings.extend(cx.update(|cx| gpui_bindings(&resolved, cx)));
         let keymap = Keymap::new(bindings);
         let paste = ShortcutBinding::parse("ctrl+v").unwrap().chords()[0]
             .keystroke()

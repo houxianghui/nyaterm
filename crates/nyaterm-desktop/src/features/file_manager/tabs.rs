@@ -1,13 +1,12 @@
-use gpui::{Context, div, prelude::*};
-use nyaterm_core::{FileManagerPaneRestore, FileManagerPaneSide, FileManagerSourceRestore};
-use nyaterm_transport::RemoteFilePath;
-use rust_i18n::t;
-
 use super::pane::{PaneEndpoint, PaneId};
 use super::state::FileManagerSidebarRestore;
 use super::workspace::{FileManagerSeed, FileManagerWorkspace};
 use crate::features::NyaTermApp;
-use crate::models::{MainMode, NavItem, PanelSide, WorkspaceTabId};
+use crate::models::{NavItem, PanelSide, WorkspaceTabId};
+use gpui::{Context, div, prelude::*};
+use nyaterm_core::{FileManagerPaneRestore, FileManagerPaneSide, FileManagerSourceRestore};
+use nyaterm_files::sftp::RemoteFilePath;
+use rust_i18n::t;
 
 impl NyaTermApp {
     pub(in crate::features) fn open_file_manager_tab(
@@ -86,7 +85,7 @@ impl NyaTermApp {
         let endpoint = if self
             .session
             .file_browser_backend_support_for_session(session_id)
-            == Some(nyaterm_transport::FileBrowserBackendKind::Local)
+            == Some(nyaterm_files::file_browser::FileBrowserBackendKind::Local)
         {
             PaneEndpoint::Local
         } else {
@@ -156,7 +155,6 @@ impl NyaTermApp {
         self.shell.workspace.focused_group = self.shell.sync_terminal_windows_active_tab(&key);
         self.shell.set_pane_focus_mode(false);
         self.shell.navigation.selected_nav = NavItem::Workspace;
-        self.shell.navigation.main_mode = MainMode::Workspace;
         self.shell.request_session_tab_scroll_into_view();
         self.close_action_link_menu(cx);
         self.collapse_sidebars_for_file_manager(cx);
@@ -178,68 +176,6 @@ impl NyaTermApp {
         self.restore_sidebars_from_file_manager(cx);
         self.release_unreferenced_hidden_sessions(cx);
         self.persist_file_manager_settings(cx);
-    }
-
-    pub(in crate::features) fn open_file_manager_for_session(
-        &mut self,
-        session_id: &str,
-        pane: Option<PaneId>,
-        cx: &mut Context<Self>,
-    ) {
-        if self
-            .session
-            .file_browser_backend_support_for_session(session_id)
-            .is_none()
-        {
-            return;
-        }
-        let pane = pane.unwrap_or(PaneId::Right);
-        let endpoint = if self
-            .session
-            .file_browser_backend_support_for_session(session_id)
-            == Some(nyaterm_transport::FileBrowserBackendKind::Local)
-        {
-            PaneEndpoint::Local
-        } else {
-            PaneEndpoint::Session(session_id.into())
-        };
-        let browser = self.transfer.browser_view();
-        let path = if self.session.active_id() == Some(session_id) && !browser.path.is_empty() {
-            Some(RemoteFilePath {
-                display_path: browser.path.clone(),
-                raw_path_token: browser.raw_path_token.clone(),
-            })
-        } else {
-            None
-        };
-        if let Some(id) = self.file_manager.active_id().map(str::to_string)
-            && let Some(workspace) = self.file_manager.workspace(&id)
-        {
-            workspace.update(cx, |workspace, _| {
-                let state = workspace.pane_mut(pane);
-                state.set_endpoint(endpoint);
-                if let Some(path) = path {
-                    state.path = path;
-                }
-                state.clear_selection();
-                workspace.set_active(pane);
-            });
-            self.activate_workspace_tab(&WorkspaceTabId::FileManager(id.clone()).layout_key(), cx);
-            self.refresh_file_manager_pane(id, pane, cx);
-        } else {
-            let mut seed = self.default_file_manager_seed();
-            match pane {
-                PaneId::Left => {
-                    seed.left = endpoint;
-                    seed.left_path = path;
-                }
-                PaneId::Right => {
-                    seed.right = endpoint;
-                    seed.right_path = path;
-                }
-            }
-            self.open_file_manager_tab(Some(seed), cx);
-        }
     }
 
     fn collapse_sidebars_for_file_manager(&mut self, cx: &mut Context<Self>) {
@@ -587,7 +523,7 @@ impl NyaTermApp {
             if self
                 .session
                 .file_browser_backend_support_for_session(session_id)
-                == Some(nyaterm_transport::FileBrowserBackendKind::Local)
+                == Some(nyaterm_files::file_browser::FileBrowserBackendKind::Local)
             {
                 continue;
             }
@@ -622,6 +558,58 @@ impl NyaTermApp {
         self.file_manager
             .workspace(id)
             .map(|view| view.into_any_element())
+            .unwrap_or_else(|| div().into_any_element())
+    }
+}
+
+impl NyaTermApp {
+    pub(in crate::features) fn session_is_sftp_only(&self, id: &str) -> bool {
+        self.session
+            .metadata(id)
+            .and_then(|metadata| metadata.ssh_config.as_ref())
+            .is_some_and(|config| {
+                config.effective_runtime_mode()
+                    == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Sftp
+            })
+    }
+
+    pub(in crate::features) fn ensure_sftp_session_view(
+        &mut self,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.file_manager
+            .sftp_workspaces
+            .retain(|id, _| self.session.has_session(id));
+        if !self.session_is_sftp_only(id) || self.file_manager.sftp_workspaces.contains_key(id) {
+            return;
+        }
+        if let Some(metadata) = self.session.metadata_mut(id) {
+            metadata.ai_execution_profile = nyaterm_core::AiExecutionProfile::Disabled;
+        }
+        let app = cx.entity();
+        let seed = FileManagerSeed {
+            left: PaneEndpoint::Session(id.to_string()),
+            left_path: None,
+            right: PaneEndpoint::Local,
+            right_path: None,
+        };
+        let view = cx.new(|cx| {
+            let mut workspace = FileManagerWorkspace::new(app, format!("sftp-{id}"), seed, cx);
+            workspace.single_pane = true;
+            workspace
+        });
+        self.file_manager
+            .sftp_workspaces
+            .insert(id.to_string(), view);
+        self.refresh_file_manager_pane(format!("sftp-{id}"), PaneId::Left, cx);
+    }
+
+    pub(in crate::features) fn sftp_session_content(&self, id: &str) -> gpui::AnyElement {
+        self.file_manager
+            .sftp_workspaces
+            .get(id)
+            .map(|view| view.clone().into_any_element())
             .unwrap_or_else(|| div().into_any_element())
     }
 }

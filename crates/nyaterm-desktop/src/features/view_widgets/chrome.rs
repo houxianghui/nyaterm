@@ -1,6 +1,7 @@
 use gpui::{
     AnyElement, App, ClickEvent, FontWeight, IntoElement, MouseButton, SharedString, Stateful,
-    TitlebarOptions, Window, WindowControlArea, deferred, div, prelude::*, px, rgb, rgba, svg,
+    TextOverflow, TitlebarOptions, Window, WindowControlArea, deferred, div, prelude::*, px, rgb,
+    rgba, svg,
 };
 
 use super::child_window::ChildWindowChrome;
@@ -19,77 +20,9 @@ pub(in crate::features) fn logo_mark(_palette: ThemePalette) -> impl IntoElement
         .child(super::icons::nyaterm_app_icon(22.))
 }
 
-pub(in crate::features) fn vertical_resize_handle_visual(
-    palette: ThemePalette,
-    dragging: bool,
-    highlighted: bool,
-) -> gpui::Div {
-    div()
-        .relative()
-        .w(px(5.))
-        .ml(px(-2.))
-        .mr(px(-2.))
-        .h_full()
-        .flex_none()
-        .child(
-            div()
-                .absolute()
-                .left(px(2.))
-                .top_0()
-                .bottom_0()
-                .w(px(1.))
-                .bg(rgb(palette.border)),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(px(1.))
-                .top_0()
-                .bottom_0()
-                .w(px(3.))
-                .bg(if dragging || highlighted {
-                    rgb(palette.primary)
-                } else {
-                    rgba(0x00000000)
-                }),
-        )
-}
-
-pub(in crate::features) fn horizontal_resize_handle_visual(
-    palette: ThemePalette,
-    dragging: bool,
-    highlighted: bool,
-) -> gpui::Div {
-    div()
-        .relative()
-        .h(px(5.))
-        .mt(px(-2.))
-        .mb(px(-2.))
-        .w_full()
-        .flex_none()
-        .child(
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .top(px(2.))
-                .h(px(1.))
-                .bg(rgb(palette.border)),
-        )
-        .child(
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .top(px(1.))
-                .h(px(3.))
-                .bg(if dragging || highlighted {
-                    rgb(palette.primary)
-                } else {
-                    rgba(0x00000000)
-                }),
-        )
-}
+pub(in crate::features) use nyaterm_ui::resize_handle::{
+    horizontal_resize_handle_visual, vertical_resize_handle_visual,
+};
 
 pub(in crate::features) fn window_control_button(
     palette: ThemePalette,
@@ -151,7 +84,7 @@ fn toggle_child_window_zoom(window: &mut Window, _cx: &mut App) {
     window.zoom_window();
 }
 
-/// The 40px bar every child window draws in place of a native title bar.
+/// The 40px child-window header, omitted when Linux supplies a system title bar.
 ///
 /// Which controls appear is read off the window itself rather than passed in, so
 /// a window cannot end up offering a button the platform will ignore -- or, worse,
@@ -165,9 +98,12 @@ pub(in crate::features) fn child_window_header(
     window: &mut Window,
     cx: &mut App,
     on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let title = title.into();
+) -> AnyElement {
     let policy = WindowChrome::child(window, chrome == ChildWindowChrome::Sheet);
+    if !policy.show_child_header {
+        return div().size_0().into_any_element();
+    }
+    let title = title.into();
     div()
         .h(px(40.))
         .flex_none()
@@ -257,6 +193,7 @@ pub(in crate::features) fn child_window_header(
                     ))
                 }),
         )
+        .into_any_element()
 }
 
 pub(in crate::features) fn child_window_titlebar(
@@ -276,10 +213,65 @@ pub(in crate::features) fn panel_header_with_actions(
     background: gpui::Rgba,
     actions: Option<AnyElement>,
 ) -> impl IntoElement {
-    // Keep controls in flow; narrow panels may need another row for actions.
     let title = title.into();
     let meta = meta.into();
     let show_meta = !meta.is_empty();
+    let heading = div()
+        .min_w_0()
+        .flex_1()
+        .overflow_hidden()
+        .flex()
+        .items_baseline()
+        .gap_2()
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(px(11.))
+                .font_weight(FontWeight(700.))
+                .text_color(rgb(palette.text_muted))
+                .child(title.to_uppercase()),
+        )
+        .when(show_meta, |this| {
+            this.child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(11.))
+                    .text_color(rgb(palette.text_muted))
+                    .opacity(0.85)
+                    .child(meta),
+            )
+        });
+    panel_header_shell(heading.into_any_element(), palette, background, actions)
+}
+
+pub(in crate::features) fn conversation_panel_header_with_actions(
+    title: impl Into<SharedString>,
+    palette: ThemePalette,
+    background: gpui::Rgba,
+    actions: Option<AnyElement>,
+) -> impl IntoElement {
+    let heading = div()
+        .debug_selector(|| "ai-conversation-title".into())
+        .min_w_0()
+        .flex_1()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_overflow(TextOverflow::Truncate("...".into()))
+        .text_size(px(11.))
+        .text_color(rgb(palette.text_muted))
+        .child(title.into());
+    panel_header_shell(heading.into_any_element(), palette, background, actions)
+}
+
+fn panel_header_shell(
+    heading: AnyElement,
+    _palette: ThemePalette,
+    background: gpui::Rgba,
+    actions: Option<AnyElement>,
+) -> gpui::Div {
+    // Keep controls in flow; narrow panels may need another row for actions.
     div()
         .min_h(px(36.))
         .flex_none()
@@ -291,35 +283,7 @@ pub(in crate::features) fn panel_header_with_actions(
         .px_3()
         .py(px(3.))
         .bg(background)
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .overflow_hidden()
-                .flex()
-                .items_baseline()
-                .gap_2()
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(11.))
-                        .font_weight(FontWeight(700.))
-                        .text_color(rgb(palette.text_muted))
-                        .child(title.to_uppercase()),
-                )
-                .when(show_meta, |this| {
-                    this.child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(11.))
-                            .text_color(rgb(palette.text_muted))
-                            .opacity(0.85)
-                            .child(meta),
-                    )
-                }),
-        )
+        .child(heading)
         .when_some(actions, |this, actions| {
             this.child(
                 div()
@@ -369,7 +333,10 @@ pub(in crate::features) fn full_window_overlay_layer(
     id: impl Into<String>,
     content: impl IntoElement,
 ) -> gpui::Deferred {
-    deferred(full_window_input_layer(id).child(content)).with_priority(APP_OVERLAY_PRIORITY)
+    deferred(nyaterm_ui::nya_modal_overlay(
+        full_window_input_layer(id).child(content),
+    ))
+    .with_priority(APP_OVERLAY_PRIORITY)
 }
 
 /// Overlay layer that keeps the window's text-selection listeners alive.
@@ -382,7 +349,7 @@ pub(in crate::features) fn selectable_overlay_layer(
     id: impl Into<String>,
     content: impl IntoElement,
 ) -> gpui::Deferred {
-    deferred(
+    deferred(nyaterm_ui::nya_modal_overlay(
         div()
             .id(SharedString::from(id.into()))
             .key_context(crate::shortcuts::MODAL_KEY_CONTEXT)
@@ -390,14 +357,28 @@ pub(in crate::features) fn selectable_overlay_layer(
             .inset_0()
             .occlude()
             .child(content),
-    )
+    ))
     .with_priority(APP_OVERLAY_PRIORITY)
+}
+
+/// Positioning shells do not own input; only menu controls contribute regions.
+pub(in crate::features) fn regional_overlay_layer(
+    _id: impl Into<String>,
+    content: impl IntoElement,
+) -> gpui::Deferred {
+    deferred(nyaterm_ui::nya_region_overlay(content)).with_priority(APP_OVERLAY_PRIORITY)
+}
+
+/// Lifts a modal that already supplies its own input boundary. In particular,
+/// the lock screen must let Windows caption presses reach the window procedure.
+pub(in crate::features) fn modal_overlay_layer(content: impl IntoElement) -> gpui::Deferred {
+    deferred(nyaterm_ui::nya_modal_overlay(content)).with_priority(APP_OVERLAY_PRIORITY)
 }
 
 /// Lifts an overlay that deliberately owns no input layer above the resize
 /// handles. Hover-driven surfaces must not block the pointer underneath them.
 pub(in crate::features) fn passive_overlay_layer(content: impl IntoElement) -> gpui::Deferred {
-    deferred(content).with_priority(APP_OVERLAY_PRIORITY)
+    deferred(nyaterm_ui::nya_passive_overlay(content)).with_priority(APP_OVERLAY_PRIORITY)
 }
 
 /// Dimmed full-area modal shell (Tauri Dialog backdrop + centered card).
@@ -522,7 +503,7 @@ mod tests {
                 .on_mouse_move(move |_, _, _| {
                     moved.fetch_add(1, Ordering::SeqCst);
                 })
-                .on_scroll_wheel(move |_, _, _| {
+                .on_scroll(move |_, _, _| {
                     scrolled.fetch_add(1, Ordering::SeqCst);
                 })
                 .child(super::selectable_overlay_layer(
@@ -549,11 +530,12 @@ mod tests {
         let position = point(px(12.), px(12.));
         cx.simulate_mouse_move(position, None, Modifiers::none());
         cx.simulate_click(position, Modifiers::none());
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position,
             delta: gpui::ScrollDelta::Lines(point(0., -3.)),
             modifiers: Modifiers::none(),
             touch_phase: gpui::TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         assert_eq!(overlay_clicks.load(Ordering::SeqCst), 1);
         assert_eq!(background_events.load(Ordering::SeqCst), 0);

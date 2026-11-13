@@ -26,8 +26,14 @@ pub enum SessionKind {
     Vnc,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Eq` is impossible: `TmuxState` carries `f64` layout ratios.
+#[derive(Debug, Clone, PartialEq)]
 pub enum SessionEvent {
+    /// Application notice; does not contribute terminal output bytes.
+    Notice {
+        session_id: String,
+        notice: crate::session_notice::SessionNotice,
+    },
     /// In-process ordering fence; never sent to the terminal or persisted.
     OutputBoundary {
         session_id: String,
@@ -50,6 +56,10 @@ pub enum SessionEvent {
         session_id: String,
         cwd: String,
     },
+    CommandContext {
+        session_id: String,
+        context: nyaterm_core::completion::types::ShellCommandContext,
+    },
     CommandAccepted {
         session_id: String,
         command: String,
@@ -61,6 +71,12 @@ pub enum SessionEvent {
     Error {
         session_id: String,
         message: String,
+    },
+    /// tmux control-mode state for an SSH session in control mode. The
+    /// payload carries the full window/pane projection the workspace renders.
+    TmuxState {
+        session_id: String,
+        state: Box<crate::tmux::TmuxStatePayload>,
     },
 }
 
@@ -101,7 +117,7 @@ pub struct SessionDrainStats {
     pub dropped_output_bytes: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SessionDrain {
     pub events: Vec<SessionEvent>,
     pub stats: SessionDrainStats,
@@ -131,6 +147,11 @@ pub enum SessionError {
     ConnectTcp {
         addr: String,
         source: std::io::Error,
+    },
+    #[error("failed to connect TCP session to {addr}: {source}")]
+    ConnectRoute {
+        addr: String,
+        source: crate::network_route::RouteConnectError,
     },
     #[error("failed to clone TCP stream for session {session_id}: {source}")]
     CloneTcp {

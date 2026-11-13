@@ -1,20 +1,17 @@
-use futures::StreamExt as _;
-use rust_i18n::t;
-
-use gpui::{Context, Window};
-use nyaterm_transport::DockerService;
-
-use crate::blocking_jobs::BlockingJobScheduler;
-use crate::features::NyaTermApp;
-use crate::features::formatting::{compact_id, docker_compose_project_key};
-use crate::features::runtime_jobs::{DockerJobOutput, DockerJobResult, DockerResource};
-use crate::models::{DockerConfirmAction, DockerConfirmState, DockerTab, NavItem};
-
 use super::helpers::{
     ActiveSshRuntimeContext, DOCKER_SHELL_SELECTOR, docker_compose_terminal_base,
     docker_overview_status, shell_quote,
 };
+use crate::blocking_jobs::BlockingJobScheduler;
+use crate::features::NyaTermApp;
+use crate::features::formatting::{compact_id, docker_compose_project_key};
 use crate::features::remote::job_state::RemoteJobTicket;
+use crate::features::runtime_jobs::{DockerJobOutput, DockerJobResult, DockerResource};
+use crate::models::{DockerConfirmAction, DockerConfirmState, DockerTab, NavItem};
+use futures::StreamExt as _;
+use gpui::{Context, Window};
+use nyaterm_remote_ops::docker::DockerService;
+use rust_i18n::t;
 
 fn submit_docker_job(
     scheduler: &BlockingJobScheduler,
@@ -78,6 +75,12 @@ impl NyaTermApp {
         action: &str,
         cx: &mut Context<Self>,
     ) -> Option<ActiveSshRuntimeContext> {
+        if self.local_host_tools_unsupported() {
+            self.remote_ops
+                .set_docker_status(t!("hostTools.localWindowsUnsupported").to_string());
+            cx.notify();
+            return None;
+        }
         match self.active_ssh_runtime_context(action) {
             Ok(context) => Some(context),
             Err(message) => {
@@ -94,8 +97,8 @@ impl NyaTermApp {
         let Some(context) = self.active_docker_runtime_context("inspecting Docker", cx) else {
             return;
         };
-        let config = context.config;
-        let multiplex = context.multiplex;
+        let target = context.target;
+        let docker_state = context.docker_state;
         let job_session_id = context.session_id;
         if self.remote_ops.docker_is_pending_for(&job_session_id) {
             self.remote_ops
@@ -118,7 +121,7 @@ impl NyaTermApp {
             job_session_id,
             move || {
                 (|| {
-                    let service = DockerService::with_multiplex(config, multiplex)?;
+                    let service = DockerService::with_target(target, docker_state);
                     let overview = service.overview()?;
                     let resource = overview
                         .available
@@ -165,13 +168,11 @@ impl NyaTermApp {
             ticket,
             job_session_id,
             move || {
-                (|| {
-                    let service = DockerService::with_multiplex(context.config, context.multiplex)?;
-                    fetch_docker_resource(&service, tab)
-                        .expect("resource tab has a Docker command")
-                        .map(DockerJobOutput::Resource)
-                })()
-                .map_err(|error: anyhow::Error| error.to_string())
+                let service = DockerService::with_target(context.target, context.docker_state);
+                fetch_docker_resource(&service, tab)
+                    .expect("resource tab has a Docker command")
+                    .map(DockerJobOutput::Resource)
+                    .map_err(|error: anyhow::Error| error.to_string())
             },
         );
         cx.notify();
@@ -187,8 +188,8 @@ impl NyaTermApp {
         let Some(context) = self.active_docker_runtime_context("changing containers", cx) else {
             return;
         };
-        let config = context.config;
-        let multiplex = context.multiplex;
+        let target = context.target;
+        let docker_state = context.docker_state;
         let job_session_id = context.session_id;
         if self.remote_ops.docker_is_pending_for(&job_session_id) {
             self.remote_ops
@@ -209,7 +210,7 @@ impl NyaTermApp {
             job_session_id,
             move || {
                 (|| {
-                    let service = DockerService::with_multiplex(config, multiplex)?;
+                    let service = DockerService::with_target(target, docker_state);
                     service.container_action(&container_id, action)?;
                     let overview = service.overview()?;
                     Ok(DockerJobOutput::RefreshedAfterAction {
@@ -231,8 +232,8 @@ impl NyaTermApp {
         let Some(context) = self.active_docker_runtime_context("reading Docker details", cx) else {
             return;
         };
-        let config = context.config;
-        let multiplex = context.multiplex;
+        let target = context.target;
+        let docker_state = context.docker_state;
         let job_session_id = context.session_id;
         if self.remote_ops.docker_is_pending_for(&job_session_id) {
             self.remote_ops
@@ -252,15 +253,13 @@ impl NyaTermApp {
             ticket,
             job_session_id,
             move || {
-                (|| {
-                    DockerService::with_multiplex(config, multiplex)?
-                        .container_details(&container_id)
-                        .map(|details| DockerJobOutput::Details {
-                            container_id,
-                            details,
-                        })
-                })()
-                .map_err(|error: anyhow::Error| error.to_string())
+                DockerService::with_target(target, docker_state)
+                    .container_details(&container_id)
+                    .map(|details| DockerJobOutput::Details {
+                        container_id,
+                        details,
+                    })
+                    .map_err(|error: anyhow::Error| error.to_string())
             },
         );
         cx.notify();
@@ -374,8 +373,8 @@ impl NyaTermApp {
         else {
             return;
         };
-        let config = context.config;
-        let multiplex = context.multiplex;
+        let target = context.target;
+        let docker_state = context.docker_state;
         let job_session_id = context.session_id;
         if self.remote_ops.docker_is_pending_for(&job_session_id) {
             self.remote_ops
@@ -395,16 +394,14 @@ impl NyaTermApp {
             ticket,
             job_session_id,
             move || {
-                (|| {
-                    DockerService::with_multiplex(config, multiplex)?
-                        .compose_services(&project_name, config_files.as_deref())
-                        .map(|services| DockerJobOutput::ComposeServices {
-                            key,
-                            project_name,
-                            services,
-                        })
-                })()
-                .map_err(|error: anyhow::Error| error.to_string())
+                DockerService::with_target(target, docker_state)
+                    .compose_services(&project_name, config_files.as_deref())
+                    .map(|services| DockerJobOutput::ComposeServices {
+                        key,
+                        project_name,
+                        services,
+                    })
+                    .map_err(|error: anyhow::Error| error.to_string())
             },
         );
         cx.notify();
@@ -423,8 +420,8 @@ impl NyaTermApp {
         else {
             return;
         };
-        let config = context.config;
-        let multiplex = context.multiplex;
+        let target = context.target;
+        let docker_state = context.docker_state;
         let job_session_id = context.session_id;
         if self.remote_ops.docker_is_pending_for(&job_session_id) {
             self.remote_ops
@@ -444,7 +441,7 @@ impl NyaTermApp {
             job_session_id,
             move || {
                 (|| {
-                    let service = DockerService::with_multiplex(config, multiplex)?;
+                    let service = DockerService::with_target(target, docker_state);
                     service.compose_service_action(
                         &project_name,
                         config_files.as_deref(),
@@ -480,8 +477,8 @@ impl NyaTermApp {
         else {
             return;
         };
-        let config = context.config;
-        let multiplex = context.multiplex;
+        let target = context.target;
+        let docker_state = context.docker_state;
         let job_session_id = context.session_id;
         if self.remote_ops.docker_is_pending_for(&job_session_id) {
             self.remote_ops
@@ -502,7 +499,7 @@ impl NyaTermApp {
             job_session_id,
             move || {
                 (|| {
-                    let service = DockerService::with_multiplex(config, multiplex)?;
+                    let service = DockerService::with_target(target, docker_state);
                     service.compose_action(&project_name, config_files.as_deref(), action)?;
                     let overview = service.overview()?;
                     let service_result =
@@ -560,8 +557,8 @@ impl NyaTermApp {
         else {
             return;
         };
-        let config = context.config;
-        let multiplex = context.multiplex;
+        let target = context.target;
+        let docker_state = context.docker_state;
         let job_session_id = context.session_id;
         if self.remote_ops.docker_is_pending_for(&job_session_id) {
             self.remote_ops
@@ -581,7 +578,7 @@ impl NyaTermApp {
             move || {
                 (|| {
                     let label = confirm.title.clone();
-                    let service = DockerService::with_multiplex(config, multiplex)?;
+                    let service = DockerService::with_target(target, docker_state);
                     match confirm.action {
                         DockerConfirmAction::ContainerAction {
                             container_id,

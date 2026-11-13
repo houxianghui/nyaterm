@@ -49,13 +49,13 @@ impl RenderOnce for NyaDisclosure {
         let muted = cx.theme().muted_foreground;
         let foreground = cx.theme().foreground;
         let hover_group = self.id.clone();
-        let chevron = svg()
-            .path("icons/menu/chevron-right.svg")
-            .size(px(12.))
+        let caret = svg()
+            .path("icons/menu/caret.svg")
+            .size(px(10.))
             .text_color(muted)
             .flex_none()
             .with_spring(
-                "chevron",
+                "caret",
                 SpringAnimation::new(SpringConfig::new(2500., 100., 1.))
                     .to(if self.open { 0.25_f32 } else { 0. })
                     .with_epsilon(0.01),
@@ -78,7 +78,7 @@ impl RenderOnce for NyaDisclosure {
                     .text_size(px(11.))
                     .line_height(px(16.))
                     .group_hover(hover_group, move |style| style.text_color(foreground))
-                    .child(chevron)
+                    .child(caret)
                     .child(self.label),
             );
         if let Some(on_click) = self.on_click {
@@ -104,13 +104,18 @@ pub fn running_indicator(id: impl Into<SharedString>, color: impl Into<Hsla>) ->
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
+    use std::cell::Cell;
+    use std::rc::Rc;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use gpui::{
-        AppContext, AssetSource, Context, HeadlessAppContext, IntoElement, NoopTextSystem, Render,
-        SharedString, Window, div, font, prelude::*, px, rgb, size,
+        AppContext, AssetSource, Bounds, Context, HeadlessAppContext, IntoElement, KeyDownEvent,
+        KeyUpEvent, Keystroke, ListAlignment, ListOffset, ListState, Modifiers, NoopTextSystem,
+        Render, SharedString, TestAppContext, Window, div, font, list, point, prelude::*, px, rgb,
+        size,
     };
+    use gpui_base::ElementExt as _;
 
     use crate::chat::{NyaDisclosure, running_indicator};
     use crate::{apply_component_theme, theme_palette};
@@ -123,9 +128,9 @@ mod tests {
     impl AssetSource for IconAssets {
         fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
             let (bit, bytes): (usize, &'static [u8]) = match path {
-                "icons/menu/chevron-right.svg" => (
+                "icons/menu/caret.svg" => (
                     1,
-                    include_bytes!("../../nyaterm-app/assets/icons/menu/chevron-right.svg"),
+                    include_bytes!("../../nyaterm-app/assets/icons/menu/caret.svg"),
                 ),
                 "icons/conn/spinner-arc.svg" => (
                     2,
@@ -152,6 +157,103 @@ mod tests {
                 .child(NyaDisclosure::new("disclosure", "Details", true))
                 .child(running_indicator("running", rgb(0x3366ff)))
         }
+    }
+
+    struct DisclosureListFixture {
+        state: ListState,
+        request: Rc<Cell<bool>>,
+        activations: Rc<Cell<usize>>,
+    }
+
+    impl Render for DisclosureListFixture {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let request = self.request.clone();
+            let activations = self.activations.clone();
+            list(self.state.clone(), move |index, _, _| {
+                let activations = activations.clone();
+                let request = request.clone();
+                div()
+                    .id(("disclosure-row", index))
+                    .relative()
+                    .h(px(100.))
+                    .w_full()
+                    .child(
+                        div()
+                            .debug_selector(move || format!("disclosure-{index}"))
+                            .child(
+                                NyaDisclosure::new(format!("disclosure-{index}"), "Details", false)
+                                    .on_click(move |_, _, _| {
+                                        activations.set(activations.get() + 1);
+                                    }),
+                            ),
+                    )
+                    .on_prepaint(move |bounds, window, _| {
+                        if request.get() && index == 4 {
+                            window.request_autoscroll(Bounds::from_corners(
+                                point(bounds.left(), bounds.top() + px(80.)),
+                                point(bounds.right(), bounds.top() + px(90.)),
+                            ));
+                        }
+                    })
+                    .into_any_element()
+            })
+            .w(px(200.))
+            .h(px(200.))
+        }
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[gpui::test]
+    fn disclosures_remain_mouse_and_keyboard_operable_after_accessible_autoscroll_retry(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init_components);
+        let state = ListState::new(10, ListAlignment::Top, px(0.));
+        let offset = ListOffset {
+            item_ix: 2,
+            offset_in_item: px(50.),
+        };
+        state.scroll_to(offset);
+        let request = Rc::new(Cell::new(false));
+        let activations = Rc::new(Cell::new(0));
+        let (_, vcx) = cx.add_window_view(|_, _| DisclosureListFixture {
+            state: state.clone(),
+            request: request.clone(),
+            activations: activations.clone(),
+        });
+        assert!(vcx.activate_accessibility());
+        request.set(true);
+        state.scroll_to(offset);
+        vcx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+            assert!(window.is_a11y_active());
+        });
+        assert_eq!(state.logical_scroll_top().offset_in_item, px(90.));
+        request.set(false);
+        let bounds = vcx.debug_bounds("disclosure-3").unwrap();
+        vcx.simulate_click(
+            point(bounds.left() + px(5.), bounds.top() + px(10.)),
+            Modifiers::default(),
+        );
+        assert_eq!(activations.get(), 1);
+        vcx.update(|window, cx| {
+            window.blur(cx);
+            // The first row is partially clipped; Tab twice reaches the
+            // visible disclosure whose mouse activation we just exercised.
+            window.focus_next(cx);
+            window.focus_next(cx);
+            window.draw(cx).clear(cx);
+            assert!(window.focused(cx).is_some());
+        });
+        let enter = Keystroke::parse("enter").unwrap();
+        vcx.simulate_event(KeyDownEvent {
+            keystroke: enter.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        vcx.simulate_event(KeyUpEvent { keystroke: enter });
+        assert_eq!(activations.get(), 2);
     }
 
     #[test]

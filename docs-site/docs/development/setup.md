@@ -119,7 +119,9 @@ cargo build -p nyaterm-app --bin nyaterm --release --locked
 
 发布包由 `scripts/release/package_native.py` 生成。它会以锁定依赖分别构建应用和两个 helper，把 helper 放到应用旁边，并按平台产出安装包和便携包。新增 helper 时必须同时更新该脚本的 `HELPER_BINS` 列表。
 
-### 六个发布目标
+### 原生打包目标与 CI 范围
+
+打包脚本保留六个原生目标：
 
 | 平台 | Rust target | 产物 |
 | --- | --- | --- |
@@ -130,14 +132,14 @@ cargo build -p nyaterm-app --bin nyaterm --release --locked
 | Windows x64 | `x86_64-pc-windows-msvc` | `_portable.zip`、`-setup.exe` |
 | Windows arm64 | `aarch64-pc-windows-msvc` | `_portable.zip`、`-setup.exe` |
 
-Release CI 的每个 matrix leg 都执行：
+当前 `Release` 与 `Main Snapshot` CI 只调度 Windows x64 和 Windows ARM64 两个 matrix leg；macOS/Linux 目标仍可用于手动原生打包，Rust CI 的跨平台测试矩阵保持不变。每个打包 leg 都执行：
 
 ```bash
 python scripts/release/package_native.py "${TARGET}"
 python scripts/release/verify_native_package.py --target "${TARGET}" --version "${VERSION}" --dist dist
 ```
 
-发布前还会对六目标合并后的资产集合执行 `scripts/ci/check_release_assets.py`，拒绝缺失或多余的产物。
+发布前还会对两个 Windows CI 目标合并后的资产集合执行 `scripts/ci/check_release_assets.py`，拒绝缺失或多余的产物。
 
 `NYATERM_ARTIFACT_VERSION` 只改变产物文件名中的版本段，包内元数据仍使用 workspace 的 SemVer。该接口仅供手动快照构建使用，打包和验包必须传入同一个值：
 
@@ -149,15 +151,45 @@ python scripts/release/verify_native_package.py \
   --artifact-version main-snapshot --dist dist
 ```
 
-正式标签在验包后发布 GitHub Release 和 R2 版本目录，再触发 Gitee、AUR 与 Homebrew。官网读取 `downloads.json`；签名的 `latest.json` 只用于让已安装的旧 Tauri 版本迁移到 GPUI。稳定版才覆盖 R2 根目录清单，预发布只保留版本化清单。手动运行 `Main Snapshot` 会覆盖 `main-snapshot` prerelease，不发布到外部分发渠道。
+### 外部包管理器构建
 
-Release workflow 需要 `NYATERM_GITHUB_GIST_CLIENT_ID`、Gitee/R2 Variables，以及 Tauri updater、R2、Gitee、AUR、Homebrew 对应的 Secrets。相关发布步骤缺少配置时会失败，不会生成缺功能或只发布一部分渠道的正式包。
+源码构建型打包者（例如 nixpkgs）可以在构建时设置 `NYATERM_PACKAGE_MANAGER`，声明更新由外部包管理器负责：
+
+```bash
+NYATERM_PACKAGE_MANAGER=nix cargo build -p nyaterm-app --release --locked
+```
+
+该值在编译期写入二进制：应用跳过启动静默更新检查，隐藏标题栏与托盘中的应用内更新入口，并在“关于”窗口的支持信息里显示包管理器名称。未设置时行为与普通构建完全一致，开发构建应保持未设置；Cargo 会随该变量的变化重编相关 crate，不需要额外的 build script。
+
+该变量只对源码构建的包有意义。AUR 与 Homebrew cask 由发布产物（`.deb` / `.dmg`）重打包，更新仍由应用自身负责，无需设置。
+
+正式标签在验包后发布 GitHub Release 和 R2 版本目录，再触发 Gitee 镜像。AUR 与 Homebrew 不再随 Windows-only Release 自动发布，只保留手动工作流以维护历史 macOS/Linux 包。官网读取 `downloads.json`；签名的 `latest.json` 只用于让已安装的旧 Tauri 版本迁移到 GPUI。稳定版更新 R2 根目录清单；预发布更新 `channels/preview/` 清单。手动运行 `Main Snapshot` 会覆盖 `main-snapshot` prerelease，不发布到外部分发渠道。
+
+Release workflow 需要 `NYATERM_GITHUB_GIST_CLIENT_ID`、Gitee/R2 Variables，以及 Tauri updater、R2、Gitee 对应的 Secrets。手动维护 AUR 或 Homebrew 时仍需对应渠道的 Secrets。相关发布步骤缺少配置时会失败，不会生成缺功能或只发布一部分渠道的正式包。
 
 ### 原生工具与手工验收边界
 
 原生打包依赖目标平台工具：Windows 使用 NSIS，验证安装包时还需要 7-Zip；macOS 使用 `codesign` 和 `hdiutil`；Linux 使用 `appimagetool`、`dpkg-shlibdeps`、`dpkg-deb`、`rpmbuild`、`rpm`/`rpm2cpio` 等工具。因此在缺少对应工具的平台上，单独运行 Python 打包单测并不等于完成原生打包。
 
 自动验证会检查产物集合、归档路径、应用与 helper 是否齐全、二进制架构、版本及包元数据。它不会证明 GUI 能实际启动，也不会覆盖真实安装/升级/卸载、快捷方式或 `nyaterm:` URL handler 调用、签名/notarization 与 Gatekeeper/SmartScreen 信任、真实 RDP/VNC 会话，以及 GPU、IME、PTY、剪贴板和窗口生命周期。发布候选必须在对应目标操作系统上手工验收这些行为，并如实记录实际执行的平台与结果。
+
+## CI 按需执行
+
+Rust 和 Docs 工作流先运行轻量的 `orchestrate`，验证筛选规则：PR 比较 base SHA 与实际测试的合并提交，push 比较 before/after，Merge Queue 比较 base_sha/head_sha。它按全部变更路径的并集选择任务，并在 Actions 的 Job Summary 中列出原因。普通 Rust 改动仍执行现有 lint 和 Linux、macOS、Windows workspace 测试；应用翻译 JSON 也保留这些验证。
+
+四组 tmux 兼容性任务仅在 transport、terminal、core、插件 API、MCP 协议及共享构建/CI 配置变化时运行。插件 SDK 根据插件示例、脚本及相关 crate 变化运行；Python 和工作流检查也有各自的路径规则。纯文档站或根目录 Markdown 改动只执行文档相关验证；纯 Rust 改动跳过文档站构建。共享构建配置或无法分类的路径启用全套检查。
+
+给 PR 添加 `run-tmux` 标签可以强制执行完整 tmux 矩阵；标签保留时，后续提交也会继续运行。标签事件同时重新执行该 PR 按路径应运行的其他检查，不会只报告 tmux 结果。Push 到 `main`、`migration/gpui` 或 `gpui` 及 Merge Queue 也按改动选择任务；手动运行保持全量。每周日北京时间 03:00（UTC cron `0 19 * * 6`）在默认 main 分支运行完整常规 CI。focal Docker 构建只通过手动工作流运行，不属于 fork 的 Windows-only Release。
+
+筛选无法识别的路径、新 crate、Cargo 清单/锁文件及共享构建配置改动会启用全部任务；比较版本缺失或 Git diff 失败也回退到全量。筛选脚本异常或其回归测试失败则使 `Rust gate` 失败。新增 workspace crate 或调整相关 crate 的依赖时，需要同步更新 `scripts/ci/select_rust_jobs.py` 的登记与依赖集合，清单检查会防止漏测。
+
+`Rust gate` 和 `Docs gate` 保持为统一 Required Check，并支持 Merge Queue。Gate 始终汇总依赖结果：成功和按条件跳过可以通过，失败或取消不能通过。
+
+普通 CI 与发布共用根目录 `rust-toolchain.toml` 固定的 Rust 1.99.1。Python 脚本测试通过 `python scripts/ci/test_scripts.py` 自动发现；Windows 资源、WiX 和诊断原生测试分别通过 `--suite windows-resources`、`--suite windows-msi`、`--suite diagnostic` 执行，指定套件缺少必需工具会失败。每个平台的跳过数量写入 Job Summary。
+
+Release 和 Snapshot 共用 Windows x64/ARM64 打包流程，来源记录绑定实际源码、target/variant、编译器、锁文件、构建配置与文件哈希。旧来源记录可用 `release_provenance.py verify --legacy` 验证；正式发布要求两个 Windows CI 目标均有完整版本 2 记录，信息不完整时重建全部产物。发布后的结构化回执供 Gitee、AUR 和 Homebrew 共用；渠道失败可单独重试。恢复步骤见 [Release 工具说明](https://github.com/nyakang/nyaterm/blob/main/scripts/release/README.md)。
+
+Snapshot 默认只构建两个 Windows 原生包，保留 `main-snapshot` 固定下载链接；稳定版生成 Windows MSI，预发布版与 Snapshot 不生成 MSI。glibc 2.31 focal 兼容包工作流仍保留供手动维护，但不进入 Release、Snapshot 或签名演练的产物门槛。
 
 ## 文档站开发
 

@@ -40,10 +40,14 @@ pub(in crate::features) fn remote_refresh_due(
 
 impl NyaTermApp {
     pub(in crate::features) fn refresh_stats_if_due(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.session.active_remote_probes_enabled() {
+            return false;
+        }
         if self.remote_ops.stats_is_pending() {
             return false;
         }
-        if self.remote_ops.take_stats_warmup_retry_due()
+        if self.remote_ops.take_stats_users_refresh_due()
+            || self.remote_ops.take_stats_warmup_retry_due()
             || remote_refresh_due(
                 self.remote_ops.stats_last_refresh_at(),
                 self.settings.summary().ui_remote_stats_interval.max(1),
@@ -56,6 +60,9 @@ impl NyaTermApp {
     }
 
     pub(in crate::features) fn refresh_gpu_if_due(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.local_host_tools_unsupported() || !self.session.active_remote_probes_enabled() {
+            return false;
+        }
         if !self.remote_ops.gpu_is_pending()
             && remote_refresh_due(
                 self.remote_ops.gpu_last_refresh_at(),
@@ -69,6 +76,9 @@ impl NyaTermApp {
     }
 
     pub(in crate::features) fn refresh_npu_if_due(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.local_host_tools_unsupported() || !self.session.active_remote_probes_enabled() {
+            return false;
+        }
         if !self.remote_ops.npu_is_pending()
             && remote_refresh_due(
                 self.remote_ops.npu_last_refresh_at(),
@@ -85,6 +95,9 @@ impl NyaTermApp {
     }
 
     pub(in crate::features) fn refresh_processes_if_due(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.session.active_remote_probes_enabled() {
+            return false;
+        }
         if !self.remote_ops.process_is_pending()
             && remote_refresh_due(
                 self.remote_ops.process_last_refresh_at(),
@@ -99,6 +112,9 @@ impl NyaTermApp {
 
     /// The overview and visible resource, or an open container's details on the off beats.
     pub(in crate::features) fn refresh_docker_if_due(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.local_host_tools_unsupported() || !self.session.active_remote_probes_enabled() {
+            return false;
+        }
         if self.remote_ops.docker_is_pending() {
             return false;
         }

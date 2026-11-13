@@ -26,7 +26,12 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.run = "1234"
         for name in generate_release_metadata.expected_artifacts(self.version):
             (self.dist / name).write_bytes(name.encode())
-        for target in package_native.TARGETS:
+        ci_targets = [
+            target
+            for target, info in package_native.TARGETS.items()
+            if info.os_name == "windows"
+        ]
+        for target in ci_targets:
             value = release_provenance.record(self.dist, target, self.sha, self.version, self.run)
             (self.records / f"{target}.json").write_text(json.dumps(value), encoding="utf-8")
 

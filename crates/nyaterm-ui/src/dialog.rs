@@ -1,37 +1,47 @@
 use std::{
+    cell::{Cell, RefCell},
     collections::HashMap,
     rc::{Rc, Weak},
 };
 
 use gpui::{
-    App, ClickEvent, Global, InteractiveElement as _, IntoElement, ParentElement as _,
+    App, ClickEvent, FocusHandle, Global, InteractiveElement as _, IntoElement, ParentElement as _,
     SharedString, Styled as _, Window, WindowId, div, px,
 };
 use gpui_kit::component::{
-    Disableable as _, WindowExt as _,
+    DialogHandle, Disableable as _, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
-    dialog::{Dialog, DialogAction, DialogButtonProps, DialogClose, DialogFooter},
+    dialog::{Cancel, Confirm, Dialog, DialogAction, DialogButtonProps, DialogClose, DialogFooter},
 };
 
 pub struct NyaDialog {
     inner: Dialog,
+    focus_first_control: bool,
+    shell_focus: Option<FocusHandle>,
+    pointer_confirm: Rc<Cell<bool>>,
 }
 
-/// A weak identity: the component stack's builder owns the dialog's lifetime.
+/// A weak identity whose logical lifetime ends when the component closes it.
 #[derive(Clone)]
 pub struct NyaDialogHandle {
     window: WindowId,
     marker: Weak<()>,
+    lifecycle: DialogHandle,
 }
 
 #[derive(Default)]
-struct DialogIdentities(HashMap<WindowId, Vec<Weak<()>>>);
+struct DialogIdentities(HashMap<WindowId, Vec<(Weak<()>, DialogHandle)>>);
 
 impl Global for DialogIdentities {}
 
+const CANCEL_BUTTON_CONTEXT: &str = "NyaDialogCancelButton";
+const ACTION_BUTTON_CONTEXT: &str = "NyaDialogActionButton";
+struct DialogButtonBindings;
+impl Global for DialogButtonBindings {}
+
 impl NyaDialogHandle {
     pub fn is_active(&self) -> bool {
-        self.marker.strong_count() > 0
+        self.lifecycle.is_active() && self.marker.strong_count() > 0
     }
 
     pub fn is_top(&self, window: &Window, cx: &mut App) -> bool {
@@ -40,20 +50,31 @@ impl NyaDialogHandle {
         }
         let identities = cx.default_global::<DialogIdentities>();
         identities.0.retain(|_, stack| {
-            stack.retain(|marker| marker.strong_count() > 0);
+            stack.retain(|(marker, lifecycle)| lifecycle.is_active() && marker.strong_count() > 0);
             !stack.is_empty()
         });
         identities
             .0
             .get(&self.window)
             .and_then(|stack| stack.last())
-            .is_some_and(|marker| marker.ptr_eq(&self.marker))
+            .is_some_and(|(marker, _)| marker.ptr_eq(&self.marker))
     }
 }
 
 impl NyaDialog {
-    fn from_component(inner: Dialog) -> Self {
-        Self { inner }
+    fn from_component(inner: Dialog, shell_focus: Option<FocusHandle>) -> Self {
+        Self {
+            inner,
+            focus_first_control: false,
+            shell_focus,
+            pointer_confirm: Rc::new(Cell::new(false)),
+        }
+    }
+
+    /// Focus the first Tab stop inside the dialog once it opens.
+    pub fn focus_first_control(mut self, focus: bool) -> Self {
+        self.focus_first_control = focus;
+        self
     }
 
     pub fn title(mut self, title: impl IntoElement) -> Self {
@@ -100,7 +121,7 @@ impl NyaDialog {
         self.inner = self
             .inner
             .button_props(footer.button_props())
-            .footer(footer.into_footer());
+            .footer(footer.into_footer(self.pointer_confirm.clone()));
         self
     }
 
@@ -159,14 +180,18 @@ impl NyaDialog {
     }
 }
 
+type NyaConfirmHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static>;
+
 pub struct NyaConfirmDialog {
     dialog: NyaDialog,
+    on_confirm: Option<NyaConfirmHandler>,
 }
 
 impl NyaConfirmDialog {
     pub fn new(dialog: NyaDialog, footer: NyaDialogFooter) -> Self {
         Self {
-            dialog: dialog.confirm(footer),
+            dialog: dialog.confirm(footer).focus_first_control(true),
+            on_confirm: None,
         }
     }
 
@@ -179,7 +204,7 @@ impl NyaConfirmDialog {
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static,
     ) -> Self {
-        self.dialog = self.dialog.on_ok(handler);
+        self.on_confirm = Some(Box::new(handler));
         self
     }
 
@@ -192,7 +217,23 @@ impl NyaConfirmDialog {
     }
 
     pub fn into_dialog(self) -> NyaDialog {
-        self.dialog
+        let shell_focus = self.dialog.shell_focus.clone();
+        let pointer_confirm = self.dialog.pointer_confirm.clone();
+        let on_confirm = self.on_confirm;
+        self.dialog.on_ok(move |event, window, cx| {
+            let from_pointer = pointer_confirm.replace(false);
+            if !from_pointer && window.focused(cx) == shell_focus {
+                // Only the base Dialog's shell Enter is converted to Cancel.
+                // Pointer clicks keep their meaning even though gpui-kit's
+                // buttons deliberately do not take focus on mouse down.
+                window.dispatch_action(Box::new(Cancel), cx);
+                false
+            } else if let Some(handler) = &on_confirm {
+                handler(event, window, cx)
+            } else {
+                true
+            }
+        })
     }
 }
 
@@ -242,7 +283,7 @@ impl NyaDialogFooter {
     }
 
     pub fn into_element(self) -> impl IntoElement {
-        self.into_footer()
+        self.into_footer(Rc::new(Cell::new(false)))
     }
 
     fn button_props(&self) -> DialogButtonProps {
@@ -250,30 +291,23 @@ impl NyaDialogFooter {
             .cancel_text(self.cancel_label.clone())
             .ok_text(self.action_label.clone())
             .show_cancel(true)
-            .ok_variant(if self.danger {
-                ButtonVariant::Danger
-            } else {
-                ButtonVariant::Primary
-            })
+            .ok_variant(ButtonVariant::Primary)
     }
 
-    fn into_footer(self) -> DialogFooter {
-        let action_variant = if self.danger {
-            ButtonVariant::Danger
-        } else {
-            ButtonVariant::Primary
-        };
-
+    fn into_footer(self, pointer_confirm: Rc<Cell<bool>>) -> DialogFooter {
         let cancel = Button::new("nya-dialog-cancel")
             .outline()
             .label(self.cancel_label)
             .disabled(self.disabled)
+            .key_context(CANCEL_BUTTON_CONTEXT)
             .debug_selector(|| "nya-dialog-cancel-button".to_string());
         let action = Button::new("nya-dialog-action")
             .label(self.action_label)
-            .with_variant(action_variant)
+            .primary()
             .loading(self.loading)
             .disabled(self.disabled || self.action_disabled)
+            .key_context(ACTION_BUTTON_CONTEXT)
+            .on_click(move |_, _, _| pointer_confirm.set(true))
             .debug_selector(|| "nya-dialog-action-button".to_string());
 
         DialogFooter::new()
@@ -333,26 +367,67 @@ impl NyaDialogWindowExt for Window {
         F: Fn(NyaDialog, &mut Window, &mut App) -> NyaDialog + 'static,
     {
         let marker = Rc::new(());
+        let weak = Rc::downgrade(&marker);
+        if !cx.has_global::<DialogButtonBindings>() {
+            cx.set_global(DialogButtonBindings);
+            // Dialog's own `enter -> Confirm` binding runs before GPUI can
+            // synthesize a button click on KeyUp. More specific button
+            // contexts keep Enter/Space on the focused footer control.
+            cx.bind_keys([
+                gpui::KeyBinding::new("enter", Cancel, Some(CANCEL_BUTTON_CONTEXT)),
+                gpui::KeyBinding::new("space", Cancel, Some(CANCEL_BUTTON_CONTEXT)),
+                gpui::KeyBinding::new(
+                    "enter",
+                    Confirm { secondary: false },
+                    Some(ACTION_BUTTON_CONTEXT),
+                ),
+                gpui::KeyBinding::new(
+                    "space",
+                    Confirm { secondary: false },
+                    Some(ACTION_BUTTON_CONTEXT),
+                ),
+            ]);
+        }
+        // The component stack reruns this builder on every frame the dialog is
+        // visible, so schedule the opt-in focus move exactly once per opening.
+        // On the first build the dialog's Tab stops are not laid out yet; the
+        // next-frame callback uses the first completed rendered frame instead.
+        let focus_guard = Rc::new(Cell::new(false));
+        let shell_focus = Rc::new(RefCell::new(None));
+        let lifecycle = self.open_tracked_dialog(cx, move |dialog, window, cx| {
+            let _lifetime = &marker;
+            if shell_focus.borrow().is_none() {
+                let focused = window.focused(cx);
+                *shell_focus.borrow_mut() = focused;
+            }
+            let initial_shell_focus = shell_focus.borrow().clone();
+            let built = build(
+                NyaDialog::from_component(dialog, initial_shell_focus),
+                window,
+                cx,
+            );
+            if built.focus_first_control && !focus_guard.replace(true) {
+                window.on_next_frame(|window, cx| window.focus_next(cx));
+            }
+            built
+                .into_component()
+                .shadow(gpui_base::Theme::global(cx).tokens.shadow.lg)
+        });
         let handle = NyaDialogHandle {
             window: self.window_handle().window_id(),
-            marker: Rc::downgrade(&marker),
+            marker: weak,
+            lifecycle,
         };
         let identities = cx.default_global::<DialogIdentities>();
         identities.0.retain(|_, stack| {
-            stack.retain(|marker| marker.strong_count() > 0);
+            stack.retain(|(marker, lifecycle)| lifecycle.is_active() && marker.strong_count() > 0);
             !stack.is_empty()
         });
         identities
             .0
             .entry(handle.window)
             .or_default()
-            .push(handle.marker.clone());
-        self.open_dialog(cx, move |dialog, window, cx| {
-            let _lifetime = &marker;
-            build(NyaDialog::from_component(dialog), window, cx)
-                .into_component()
-                .shadow(gpui_base::Theme::global(cx).tokens.shadow.lg)
-        });
+            .push((handle.marker.clone(), handle.lifecycle.clone()));
         handle
     }
 

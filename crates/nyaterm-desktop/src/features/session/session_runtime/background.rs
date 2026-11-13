@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt as _;
 use gpui::Context;
-use nyaterm_core::{AiExecutionProfile, uuid};
+use nyaterm_core::{AiExecutionProfile, SavedConnection, uuid};
 use nyaterm_transport::{
     LocalSessionConfig, SerialSessionConfig, SessionInfo, SessionKind, SessionManager,
     SshSessionConfig, TelnetSessionConfig, open_ssh_multiplex_handle,
@@ -15,6 +15,7 @@ use super::super::state::{
     PendingReconnectCompletion, failed_session_start_display_name,
     pending_session_start_display_name,
 };
+use super::start::SshSessionConfigBuildContext;
 use super::{MultiplexSshStartRequest, PendingSessionStartRegistration};
 use crate::features::formatting::{session_kind_label, short_id};
 use crate::features::{
@@ -24,11 +25,28 @@ use crate::features::{
 };
 use crate::models::{NavItem, SessionLaunchConfig, SessionRuntimeMetadata};
 
+struct BackgroundSessionStartRequest {
+    connection_name: String,
+    launch_config: SessionLaunchConfig,
+    source_connection_id: Option<String>,
+    ai_execution_profile: AiExecutionProfile,
+    options: SavedConnectionStartOptions,
+}
+
 impl NyaTermApp {
     pub(in crate::features) fn prepare_session_start_options(
         &mut self,
         mut options: SavedConnectionStartOptions,
     ) -> SavedConnectionStartOptions {
+        if let Some(request_id) = options.retry_request_id.as_ref()
+            && let Some((_, pending)) = self
+                .session
+                .start
+                .pending_entries()
+                .find(|(id, _)| *id == request_id)
+        {
+            options.custom_name = pending.custom_name.clone();
+        }
         options.tab_placement = options
             .tab_placement
             .map(|p| self.session.start.resolve_placement(p));
@@ -50,23 +68,36 @@ impl NyaTermApp {
             return options;
         }
 
-        let insert_index = options
-            .insert_index
-            .or_else(|| {
-                options.after_session_id.as_ref().and_then(|after_id| {
-                    self.ordered_tab_sessions()
-                        .iter()
-                        .position(|session| session.id == *after_id)
-                        .map(|index| index + 1)
-                })
-            })
-            .unwrap_or_else(|| {
-                self.ordered_tab_session_count()
-                    .saturating_add(self.session.start_visible_tab_reservation_count())
-            });
-        let placement = self.session.start.allocate_tab_placement(insert_index);
         self.ensure_terminal_windows_root();
-        if let Some(group) = self.current_terminal_group() {
+        let group = options
+            .after_session_id
+            .as_deref()
+            .and_then(|id| {
+                self.shell
+                    .terminal_group_for_tab(&self.tab_root_for_session(id))
+            })
+            .or_else(|| self.current_terminal_group());
+        let tabs = self.session_strip_tabs(&group);
+        let after_index = options.after_session_id.as_deref().and_then(|id| {
+            let key = self.tab_root_for_session(id);
+            tabs.iter()
+                .position(|tab| tab.id.layout_key() == key)
+                .map(|index| index + 1)
+        });
+        let insert_index = options.insert_index.or(after_index).unwrap_or_else(|| {
+            self.ordered_tab_session_count()
+                .saturating_add(self.session.start_visible_tab_reservation_count())
+        });
+        let placement = self.session.start.allocate_tab_placement(insert_index);
+        if options.insert_index.is_none() && after_index.is_some() {
+            // Reserve a visible slot, including attempts and non-session tabs.
+            // Otherwise their formal indices can put the copy past its source.
+            for (index, tab) in tabs.iter().enumerate() {
+                let index = index + usize::from(index >= insert_index);
+                self.set_session_strip_tab_position(tab, index);
+            }
+        }
+        if let Some(group) = group {
             self.shell
                 .reserve_terminal_start_group(placement.request_sequence, group);
         }
@@ -149,6 +180,8 @@ impl NyaTermApp {
             .map(str::to_string)
             .unwrap_or_else(uuid);
         let PendingSessionStartRegistration {
+            mcp_open_operation_id,
+            requested_ssh_runtime_mode,
             connection_name,
             launch_config,
             kind,
@@ -181,6 +214,8 @@ impl NyaTermApp {
         let reconnecting = self.session.start.register_pending(
             request_id.clone(),
             PendingSessionStart {
+                mcp_open_operation_id,
+                requested_ssh_runtime_mode,
                 attempt: Default::default(),
                 connection_name: connection_name.clone(),
                 launch_config,
@@ -219,12 +254,66 @@ impl NyaTermApp {
     pub(in crate::features) fn begin_background_session_start(
         &mut self,
         connection_name: String,
-        mut launch_config: SessionLaunchConfig,
+        launch_config: SessionLaunchConfig,
         source_connection_id: Option<String>,
         ai_execution_profile: AiExecutionProfile,
         options: SavedConnectionStartOptions,
         cx: &mut Context<Self>,
     ) {
+        self.begin_background_session_start_inner(
+            BackgroundSessionStartRequest {
+                connection_name,
+                launch_config,
+                source_connection_id,
+                ai_execution_profile,
+                options,
+            },
+            None,
+            cx,
+        );
+    }
+
+    pub(in crate::features) fn begin_background_saved_telnet_start(
+        &mut self,
+        connection: SavedConnection,
+        config: TelnetSessionConfig,
+        ai_execution_profile: AiExecutionProfile,
+        options: SavedConnectionStartOptions,
+        cx: &mut Context<Self>,
+    ) {
+        let context = self.ssh_session_config_build_context();
+        self.begin_background_session_start_inner(
+            BackgroundSessionStartRequest {
+                connection_name: connection.name.clone(),
+                launch_config: SessionLaunchConfig::Telnet(config),
+                source_connection_id: Some(connection.id.clone()),
+                ai_execution_profile,
+                options,
+            },
+            Some((connection, context)),
+            cx,
+        );
+    }
+
+    fn begin_background_session_start_inner(
+        &mut self,
+        request: BackgroundSessionStartRequest,
+        preparation: Option<(SavedConnection, SshSessionConfigBuildContext)>,
+        cx: &mut Context<Self>,
+    ) {
+        let BackgroundSessionStartRequest {
+            connection_name,
+            mut launch_config,
+            source_connection_id,
+            ai_execution_profile,
+            options,
+        } = request;
+        if !matches!(launch_config, SessionLaunchConfig::Local(_))
+            && self.remote_start_blocked_by_configuration_replacement(cx)
+        {
+            return;
+        }
+
         if let Some(label) = launch_config.encoding()
             && let Err(error) = nyaterm_core::character_encoding::CharacterEncoding::parse(label)
         {
@@ -240,6 +329,8 @@ impl NyaTermApp {
         }
         let options = self.prepare_session_start_options(options);
         let SavedConnectionStartOptions {
+            mcp_open_operation_id,
+            ssh_runtime_mode: _,
             custom_name,
             tab_color,
             locked,
@@ -257,6 +348,8 @@ impl NyaTermApp {
             .then(|| format!("ssh-session:{}", uuid()));
         let request_id = self.register_pending_session_start(
             PendingSessionStartRegistration {
+                mcp_open_operation_id,
+                requested_ssh_runtime_mode: None,
                 connection_name: connection_name.clone(),
                 launch_config: Some(launch_config.clone()),
                 kind,
@@ -296,14 +389,23 @@ impl NyaTermApp {
             session_start_tx,
             move || {
                 attempt.check()?;
-                let result = if let SessionLaunchConfig::Telnet(config) = &launch_config {
+                let result = if let SessionLaunchConfig::Telnet(config) = &mut launch_config {
+                    if let Some((connection, mut context)) = preparation {
+                        context.attempt = attempt.clone();
+                        context.host_key_prompts =
+                            Arc::new(context.host_key_prompts.for_attempt(attempt.clone()));
+                        context.credential_prompts =
+                            Arc::new(context.credential_prompts.for_attempt(attempt.clone()));
+                        context.prepare_telnet_network(&connection, config)?;
+                    }
                     session_manager
                         .create_telnet_session_with_attempt(config.clone(), attempt.clone())
-                        .map(|session_info| SessionStartSuccess {
-                            session_info,
-                            multiplex_handle: None,
-                            cleanup: None,
-                            launch_config: None,
+                        .map(|session_info| {
+                            SessionStartSuccess::telnet(
+                                Arc::clone(&session_manager),
+                                session_info,
+                                None,
+                            )
                         })
                         .map_err(|error| error.to_string())
                 } else {
@@ -333,11 +435,32 @@ impl NyaTermApp {
         options: SavedConnectionStartOptions,
         cx: &mut Context<Self>,
     ) {
+        if self.remote_start_blocked_by_configuration_replacement(cx) {
+            return;
+        }
+
         if !self.session.start.retry_is_pending(&options) {
             return;
         }
+        config.runtime_mode = config.effective_runtime_mode();
+        if let Some(mode) = options.ssh_runtime_mode {
+            config.runtime_mode = mode;
+        }
+        let reload_saved = options
+            .reconnect_session_id
+            .as_ref()
+            .and(source_connection_id.clone());
+        let mut build_context = self.ssh_session_config_build_context();
+        let mut options = options;
+        if options.ssh_runtime_mode == Some(nyaterm_core::models::ssh_runtime::SshRuntimeMode::Sftp)
+            || config.runtime_mode == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Sftp
+        {
+            options.startup_command = None;
+        }
         let options = self.prepare_session_start_options(options);
         let SavedConnectionStartOptions {
+            mcp_open_operation_id,
+            ssh_runtime_mode,
             custom_name,
             tab_color,
             locked,
@@ -365,6 +488,8 @@ impl NyaTermApp {
         let multiplex_key = format!("ssh-session:{}", uuid());
         let request_id = self.register_pending_session_start(
             PendingSessionStartRegistration {
+                mcp_open_operation_id,
+                requested_ssh_runtime_mode: None,
                 connection_name: connection_name.clone(),
                 launch_config: Some(SessionLaunchConfig::Ssh(Box::new(config.clone()))),
                 kind: SessionKind::Ssh,
@@ -388,6 +513,7 @@ impl NyaTermApp {
         );
 
         config.bind_attempt(self.session.start.attempt(&request_id));
+        build_context.attempt = config.attempt.clone();
         let session_manager = self.session.manager_handle();
         let ssh_connections = self.session.ssh_connection_pool();
         let session_start_tx = self.session.start.sender();
@@ -400,6 +526,27 @@ impl NyaTermApp {
             SessionKind::Ssh,
             session_start_tx,
             move || {
+                if let Some(id) = reload_saved {
+                    let saved = build_context
+                        .store
+                        .request_fn(nyaterm_store::StoreDomain::Connections, move |store| {
+                            store.get_connection(&id)
+                        })
+                        .map_err(|error| error.to_string())?
+                        .ok_or_else(|| "saved SSH connection was deleted".to_string())?;
+                    let mut fresh = build_context.build_config(&saved)?;
+                    fresh.runtime_mode = config.runtime_mode;
+                    fresh.cols = config.cols;
+                    fresh.rows = config.rows;
+                    fresh.pixel_width = config.pixel_width;
+                    fresh.pixel_height = config.pixel_height;
+                    fresh.bind_attempt(config.attempt.clone());
+                    config = fresh;
+                }
+                if let Some(mode) = ssh_runtime_mode {
+                    config.runtime_mode = mode;
+                }
+                config.apply_runtime_policy()?;
                 let multiplex =
                     open_ssh_multiplex_handle(config.clone()).map_err(|error| error.to_string())?;
                 let connection = ssh_connections.register(multiplex_key, multiplex);
@@ -421,6 +568,10 @@ impl NyaTermApp {
         request: MultiplexSshStartRequest,
         cx: &mut Context<Self>,
     ) {
+        if self.remote_start_blocked_by_configuration_replacement(cx) {
+            return;
+        }
+
         let MultiplexSshStartRequest {
             connection_name,
             mut config,
@@ -433,8 +584,18 @@ impl NyaTermApp {
         if !self.session.start.retry_is_pending(&options) {
             return;
         }
+        config.runtime_mode = config.effective_runtime_mode();
+        let mut options = options;
+        if let Some(mode) = options.ssh_runtime_mode {
+            config.runtime_mode = mode;
+        }
+        if config.runtime_mode == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Sftp {
+            options.startup_command = None;
+        }
         let options = self.prepare_session_start_options(options);
         let SavedConnectionStartOptions {
+            mcp_open_operation_id,
+            ssh_runtime_mode: _,
             custom_name,
             tab_color,
             locked,
@@ -464,6 +625,8 @@ impl NyaTermApp {
             .unwrap_or_else(|| format!("ssh-session:{}", uuid()));
         let request_id = self.register_pending_session_start(
             PendingSessionStartRegistration {
+                mcp_open_operation_id,
+                requested_ssh_runtime_mode: None,
                 connection_name: connection_name.clone(),
                 launch_config: Some(SessionLaunchConfig::Ssh(Box::new(config.clone()))),
                 kind: SessionKind::Ssh,
@@ -499,8 +662,14 @@ impl NyaTermApp {
             SessionKind::Ssh,
             session_start_tx,
             move || {
+                config.apply_runtime_policy()?;
                 let connection = match existing_multiplex {
-                    Some(connection) if !connection.is_closed() => connection,
+                    Some(connection)
+                        if !connection.is_closed()
+                            && connection.handle().matches_config(&config) =>
+                    {
+                        connection
+                    }
                     _ => {
                         let handle = open_ssh_multiplex_handle(config.clone())
                             .map_err(|error| error.to_string())?;
@@ -565,19 +734,18 @@ impl NyaTermApp {
             while let Some(event) = rx.next().await {
                 // `update_in`: pumping the restore queue opens sessions, which needs
                 // the window.
-                if this
-                    .update_in(cx, |this, window, cx| {
-                        this.apply_session_start_event(event, cx);
-                        // A start finishing is precisely when the next queued restore
-                        // may go; the idle plane used to poll for that.
-                        this.pump_startup_restore_queue_if_ready(window, cx);
-                        // A start settling is also when the layout restore and any
-                        // auto-recording become eligible -- though both still have to
-                        // wait out connect settle, which the clock handles.
-                        this.ensure_post_start_work_clock(cx);
-                        cx.notify();
-                    })
-                    .is_err()
+                if NyaTermApp::update_in_main_window(&this, cx, |this, window, cx| {
+                    this.apply_session_start_event(event, cx);
+                    // A start finishing is precisely when the next queued restore
+                    // may go; the idle plane used to poll for that.
+                    this.pump_startup_restore_queue_if_ready(window, cx);
+                    // A start settling is also when the layout restore and any
+                    // auto-recording become eligible -- though both still have to
+                    // wait out connect settle, which the clock handles.
+                    this.ensure_post_start_work_clock(cx);
+                    cx.notify();
+                })
+                .is_err()
                 {
                     break;
                 }
@@ -592,12 +760,12 @@ impl NyaTermApp {
         cx: &mut Context<Self>,
     ) {
         let request_id = event.request_id.clone();
-        let (pending, was_active_pending) =
+        let (mut pending, was_active_pending) =
             match self.session.start.take_event_request(&event.request_id) {
                 SessionStartEventRequest::Cancelled => {
                     if let Ok(success) = event.result {
                         let session_id = success.session_info.id;
-                        if let Err(error) = self.session.manager().close(&session_id) {
+                        if let Err(error) = self.session.manager().close_detached(&session_id) {
                             tracing::warn!(
                                 request_id = %request_id,
                                 session_id = %session_id,
@@ -643,7 +811,7 @@ impl NyaTermApp {
                     .as_deref()
                     .is_some_and(|stale_id| !self.session.has_session(stale_id))
                 {
-                    if let Err(error) = self.session.manager().close(&session_id) {
+                    if let Err(error) = self.session.manager().close_detached(&session_id) {
                         tracing::warn!(
                             request_id = %request_id,
                             session_id = %session_id,
@@ -692,6 +860,21 @@ impl NyaTermApp {
                     .as_ref()
                     .map(|pending| pending.ai_execution_profile)
                     .unwrap_or(AiExecutionProfile::SendOnly);
+                let ai_execution_profile = if ssh_config.as_ref().is_some_and(|config| {
+                    config.effective_runtime_mode()
+                        == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Sftp
+                }) {
+                    AiExecutionProfile::Disabled
+                } else {
+                    ai_execution_profile
+                };
+                if ssh_config.as_ref().is_some_and(|config| {
+                    config.effective_runtime_mode()
+                        == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Sftp
+                }) && let Some(pending) = pending.as_mut()
+                {
+                    pending.startup_command = None;
+                }
                 let metadata = SessionRuntimeMetadata {
                     ssh_config,
                     ssh_multiplex_key,
@@ -713,6 +896,9 @@ impl NyaTermApp {
                     self.session
                         .start
                         .record_reconnect_completion(PendingReconnectCompletion {
+                            mcp_open_operation_id: pending
+                                .as_ref()
+                                .and_then(|p| p.mcp_open_operation_id.clone()),
                             old_id: old_id.to_string(),
                             new_id: session_id.clone(),
                             connection_name: connection_name.clone(),
@@ -733,6 +919,9 @@ impl NyaTermApp {
                     true
                 };
                 if let Some(old_id) = reconnect_session_id.as_deref() {
+                    if old_id == session_id {
+                        self.session.notices.clear(old_id);
+                    }
                     self.recording.rekey_session(old_id, &session_id);
                     self.register_session_for_reconnect(&session_id, metadata);
                 } else {
@@ -783,7 +972,12 @@ impl NyaTermApp {
                     return;
                 }
                 if let Some(connection_id) = source_connection_id.as_deref() {
-                    self.complete_mcp_session_open_success(connection_id, session_id.clone());
+                    if let Some(id) = pending
+                        .as_ref()
+                        .and_then(|p| p.mcp_open_operation_id.as_deref())
+                    {
+                        self.complete_mcp_session_open_success(id, session_id.clone());
+                    }
                     if kind == nyaterm_transport::SessionKind::Ssh {
                         self.start_auto_tunnels_for_connection(connection_id, cx);
                     }
@@ -858,15 +1052,15 @@ impl NyaTermApp {
                 }
             }
             Err(error) => {
-                let source_connection_id = pending
-                    .as_ref()
-                    .and_then(|pending| pending.source_connection_id.clone());
                 let reconnect_session_id = pending
                     .as_ref()
                     .and_then(|pending| pending.reconnect_session_id.clone());
                 let reconnect_session_exists = reconnect_session_id
                     .as_deref()
                     .is_some_and(|session_id| self.session.has_session(session_id));
+                let mcp_failure_id = pending
+                    .as_ref()
+                    .and_then(|p| p.mcp_open_operation_id.clone());
                 let reconnect_failure = self.session.start.record_failure(
                     request_id.clone(),
                     pending,
@@ -874,8 +1068,8 @@ impl NyaTermApp {
                     was_active_pending,
                     reconnect_session_exists,
                 );
-                if let Some(connection_id) = source_connection_id.as_deref() {
-                    self.complete_mcp_session_open_failure(connection_id, &error);
+                if let Some(id) = mcp_failure_id.as_deref() {
+                    self.complete_mcp_session_open_failure(id, &error);
                 }
                 if !reconnect_failure {
                     self.shell
@@ -883,12 +1077,6 @@ impl NyaTermApp {
                 }
                 self.shell
                     .set_status(format!("failed to start {connection_name}: {error}"));
-                if self.session.active_id().is_none() {
-                    self.append_terminal_log(format!(
-                        "\n# failed to start {}: {error}\n",
-                        connection_name
-                    ));
-                }
                 self.shell.select_nav(NavItem::Workspace);
                 let request_to_ui_duration = requested_at
                     .map(|requested_at| requested_at.elapsed())
@@ -935,8 +1123,8 @@ impl NyaTermApp {
                     .start
                     .set_reconnect_failure(old_id.to_string(), error.clone());
             }
-            if let Some(connection_id) = completion.source_connection_id.as_deref() {
-                self.complete_mcp_session_open_failure(connection_id, &error);
+            if let Some(id) = completion.mcp_open_operation_id.as_deref() {
+                self.complete_mcp_session_open_failure(id, &error);
             }
             self.shell.set_status(format!("reconnect failed: {error}"));
             cx.notify();
@@ -948,7 +1136,9 @@ impl NyaTermApp {
         self.persist_workspace_pane_layout();
         self.persist_terminal_window_layout();
         if let Some(connection_id) = completion.source_connection_id.as_deref() {
-            self.complete_mcp_session_open_success(connection_id, new_id.to_string());
+            if let Some(id) = completion.mcp_open_operation_id.as_deref() {
+                self.complete_mcp_session_open_success(id, new_id.to_string());
+            }
             if completion.kind == SessionKind::Ssh {
                 self.start_auto_tunnels_for_connection(connection_id, cx);
             }
@@ -1026,11 +1216,8 @@ fn create_session_from_launch_config(
         }
         SessionLaunchConfig::Telnet(config) => session_manager
             .create_telnet_session(config)
-            .map(|session_info| SessionStartSuccess {
-                session_info,
-                multiplex_handle: None,
-                cleanup: None,
-                launch_config: None,
+            .map(|session_info| {
+                SessionStartSuccess::telnet(Arc::clone(session_manager), session_info, None)
             })
             .map_err(|error| error.to_string()),
         SessionLaunchConfig::Serial(config) => session_manager
@@ -1069,6 +1256,8 @@ fn launch_config_for_session_info(info: &SessionInfo) -> SessionLaunchConfig {
                 port: 23,
                 username: String::new(),
                 password: None,
+                proxy: None,
+                proxy_jump: None,
                 backspace_mode: "del".to_string(),
                 raw_tcp: info.kind == SessionKind::RawTcp,
                 enter_mode: nyaterm_transport::TelnetEnterMode::default(),
@@ -1146,6 +1335,8 @@ mod focus_tests {
                     );
                     let request_id = app.register_pending_session_start(
                         PendingSessionStartRegistration {
+                            mcp_open_operation_id: None,
+                            requested_ssh_runtime_mode: None,
                             connection_name: "SSH".into(),
                             launch_config: Some(SessionLaunchConfig::Ssh(Box::default())),
                             kind: SessionKind::Ssh,

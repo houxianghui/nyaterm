@@ -1,10 +1,10 @@
 use gpui::{Pixels, ScrollHandle, UniformListScrollHandle, px};
 use nyaterm_core::transfer_speed::TransferSpeed;
-use nyaterm_transport::{
-    RemoteTextDocument, RemoteTextGeneration, RemoteTextWriteResult, SftpFileEntry,
-    SftpFileProperties, SftpRemoteTextFile, SftpTransferControl, SftpTransferProgress,
-    SftpTransferSummary,
+use nyaterm_files::remote_file::{RemoteTextDocument, RemoteTextGeneration, RemoteTextWriteResult};
+use nyaterm_files::sftp::{
+    SftpFileEntry, SftpFileProperties, SftpRemoteTextFile, SftpTransferControl,
 };
+use nyaterm_files::sftp_transfer_types::{SftpTransferProgress, SftpTransferSummary};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,13 +21,14 @@ pub(crate) enum TransferJobKind {
     InitialDirectory,
     ListDir {
         remote_path: String,
+        /// Entry identity to reveal after navigation; legacy display paths are also accepted.
         select_after: Option<String>,
     },
     ListChildren {
         remote_path: String,
     },
     ListTree {
-        path: nyaterm_transport::RemoteFilePath,
+        path: nyaterm_files::sftp::RemoteFilePath,
         generation: u64,
     },
     ResolveHome,
@@ -116,7 +117,7 @@ pub(crate) enum TransferJobKind {
     },
     OpenExternal {
         remote_path: String,
-        local_path: PathBuf,
+        local_path: Option<PathBuf>,
     },
     AiFileAction {
         remote_path: String,
@@ -332,9 +333,8 @@ fn local_file_name(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod transfer_job_state_tests {
-    use std::path::PathBuf;
-
     use super::{TransferJobKind, TransferJobState, TransferJobStatus};
+    use std::path::PathBuf;
 
     fn job(kind: TransferJobKind, session_id: Option<&str>) -> TransferJobState {
         TransferJobState {
@@ -355,9 +355,8 @@ mod transfer_job_state_tests {
 
     #[test]
     fn progress_updates_seed_speed_and_snapshot_projects_the_sampled_rate() {
+        use nyaterm_files::sftp_transfer_types::SftpTransferProgress;
         use std::time::{Duration, Instant};
-
-        use nyaterm_transport::SftpTransferProgress;
 
         for kind in [
             TransferJobKind::Download {
@@ -433,7 +432,7 @@ mod transfer_job_state_tests {
         let external = job(
             TransferJobKind::OpenExternal {
                 remote_path: "/remote/file.txt".to_string(),
-                local_path: PathBuf::from("/tmp/file.txt"),
+                local_path: Some(PathBuf::from("/tmp/file.txt")),
             },
             Some("session-a"),
         );
@@ -472,7 +471,7 @@ mod transfer_job_state_tests {
         assert_eq!(
             TransferJobState::display_name_for_kind(&TransferJobKind::OpenExternal {
                 remote_path: "/remote/project/file.txt".to_string(),
-                local_path: PathBuf::from("/tmp/file.txt"),
+                local_path: Some(PathBuf::from("/tmp/file.txt")),
             }),
             "file.txt"
         );
@@ -504,8 +503,8 @@ pub(crate) struct TransferJobResult {
 pub(crate) struct PromisedDownloadDestination {
     pub raw_path_token: Option<String>,
     pub local_path: PathBuf,
-    pub source: std::sync::Weak<nyaterm_transport::RemoteFileService>,
-    pub options: nyaterm_transport::SftpPathTransferOptions,
+    pub source: std::sync::Weak<nyaterm_files::remote_file::RemoteFileService>,
+    pub options: nyaterm_files::sftp_transfer_types::SftpPathTransferOptions,
 }
 
 #[derive(Debug)]
@@ -518,6 +517,9 @@ pub(crate) enum TransferJobEvent {
     },
     Started {
         detail: String,
+    },
+    ExternalWorkspacePrepared {
+        local_path: PathBuf,
     },
     ExternalModified {
         remote_path: String,

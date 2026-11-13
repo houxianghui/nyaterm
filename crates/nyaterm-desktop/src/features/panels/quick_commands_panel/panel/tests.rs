@@ -48,6 +48,95 @@ fn command(id: &str, text: &str) -> QuickCommand {
     .unwrap()
 }
 
+struct QuickCommandEditorFixture {
+    app: Entity<NyaTermApp>,
+    native: bool,
+}
+
+impl Render for QuickCommandEditorFixture {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let surface = self.app.update(cx, |app, cx| {
+            if self.native {
+                app.quick_command_editor_window_view(560., cx)
+            } else {
+                app.quick_command_editor_overlay(cx)
+            }
+        });
+        div().relative().w(px(560.)).h(px(800.)).child(surface)
+    }
+}
+
+#[test]
+fn quick_command_editor_literal_toggle_preserves_the_editor_selection_and_undo_in_both_surfaces() {
+    for native in [false, true] {
+        let root = TestTempDir::new("nyaterm-quick-command-editor-literal");
+        let mut cx = TestAppContext::single();
+        let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+        let app = app(&mut cx, &root);
+        app.update(&mut cx, |app, _| {
+            app.commands
+                .open_quick_editor(crate::models::QuickCommandEditorState::blank());
+        });
+        let fixture_app = app.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            cx.observe(&fixture_app, |_, _, cx| cx.notify()).detach();
+            let fixture = cx.new(|_| QuickCommandEditorFixture {
+                app: fixture_app,
+                native,
+            });
+            nya_root(fixture, window, cx)
+        });
+        draw(cx);
+        let input = app.read_with(cx, |app, _| {
+            app.existing_text_input("quick-command.editor.command")
+                .unwrap()
+        });
+        cx.update(|window, cx| {
+            window.focus(&input.read(cx).component_focus_handle(cx), cx);
+        });
+        draw(cx);
+        cx.simulate_input("abc");
+        cx.simulate_keystrokes("shift-left shift-left");
+        draw(cx);
+        assert_eq!(input.read_with(cx, |input, cx| input.value(cx)), "abc");
+        let control = cx
+            .debug_bounds("quick-command-editor-raw-send-control")
+            .unwrap();
+        let script = cx.debug_bounds("quick-command.editor.command").unwrap();
+        assert!(control.bottom() <= script.top());
+        assert!(control.right() <= script.right());
+        // Exercise the switch callback while retaining the editor's active selection.
+        app.update(cx, |app, cx| app.toggle_quick_command_editor_raw_send(cx));
+        draw(cx);
+        app.read_with(cx, |app, _| {
+            assert!(
+                app.commands.quick_editor().unwrap().raw_send,
+                "native={native} control={control:?} script={script:?}"
+            );
+            assert_eq!(
+                app.existing_text_input("quick-command.editor.command")
+                    .unwrap(),
+                input
+            );
+        });
+        assert_eq!(input.read_with(cx, |input, cx| input.value(cx)), "abc");
+        cx.update(|window, cx| {
+            window.focus(&input.read(cx).component_focus_handle(cx), cx);
+        });
+        draw(cx);
+        cx.simulate_input("X");
+        draw(cx);
+        assert_eq!(input.read_with(cx, |input, cx| input.value(cx)), "aX");
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-z"
+        } else {
+            "ctrl-z"
+        });
+        draw(cx);
+        assert_eq!(input.read_with(cx, |input, cx| input.value(cx)), "abc");
+    }
+}
+
 fn app(cx: &mut TestAppContext, root: &TestTempDir) -> Entity<NyaTermApp> {
     let runtime = AppRuntime::from_parts_for_test(
         RuntimeMode::Portable,
@@ -246,6 +335,308 @@ fn category(id: &str, parent: Option<&str>, order: i32) -> QuickCommandCategory 
         parent_id: parent.map(str::to_string),
         sort_order: order,
     }
+}
+
+struct QuickCommandVariableFixture {
+    app: Entity<NyaTermApp>,
+}
+
+impl Render for QuickCommandVariableFixture {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (overlay, focus) = self.app.update(cx, |app, cx| {
+            let open = app.commands.quick_variable_prompt().is_some();
+            if open {
+                app.schedule_quick_command_variable_autofocus(window, cx);
+            }
+            let overlay = open.then(|| {
+                crate::features::view_widgets::full_window_overlay_layer(
+                    "quick-command-variable-test-layer",
+                    app.quick_command_variable_prompt_overlay(cx)
+                        .into_any_element(),
+                )
+            });
+            (overlay, app.terminal.input_focus().clone())
+        });
+        div()
+            .relative()
+            .track_focus(&focus)
+            .w(px(800.))
+            .h(px(600.))
+            .children(overlay)
+    }
+}
+
+fn variable_prompt_state() -> crate::models::QuickCommandVariablePromptState {
+    crate::models::QuickCommandVariablePromptState {
+        command_id: "cmd".into(),
+        label: "cmd".into(),
+        command: "ssh {{host}}".into(),
+        execute: true,
+        send_to_all: false,
+        variables: ["host", "user"]
+            .into_iter()
+            .map(|name| crate::models::QuickCommandVariableDef {
+                raw: format!("{{{{{name}}}}}"),
+                name: name.into(),
+                options: Vec::new(),
+                value: String::new(),
+            })
+            .collect(),
+    }
+}
+
+fn text_variable(name: &str, value: &str) -> crate::models::QuickCommandVariableDef {
+    crate::models::QuickCommandVariableDef {
+        raw: format!("{{{{{name}}}}}"),
+        name: name.into(),
+        options: Vec::new(),
+        value: value.into(),
+    }
+}
+
+fn select_variable(name: &str, options: &[&str]) -> crate::models::QuickCommandVariableDef {
+    crate::models::QuickCommandVariableDef {
+        raw: format!("{{{{{name}}}}}"),
+        name: name.into(),
+        options: options.iter().map(ToString::to_string).collect(),
+        value: options.first().map(ToString::to_string).unwrap_or_default(),
+    }
+}
+
+fn variable_prompt_with(
+    variables: Vec<crate::models::QuickCommandVariableDef>,
+) -> crate::models::QuickCommandVariablePromptState {
+    crate::models::QuickCommandVariablePromptState {
+        command_id: "cmd".into(),
+        label: "cmd".into(),
+        command: "ssh {{host}}".into(),
+        execute: true,
+        send_to_all: false,
+        variables,
+    }
+}
+
+#[test]
+fn quick_command_variable_field_keeps_focus_after_a_click() {
+    let root = TestTempDir::new("nyaterm-quick-command-variable-focus");
+    let mut cx = TestAppContext::single();
+    let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+    let app = app(&mut cx, &root);
+    app.update(&mut cx, |app, _| {
+        app.commands
+            .request_quick_variable_prompt(variable_prompt_state());
+    });
+    let fixture_app = app.clone();
+    let (_, cx) = cx.add_window_view(move |window, cx| {
+        cx.observe(&fixture_app, |_, _, cx| cx.notify()).detach();
+        let fixture = cx.new(|_| QuickCommandVariableFixture { app: fixture_app });
+        nya_root(fixture, window, cx)
+    });
+    draw(cx);
+    let field = app.read_with(cx, |app, _| {
+        app.existing_text_input("quick-command.variable.0")
+            .expect("variable field should be built")
+    });
+    let bounds = cx
+        .debug_bounds("quick-command.variable.0")
+        .expect("variable field should be rendered");
+    cx.simulate_click(bounds.center(), Modifiers::default());
+    draw(cx);
+    cx.update(|window, cx| {
+        assert!(
+            field.read(cx).component_focus_handle(cx).is_focused(window),
+            "the variable field lost focus right after being clicked"
+        );
+    });
+    cx.simulate_click(point(px(40.), px(40.)), Modifiers::default());
+    draw(cx);
+    cx.update(|window, cx| {
+        assert!(
+            app.read(cx)
+                .commands
+                .quick_variable_focus()
+                .is_focused(window),
+            "clicking the backdrop should still focus the prompt for the keyboard"
+        );
+    });
+    for (id, text) in [
+        ("quick-command.variable.0", "server"),
+        ("quick-command.variable.1", "deploy"),
+        ("quick-command.variable.0", ".example"),
+    ] {
+        let bounds = cx.debug_bounds(id).expect("field bounds");
+        cx.simulate_click(bounds.center(), Modifiers::default());
+        cx.simulate_input(text);
+        draw(cx);
+        let input = app.read_with(cx, |app, _| app.existing_text_input(id).unwrap());
+        cx.update(|window, cx| {
+            assert!(input.read(cx).component_focus_handle(cx).is_focused(window))
+        });
+    }
+    assert_eq!(
+        field.read_with(cx, |input, cx| input.value(cx)).len(),
+        "server.example".len()
+    );
+    let second = app.read_with(cx, |app, _| {
+        app.existing_text_input("quick-command.variable.1").unwrap()
+    });
+    assert_eq!(second.read_with(cx, |input, cx| input.value(cx)), "deploy");
+    let cancel = cx.debug_bounds("quick-command-variable-cancel").unwrap();
+    cx.simulate_click(cancel.center(), Modifiers::default());
+    draw(cx);
+    cx.update(|window, cx| {
+        assert!(app.read(cx).commands.quick_variable_prompt().is_none());
+        assert!(app.read(cx).terminal.input_focus().is_focused(window));
+    });
+    for key in ["escape", "enter"] {
+        app.update(cx, |app, _| {
+            app.commands
+                .request_quick_variable_prompt(variable_prompt_state())
+        });
+        draw(cx);
+        let bounds = cx.debug_bounds("quick-command.variable.0").unwrap();
+        cx.simulate_click(bounds.center(), Modifiers::default());
+        cx.simulate_input("again");
+        draw(cx);
+        cx.simulate_keystrokes(key);
+        draw(cx);
+        cx.update(|window, cx| {
+            assert!(
+                app.read(cx).commands.quick_variable_prompt().is_none(),
+                "{key}"
+            );
+            assert!(
+                app.read(cx).terminal.input_focus().is_focused(window),
+                "{key}"
+            );
+        });
+    }
+}
+
+#[test]
+fn quick_command_variable_prompt_focuses_the_first_text_field_once() {
+    let root = TestTempDir::new("nyaterm-quick-command-variable-autofocus");
+    let mut cx = TestAppContext::single();
+    let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+    let app = app(&mut cx, &root);
+    app.update(&mut cx, |app, _| {
+        app.commands
+            .request_quick_variable_prompt(variable_prompt_state());
+    });
+    let fixture_app = app.clone();
+    let (_, cx) = cx.add_window_view(move |window, cx| {
+        cx.observe(&fixture_app, |_, _, cx| cx.notify()).detach();
+        let fixture = cx.new(|_| QuickCommandVariableFixture { app: fixture_app });
+        nya_root(fixture, window, cx)
+    });
+    draw(cx);
+    draw(cx);
+    let first = app.read_with(cx, |app, _| {
+        app.existing_text_input("quick-command.variable.0")
+            .expect("first variable field")
+    });
+    cx.update(|window, cx| {
+        assert!(
+            first.read(cx).component_focus_handle(cx).is_focused(window),
+            "opening the prompt should focus its first text field"
+        );
+    });
+    let second_bounds = cx.debug_bounds("quick-command.variable.1").unwrap();
+    cx.simulate_click(second_bounds.center(), Modifiers::default());
+    draw(cx);
+    let second = app.read_with(cx, |app, _| {
+        app.existing_text_input("quick-command.variable.1")
+            .expect("second variable field")
+    });
+    for _ in 0..3 {
+        draw(cx);
+    }
+    cx.update(|window, cx| {
+        assert!(
+            second
+                .read(cx)
+                .component_focus_handle(cx)
+                .is_focused(window),
+            "focus should stay where the user put it"
+        );
+        assert!(
+            !first.read(cx).component_focus_handle(cx).is_focused(window),
+            "later renders must not grab focus back"
+        );
+    });
+}
+
+#[test]
+fn quick_command_variable_prompt_skips_a_leading_select() {
+    let root = TestTempDir::new("nyaterm-quick-command-variable-select");
+    let mut cx = TestAppContext::single();
+    let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+    let app = app(&mut cx, &root);
+    app.update(&mut cx, |app, _| {
+        app.commands
+            .request_quick_variable_prompt(variable_prompt_with(vec![
+                select_variable("mode", &["prod", "dev"]),
+                text_variable("host", ""),
+            ]));
+    });
+    let fixture_app = app.clone();
+    let (_, cx) = cx.add_window_view(move |window, cx| {
+        cx.observe(&fixture_app, |_, _, cx| cx.notify()).detach();
+        let fixture = cx.new(|_| QuickCommandVariableFixture { app: fixture_app });
+        nya_root(fixture, window, cx)
+    });
+    draw(cx);
+    draw(cx);
+    app.read_with(cx, |app, _| {
+        assert!(
+            app.existing_text_input("quick-command.variable.0")
+                .is_none(),
+            "an option-backed parameter must not register a text field"
+        );
+    });
+    let second = app.read_with(cx, |app, _| {
+        app.existing_text_input("quick-command.variable.1")
+            .expect("first text field after the select")
+    });
+    cx.update(|window, cx| {
+        assert!(
+            second
+                .read(cx)
+                .component_focus_handle(cx)
+                .is_focused(window),
+            "the first text field after a select should take focus"
+        );
+    });
+}
+
+#[test]
+fn quick_command_variable_autofocus_keeps_the_prefilled_value() {
+    let root = TestTempDir::new("nyaterm-quick-command-variable-prefill");
+    let mut cx = TestAppContext::single();
+    let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
+    let app = app(&mut cx, &root);
+    app.update(&mut cx, |app, _| {
+        app.commands
+            .request_quick_variable_prompt(variable_prompt_with(vec![
+                text_variable("host", "server"),
+                text_variable("user", ""),
+            ]));
+    });
+    let fixture_app = app.clone();
+    let (_, cx) = cx.add_window_view(move |window, cx| {
+        cx.observe(&fixture_app, |_, _, cx| cx.notify()).detach();
+        let fixture = cx.new(|_| QuickCommandVariableFixture { app: fixture_app });
+        nya_root(fixture, window, cx)
+    });
+    draw(cx);
+    draw(cx);
+    cx.simulate_input("X");
+    draw(cx);
+    let first = app.read_with(cx, |app, _| {
+        app.existing_text_input("quick-command.variable.0")
+            .expect("first variable field")
+    });
+    assert_eq!(first.read_with(cx, |input, cx| input.value(cx)), "serverX");
 }
 
 fn host<'a>(cx: &'a mut TestAppContext, app: &Entity<NyaTermApp>) -> &'a mut VisualTestContext {
@@ -797,7 +1188,7 @@ fn category_after_marker_follows_the_whole_subtree_and_root_target_stays_visible
             .is_none()
     );
     // "All" remains pinned when the tree is scrolled during a drag.
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: child.center(),
         delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-200.))),
         ..Default::default()

@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::sizing::{form_control_height, form_control_size};
+use crate::theme_bridge::input_surface_color;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Render, RenderOnce,
@@ -8,7 +10,6 @@ use gpui::{
 };
 use gpui_kit::component::{
     Disableable, IndexPath, Sizable,
-    checkbox::Checkbox,
     radio::RadioGroup,
     select::{SearchableVec, Select, SelectEvent, SelectState},
     switch::Switch,
@@ -17,6 +18,28 @@ use gpui_kit::component::{
 type NyaToggleHandler = Box<dyn Fn(&bool, &mut Window, &mut App)>;
 type NyaIndexSelectHandler = Box<dyn Fn(&usize, &mut Window, &mut App)>;
 type NyaSelectOpenHandler = Box<dyn Fn(&mut Window, &mut App)>;
+
+#[derive(Default)]
+struct SelectPopupRegistry(HashMap<gpui::WindowId, Vec<gpui::WeakEntity<NyaSelectState>>>);
+
+impl gpui::Global for SelectPopupRegistry {}
+
+pub(crate) fn select_popup_is_active(window: &Window, cx: &mut App) -> bool {
+    let registry = cx.default_global::<SelectPopupRegistry>();
+    registry.0.retain(|_, entries| {
+        entries.retain(|select| select.upgrade().is_some());
+        !entries.is_empty()
+    });
+    let selects = registry
+        .0
+        .get(&window.window_handle().window_id())
+        .cloned()
+        .unwrap_or_default();
+    selects
+        .iter()
+        .filter_map(|select| select.upgrade())
+        .any(|select| select.read(cx).is_menu_focused(window, cx))
+}
 
 #[derive(IntoElement)]
 pub struct NyaSwitch {
@@ -77,6 +100,7 @@ pub struct NyaCheckbox {
     id: SharedString,
     label: Option<SharedString>,
     checked: bool,
+    indeterminate: bool,
     disabled: bool,
     on_click: Option<NyaToggleHandler>,
 }
@@ -87,6 +111,7 @@ impl NyaCheckbox {
             id: id.into(),
             label: None,
             checked: false,
+            indeterminate: false,
             disabled: false,
             on_click: None,
         }
@@ -102,6 +127,12 @@ impl NyaCheckbox {
         self
     }
 
+    /// Expose a mixed selection using the base checkbox's keyboard and accessibility semantics.
+    pub fn indeterminate(mut self, indeterminate: bool) -> Self {
+        self.indeterminate = indeterminate;
+        self
+    }
+
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -114,15 +145,99 @@ impl NyaCheckbox {
 }
 
 impl RenderOnce for NyaCheckbox {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let mut checkbox = Checkbox::new(self.id).checked(self.checked).small();
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        use gpui_kit::component::{ActiveTheme as _, Icon, IconName, ThemeStyled as _};
+        let state = if self.indeterminate {
+            gpui_base::CheckboxState::Indeterminate
+        } else if self.checked {
+            gpui_base::CheckboxState::Checked
+        } else {
+            gpui_base::CheckboxState::Unchecked
+        };
+        let marked = state != gpui_base::CheckboxState::Unchecked;
+        let primary = cx.theme().primary;
+        let foreground = cx.theme().primary_foreground;
+        let border = cx.theme().input;
+        let disabled_indicator = if marked {
+            primary.opacity(0.5)
+        } else {
+            border.opacity(0.5)
+        };
+        let text = if self.disabled {
+            cx.theme().muted_foreground
+        } else {
+            cx.theme().foreground
+        };
+        // All controlled states share this handle and component tree, so changing
+        // from mixed to checked preserves keyboard focus.
+        let focus = window
+            .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        let focused = focus.is_focused(window);
+        let indicator =
+            gpui_base::CheckboxIndicator::new()
+                .state(state)
+                .disabled(self.disabled)
+                .size(px(14.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .border_1()
+                .rounded(cx.theme().radius.min(px(4.)))
+                .border_color(if self.disabled {
+                    disabled_indicator
+                } else if marked {
+                    primary
+                } else {
+                    border
+                })
+                .bg(if marked {
+                    if self.disabled {
+                        disabled_indicator
+                    } else {
+                        primary
+                    }
+                } else {
+                    input_surface_color(cx)
+                })
+                .when(self.indeterminate, |this| {
+                    this.child(div().w(px(8.)).h(px(2.)).bg(foreground))
+                })
+                .when(self.checked && !self.indeterminate, |this| {
+                    this.child(Icon::new(IconName::Check).size(px(10.)).text_color(
+                        if self.disabled {
+                            foreground.opacity(0.5)
+                        } else {
+                            foreground
+                        },
+                    ))
+                });
+        let mut checkbox = gpui_base::Checkbox::new(self.id)
+            .state(state)
+            .disabled(self.disabled)
+            .track_focus(&focus)
+            .when(focused, |this| this.focus_ring_style(window, cx))
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .flex()
+            .items_start()
+            .gap_2()
+            .rounded(cx.theme().radius * 0.5)
+            .text_sm()
+            .line_height(gpui::relative(1.))
+            .text_color(text)
+            .child(indicator);
         if let Some(label) = self.label {
-            checkbox = checkbox.label(label);
+            checkbox = checkbox.accessibility_label(label.clone()).child(label);
         }
         if let Some(on_click) = self.on_click {
-            checkbox = checkbox.on_click(on_click);
+            checkbox = checkbox.on_change(move |state, _, window, cx| {
+                window.prevent_default();
+                on_click(&(state == gpui_base::CheckboxState::Checked), window, cx);
+            });
         }
-        checkbox.disabled(self.disabled)
+        checkbox
     }
 }
 
@@ -198,6 +313,7 @@ pub struct NyaSelectOption {
     search_text: Option<SharedString>,
     subtitle: Option<SharedString>,
     font_family: Option<SharedString>,
+    disabled: bool,
 }
 
 impl NyaSelectOption {
@@ -208,7 +324,14 @@ impl NyaSelectOption {
             search_text: None,
             subtitle: None,
             font_family: None,
+            disabled: false,
         }
+    }
+
+    /// Disable new selection while retaining an existing saved value for display.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 
     pub fn search_text(mut self, search_text: impl Into<SharedString>) -> Self {
@@ -243,6 +366,7 @@ struct NyaSelectItem {
     search_text: Option<SharedString>,
     subtitle: Option<SharedString>,
     font_family: Option<SharedString>,
+    disabled: bool,
 }
 
 impl NyaSelectItem {
@@ -278,6 +402,10 @@ impl NyaSelectItem {
 }
 
 impl gpui_kit::component::select::SelectItem for NyaSelectItem {
+    fn disabled(&self) -> bool {
+        self.disabled
+    }
+
     type Value = String;
 
     fn title(&self) -> SharedString {
@@ -554,6 +682,7 @@ impl NyaSelectState {
                 search_text: option.search_text.clone(),
                 subtitle: option.subtitle.clone(),
                 font_family: option.font_family.clone(),
+                disabled: option.disabled,
             })
             .collect()
     }
@@ -596,6 +725,16 @@ impl NyaSelectState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<SelectState<SearchableVec<NyaSelectItem>>> {
+        let weak = cx.entity().downgrade();
+        let entries = cx
+            .default_global::<SelectPopupRegistry>()
+            .0
+            .entry(window.window_handle().window_id())
+            .or_default();
+        entries.retain(|select| select.upgrade().is_some());
+        if !entries.contains(&weak) {
+            entries.push(weak);
+        }
         if let Some(state) = self.state.clone() {
             return state;
         }
@@ -639,6 +778,7 @@ impl Render for NyaSelectState {
         Select::new(&state)
             .with_size(form_control_size())
             .h(form_control_height())
+            .bg(input_surface_color(cx))
             .placeholder(self.placeholder.clone())
             .when_some(self.search_placeholder.clone(), |this, placeholder| {
                 this.search_placeholder(placeholder)
@@ -710,10 +850,12 @@ impl RenderOnce for NyaSelect {
                 state.disabled,
             )
         });
+        let input_surface = input_surface_color(cx);
         let select = Select::new(&state)
             .with_size(form_control_size())
             .h(form_control_height())
             .appearance(appearance)
+            .when(appearance, |this| this.bg(input_surface))
             .placeholder(if placeholder_content.is_some() {
                 SharedString::default()
             } else {
@@ -775,6 +917,127 @@ mod tests {
     use super::{NyaSelectOption, NyaSelectState};
     use crate::sizing::{NYA_FORM_CONTROL_HEIGHT_PX, form_control_size};
     use gpui_kit::component::select::SelectItem as _;
+
+    struct MixedCheckboxFixture {
+        checked: bool,
+        mixed: bool,
+    }
+    impl gpui::Render for MixedCheckboxFixture {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use gpui::{InteractiveElement as _, ParentElement as _, Styled as _, div, px};
+            div()
+                .id("mixed-checkbox-parent")
+                .tab_group()
+                .w(px(200.))
+                .h(px(32.))
+                .child(
+                    super::NyaCheckbox::new("mixed-checkbox")
+                        .label("All")
+                        .checked(self.checked)
+                        .indeterminate(self.mixed)
+                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            this.checked = *checked;
+                            this.mixed = false;
+                            cx.notify();
+                        })),
+                )
+        }
+    }
+    #[gpui::test]
+    fn indeterminate_checkbox_activates_to_checked_and_keeps_keyboard_control(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::{point, px};
+        cx.update(gpui_kit::init);
+        let (checkbox, visual) = cx.add_window_view(|_, _| MixedCheckboxFixture {
+            checked: false,
+            mixed: true,
+        });
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        visual.update(|window, cx| {
+            window.focus_next(cx);
+            assert!(window.focused(cx).is_some());
+        });
+        visual.simulate_click(point(px(7.), px(7.)), Default::default());
+        visual.run_until_parked();
+        checkbox.read_with(visual, |checkbox, _| {
+            assert!(checkbox.checked);
+            assert!(!checkbox.mixed);
+        });
+        visual.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+        let key = gpui::Keystroke::parse("space").unwrap();
+        visual.simulate_event(gpui::KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        visual.simulate_event(gpui::KeyUpEvent { keystroke: key });
+        visual.run_until_parked();
+        checkbox.read_with(visual, |checkbox, _| assert!(!checkbox.checked));
+    }
+
+    #[gpui::test]
+    fn popup_query_tracks_select_close_rebuild_and_window_isolation(cx: &mut TestAppContext) {
+        use crate::menu::nya_popup_is_active;
+        use gpui::{point, px};
+        cx.update(gpui_kit::init);
+        let (select, first) = cx.add_window_view(|_, cx| {
+            NyaSelectState::new(cx, vec![NyaSelectOption::new("one", "One")], None)
+        });
+        first.run_until_parked();
+        first.update(|window, cx| {
+            _ = window.draw(cx);
+            assert!(!nya_popup_is_active(window, cx));
+        });
+        first.simulate_click(point(px(10.), px(10.)), Default::default());
+        first.run_until_parked();
+        first.update(|window, cx| {
+            _ = window.draw(cx);
+            assert!(nya_popup_is_active(window, cx));
+        });
+        // The same global registry is queried from another window.
+        let handle = first.add_window(|_, _| gpui::EmptyView);
+        let mut second = gpui::VisualTestContext::from_window(handle.into(), first);
+        second.update(|window, cx| assert!(!nya_popup_is_active(window, cx)));
+        first.simulate_keystrokes("escape");
+        first.run_until_parked();
+        first.update(|window, cx| {
+            _ = window.draw(cx);
+            assert!(!nya_popup_is_active(window, cx));
+        });
+        first.simulate_click(point(px(10.), px(10.)), Default::default());
+        first.run_until_parked();
+        first.update(|window, cx| {
+            assert!(nya_popup_is_active(window, cx));
+            select.update(cx, |select, cx| select.dismiss_menu(cx));
+            assert!(!nya_popup_is_active(window, cx));
+            _ = window.draw(cx);
+            assert!(
+                !nya_popup_is_active(window, cx),
+                "rebuilt component is closed"
+            );
+        });
+        first.simulate_click(point(px(10.), px(10.)), Default::default());
+        first.run_until_parked();
+        first.update(|window, cx| assert!(nya_popup_is_active(window, cx)));
+        let weak = select.downgrade();
+        drop(select);
+        first.update(|window, _| window.remove_window());
+        first.run_until_parked();
+        second.update(|window, cx| {
+            assert!(weak.upgrade().is_none());
+            assert!(!nya_popup_is_active(window, cx));
+        });
+    }
 
     #[test]
     fn selected_value_tracks_pre_render_updates() {

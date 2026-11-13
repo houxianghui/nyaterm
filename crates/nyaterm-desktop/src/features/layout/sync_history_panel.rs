@@ -615,9 +615,14 @@ mod tests {
             let status = cx.update(|window, cx| {
                 assert!(!window.has_active_nya_dialog(cx));
                 assert!(!app.read(cx).settings.snapshot_password_prompt_active());
-                app.read(cx)
-                    .cloud_sync
-                    .history()
+                let sync = &app.read(cx).cloud_sync;
+                // History is published independently of the post-pull store
+                // refresh. The next restore must wait until its lease is released.
+                if sync.job_running() || sync.operations.replacement_gate().block_reason().is_some()
+                {
+                    return None;
+                }
+                sync.history()
                     .iter()
                     .find(|entry| entry.trigger == trigger)
                     .map(|entry| entry.status.clone())
@@ -627,7 +632,7 @@ mod tests {
             }
             assert!(
                 Instant::now() < deadline,
-                "sync operation did not record history"
+                "sync operation did not finish recording history and refreshing configuration"
             );
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -659,9 +664,7 @@ mod tests {
                 state.shell.settings_active_tab(),
                 crate::models::SettingsTab::Security
             );
-            assert!(
-                state.shell.settings_window_is_open_or_pending() || state.shell.is_settings_page()
-            );
+            assert!(state.shell.has_settings_draft());
             assert_eq!(
                 state.cloud_sync.status(),
                 rust_i18n::t!("settings.syncMasterPasswordRequired")
@@ -714,7 +717,12 @@ mod tests {
             });
         });
         draw(cx);
-        cx.simulate_keystrokes("enter");
+        // Confirmation dialogs initially focus Cancel, so explicitly activate
+        // the action instead of sending Enter to the default cancel control.
+        let confirm = cx
+            .debug_bounds("nya-dialog-action-button")
+            .expect("restore confirmation action should render");
+        cx.simulate_click(confirm.center(), Modifiers::default());
         draw(cx);
         assert!(
             cx.debug_bounds("snapshot-password-dialog-content")
@@ -799,27 +807,7 @@ mod tests {
                 );
                 assert!(!app.read(cx).settings.snapshot_password_prompt_active());
             });
-            let deadline = Instant::now() + Duration::from_secs(60);
-            loop {
-                draw(cx);
-                let recorded = cx.update(|_, cx| {
-                    app.read(cx)
-                        .cloud_sync
-                        .history()
-                        .iter()
-                        .find(|entry| entry.trigger == trigger)
-                        .map(|entry| entry.status.clone())
-                });
-                if let Some(status) = recorded {
-                    assert_eq!(status, "success");
-                    break;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "sync submission did not record an operation"
-                );
-                std::thread::sleep(Duration::from_millis(5));
-            }
+            assert_eq!(wait_for_history(cx, &app, trigger), "success");
             assert!(
                 test_dir
                     .path()

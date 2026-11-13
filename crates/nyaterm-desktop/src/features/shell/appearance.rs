@@ -9,7 +9,8 @@ use gpui::{
     SharedString, font, px,
 };
 use nyaterm_core::{
-    AppSettingsSummary, ResolvedKeywordHighlightRule, merge_keyword_highlight_rules_for_paint,
+    AppSettingsSummary, ResolvedKeywordHighlightRule,
+    merge_keyword_highlight_rules_for_paint_with_ansi,
 };
 
 use crate::features::terminal::{ResolvedAppearanceFont, measure_terminal_font};
@@ -29,6 +30,8 @@ impl NyaTermApp {
         settings: AppSettingsSummary,
         cx: &mut Context<Self>,
     ) {
+        let users_changed = self.settings.summary().ui_remote_stats_show_users
+            != settings.ui_remote_stats_show_users;
         let terminal_font_changed = {
             let current = self.settings.summary();
             current.terminal_font_family != settings.terminal_font_family
@@ -38,7 +41,20 @@ impl NyaTermApp {
                 || current.bold_default_foreground != settings.bold_default_foreground
         };
         crate::shortcuts::rebuild_keymap(&settings.keybindings, cx);
+        // Keep the runtime log layer aligned with persisted diagnostics
+        // settings, both on startup load and on every later save.
+        nyaterm_core::diagnostics::apply_log_runtime_settings(
+            settings.diagnostics_log_shard_bytes,
+            settings.diagnostics_retention_days,
+        );
         self.settings.replace_summary(settings);
+        // Settings reload and draft cancellation must update existing surfaces,
+        // which cache this flag independently of their compiled rule list.
+        self.terminal
+            .apply_line_role_highlighting(self.settings.summary().ui_highlight_line_roles, cx);
+        if users_changed {
+            self.remote_stats_users_setting_changed(cx);
+        }
         crate::window_chrome::request_window_decoration_refresh(cx);
         self.sync_remote_monitoring_inputs(cx);
         self.sync_transfer_internal_editor_font_input(cx);
@@ -191,17 +207,6 @@ impl NyaTermApp {
                     Ok((image, width, height)) => {
                         if this.shell.cache_wallpaper(path, image, width, height) {
                             this.refresh_background_surfaces(cx);
-                            this.request_settings_panel_refresh(cx);
-                            // The decoded asset is not part of SettingsSnapshot, so an unchanged
-                            // snapshot alone cannot repaint either independent settings panel.
-                            this.settings_panel.update(cx, |_, cx| cx.notify());
-                            if let Some(panel) = this
-                                .native_settings_panel
-                                .as_ref()
-                                .and_then(gpui::WeakEntity::upgrade)
-                            {
-                                panel.update(cx, |_, cx| cx.notify());
-                            }
                         }
                     }
                     Err(()) if this.shell.wallpaper_is_requested(&path) => {
@@ -223,6 +228,7 @@ impl NyaTermApp {
         self.flush_connection_panel_snapshot(cx);
         self.flush_transfer_panel_snapshot(cx);
         self.flush_ai_panel_snapshot(cx);
+        self.request_settings_panel_refresh(cx);
         self.refresh_visible_terminal_surfaces(cx);
         cx.notify();
     }
@@ -384,10 +390,11 @@ impl NyaTermApp {
         if !self.settings.keyword_config().enabled {
             return Arc::new(Vec::new());
         }
-        Arc::new(merge_keyword_highlight_rules_for_paint(
+        Arc::new(merge_keyword_highlight_rules_for_paint_with_ansi(
             &self.settings.keyword_config().rules,
             &self.settings.keyword_config().builtin_rules,
             self.terminal_theme_is_dark(),
+            self.terminal_theme_palette().terminal_ansi,
         ))
     }
 
@@ -403,10 +410,11 @@ impl NyaTermApp {
         let rules = if !self.settings.keyword_config().enabled {
             Arc::new(Vec::new())
         } else {
-            Arc::new(merge_keyword_highlight_rules_for_paint(
+            Arc::new(merge_keyword_highlight_rules_for_paint_with_ansi(
                 &self.settings.keyword_config().rules,
                 &self.settings.keyword_config().builtin_rules,
                 self.terminal_theme_is_dark(),
+                self.terminal_theme_palette().terminal_ansi,
             ))
         };
         self.terminal.cache_keyword_highlight_rules(rules);
