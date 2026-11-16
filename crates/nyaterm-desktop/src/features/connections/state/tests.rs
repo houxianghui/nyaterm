@@ -896,6 +896,8 @@ fn connection_editor_inline_panel_draft_requires_draft_without_window() {
 fn connection_editor_owner(cx: &TestAppContext) -> ConnectionEditorFeatureState {
     let focus = cx.update(|cx| cx.focus_handle());
     let mut owner = ConnectionEditorFeatureState {
+        kind_drafts: Default::default(),
+        kind_baselines: Default::default(),
         draft: None,
         password: Default::default(),
         fields: HashMap::new(),
@@ -2408,6 +2410,7 @@ fn group(id: &str, name: &str, parent_id: Option<&str>, sort_order: i32) -> Grou
 
 fn connection_editor_state_with_secret_draft() -> ConnectionEditorState {
     ConnectionEditorState {
+        defaults_mode: false,
         android_usb: false,
         android_screen: Default::default(),
         id: Some("conn".to_string()),
@@ -2868,7 +2871,7 @@ fn connection_editor_navigation_preserves_every_draft_field_and_rejects_unavaila
         .field_errors
         .insert(ConnectionEditorField::Host, "host error".into());
     editor.forwarding_tab = ConnectionEditorForwardingTab::X11;
-    for section in ConnectionEditorSection::for_kind(editor.kind) {
+    for section in ConnectionEditorSection::for_kind(editor.kind, editor.defaults_mode) {
         let mut expected = editor.clone();
         expected.section = *section;
         assert!(editor.select_section(*section));
@@ -3134,6 +3137,45 @@ fn large_ranked_catalog_reuses_scoring_across_navigation_and_fold_changes() {
         eprintln!(
             "ranked fixture: {} rows, first {first:?}, cached {cached:?}",
             snapshot.rows.len()
+        );
+    });
+}
+
+#[test]
+fn android_selects_update_draft_without_resetting_other_screen_settings() {
+    let mut cx = TestAppContext::single();
+    let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+    let app = cache_test_app(&mut cx);
+    cx.update_entity(&app, |app, cx| {
+        let mut draft = connection_editor_state_with_secret_draft();
+        draft.kind = ConnectionKindTab::Adb;
+        draft.android_screen.power_on = true;
+        app.connection_state.begin_editor(draft);
+        app.on_select_changed("connection-editor-android.orientation", Some("@90"), cx);
+        app.on_select_changed(
+            "connection-editor-android.quality",
+            Some("android.qualitySharp"),
+            cx,
+        );
+        let screen = app
+            .connection_state
+            .active_editor_draft()
+            .unwrap()
+            .android_screen;
+        assert!(screen.power_on);
+        assert_eq!(
+            screen.capture_orientation,
+            nyaterm_core::models::android::CaptureOrientation::Degrees90
+        );
+        assert_eq!(screen.max_size, 1920);
+        assert_eq!(screen.bit_rate, 12_000_000);
+        app.on_select_changed("connection-editor-android.quality", Some("custom"), cx);
+        assert_eq!(
+            app.connection_state
+                .active_editor_draft()
+                .unwrap()
+                .android_screen,
+            screen
         );
     });
 }

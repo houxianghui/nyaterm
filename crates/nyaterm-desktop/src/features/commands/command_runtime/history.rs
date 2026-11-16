@@ -226,7 +226,7 @@ impl NyaTermApp {
         self.record_command_history_for_sessions(&sessions, bytes);
     }
 
-    /// Resolve a submitted command once and attach it to every successful session.
+    /// Tracked input applies to successful sessions; recovered echo only to its source.
     /// Global command history is appended only once per submission.
     pub(in crate::features) fn record_command_history_for_sessions(
         &mut self,
@@ -241,7 +241,13 @@ impl NyaTermApp {
         }
         let submitted: Vec<String> =
             if let Some(command) = self.terminal.take_pending_command_history_entry() {
-                vec![command]
+                if let Some(source) = command.source_session {
+                    if session_ids.contains(&source.as_str()) {
+                        self.record_submitted_command_history(&[&source], vec![command.command]);
+                    }
+                    return;
+                }
+                vec![command.command]
             } else {
                 text.split(['\r', '\n'])
                     .map(str::trim)
@@ -266,7 +272,10 @@ impl NyaTermApp {
         let mut recorded = std::collections::HashSet::new();
         let mut fallback = std::collections::HashSet::new();
         for session_id in session_ids {
-            let context = self.commands.command_context(session_id).cloned();
+            let context = self
+                .commands
+                .command_context(session_id)
+                .map(|_| self.command_suggestion_context(session_id));
             // The marked shell owns the observation. Do not consume its secret
             // latch until CommandAccepted arrives from that same submission.
             if self.completion_has_marked_shell(session_id)
@@ -341,6 +350,12 @@ impl NyaTermApp {
             while let Some(event) = rx.next().await {
                 if this
                     .update(cx, |this, cx| {
+                        if let CommandPersistenceResult::HistoryMaintenanceWarning(message) = event
+                        {
+                            this.settings.update_store_status(message, false);
+                            cx.notify();
+                            return;
+                        }
                         this.commands.note_persistence_event_delivered();
                         if let Err(message) = this.commands.apply_persistence_result(event) {
                             this.settings.update_store_status(message, false);
@@ -368,3 +383,4 @@ impl NyaTermApp {
         .detach();
     }
 }
+use crate::features::runtime_jobs::CommandPersistenceResult;

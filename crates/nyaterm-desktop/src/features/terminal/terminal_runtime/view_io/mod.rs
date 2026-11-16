@@ -278,6 +278,7 @@ fn terminal_snapshot_with_newer_edge_row(
             command_blocks: base.command_blocks.clone(),
             display_rows: base.display_rows.clone(),
             history: base.history,
+            file_context: base.file_context.clone(),
             shell_input_anchor: base.shell_input_anchor,
             command_navigation_target: None,
             command_navigation_revision: 0,
@@ -345,6 +346,7 @@ fn terminal_snapshot_with_retained_scroll_window(
             command_blocks: base.command_blocks.clone(),
             display_rows: base.display_rows.clone(),
             history: base.history,
+            file_context: base.file_context.clone(),
             shell_input_anchor: base.shell_input_anchor,
             command_navigation_target: None,
             command_navigation_revision: 0,
@@ -724,6 +726,35 @@ impl NyaTermApp {
             surface.set_app(app, line_roles);
             surface
         });
+        // Surface-only scrolling and frame publication must also reposition app-owned
+        // popups. Unchanged anchors must not turn terminal output into full app redraws.
+        let popup_session_id = session_id.to_owned();
+        let mut previous_anchor = None;
+        cx.observe(&surface, move |app, surface, cx| {
+            let popup_open = app
+                .terminal
+                .assist
+                .commands
+                .popup
+                .as_ref()
+                .is_some_and(|state| state.session_id == popup_session_id)
+                || app
+                    .terminal
+                    .assist
+                    .credential_suggestions
+                    .as_ref()
+                    .is_some_and(|state| state.session_id == popup_session_id);
+            if popup_open {
+                let anchor = surface.read(cx).suggestion_cursor_cell();
+                if previous_anchor != anchor {
+                    previous_anchor = anchor;
+                    cx.notify();
+                }
+            } else {
+                previous_anchor = None;
+            }
+        })
+        .detach();
         self.terminal
             .view
             .surfaces

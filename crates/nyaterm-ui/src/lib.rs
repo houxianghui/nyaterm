@@ -3,7 +3,7 @@
 mod app_menu_bar;
 mod button;
 pub mod chat;
-mod child_window;
+pub mod child_window;
 mod command;
 mod compact_menu;
 mod dialog;
@@ -12,6 +12,7 @@ pub mod document_snapshot;
 pub mod document_syntax;
 pub mod hex_editor;
 mod hover_card;
+pub mod icons;
 mod input;
 mod input_focus;
 pub mod markdown;
@@ -50,6 +51,7 @@ pub use dialog::{
     NyaConfirmDialog, NyaDialog, NyaDialogFooter, NyaDialogHandle, NyaDialogWindowExt,
 };
 pub use document_editor::{NyaDocumentEditor, NyaDocumentEditorEvent, NyaDocumentEditorState};
+pub use gpui_kit::component::collapsible::Collapsible as NyaCollapsible;
 pub use gpui_kit::component::color_picker::{
     ColorPicker as NyaColorPicker, ColorPickerEvent as NyaColorPickerEvent,
     ColorPickerState as NyaColorPickerState,

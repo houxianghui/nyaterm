@@ -1,4 +1,3 @@
-use nyaterm_ui::{radius_lg, radius_md, radius_sm};
 use std::time::{Duration, Instant};
 
 use crate::models::{NavItem, PanelResizeSide, PanelSide};
@@ -7,6 +6,7 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, ObjectFit, Render,
     SharedString, Stateful, Window, canvas, deferred, div, img, prelude::*, px, rgb, rgba, svg,
 };
+use nyaterm_ui::{radius_lg, radius_md, radius_sm};
 use rust_i18n::t;
 
 use super::NyaTermApp;
@@ -322,6 +322,7 @@ impl NyaTermApp {
         self.start_session_start_event_drain(cx);
         self.start_credential_autofill_match_drain(cx);
         self.start_remote_desktop_event_drain(cx);
+        self.observe_remote_desktop_window_visibility(window, cx);
         self.start_prompt_activation_drain(window, cx);
         self.start_shell_persistence_debounce(cx);
         // The restored panel width decides which process-table sort columns exist, and
@@ -1371,7 +1372,7 @@ impl Render for NyaTermApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_android_visibility(cx);
         for texture in self.android.retired_textures.drain(..) {
-            window.remove_dynamic_texture(texture);
+            texture.remove(window);
         }
         let render_started_at = Instant::now();
         // Reconcile viewport size and cell metrics here rather than on the runtime
@@ -1638,6 +1639,8 @@ mod tests {
 
     fn root_render_benchmark_session(name: String) -> SessionRuntimeMetadata {
         SessionRuntimeMetadata {
+            confirmed_ssh_runtime_mode: None,
+            pending_ssh_startup_command: None,
             ssh_config: None,
             ssh_multiplex_key: None,
             source_connection_id: None,

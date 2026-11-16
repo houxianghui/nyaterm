@@ -230,6 +230,33 @@ impl NyaTermApp {
             return;
         };
 
+        if id == "remote.process.sort" {
+            use crate::models::RemoteProcessSortKey;
+            if let Some(key) = [
+                RemoteProcessSortKey::Command,
+                RemoteProcessSortKey::Pid,
+                RemoteProcessSortKey::Cpu,
+                RemoteProcessSortKey::Memory,
+                RemoteProcessSortKey::User,
+            ]
+            .into_iter()
+            .find(|key| key.label() == value)
+                && key != self.remote_ops.process_presentation().sort_key
+            {
+                self.toggle_process_sort(key, cx);
+            }
+            return;
+        }
+        if id == "security-otp-algorithm" {
+            self.security.set_otp_algorithm(value);
+            cx.notify();
+            return;
+        }
+
+        if self.change_android_screen_select(id, value, cx) {
+            return;
+        }
+
         if id.starts_with("asset-batch.select.") {
             self.apply_asset_batch_select(id, value, cx);
             return;
@@ -539,6 +566,16 @@ impl NyaTermApp {
                 },
                 cx,
             ),
+            "ai-mcp-terminal-execution-mode" => {
+                use nyaterm_core::ai::mcp_execution::McpTerminalExecutionMode;
+                let mode = match value {
+                    "inline" => McpTerminalExecutionMode::Inline,
+                    "background" => McpTerminalExecutionMode::Background,
+                    "auto" => McpTerminalExecutionMode::Auto,
+                    _ => return,
+                };
+                self.set_ai_mcp_terminal_execution_mode(mode, cx);
+            }
             "ai-mcp-terminal-display-mode" => match value {
                 "inline" => {
                     self.set_ai_mcp_terminal_display_mode(McpTerminalDisplayMode::Inline, cx)

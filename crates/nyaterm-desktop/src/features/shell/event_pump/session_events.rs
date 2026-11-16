@@ -301,7 +301,10 @@ impl NyaTermApp {
                             continue;
                         }
                         self.session.record_command_history(&session_id, &command);
-                        let context = self.commands.command_context(&session_id).cloned();
+                        let context = self
+                            .commands
+                            .command_context(&session_id)
+                            .map(|_| self.command_suggestion_context(&session_id));
                         let queued = if let Some(context) = context {
                             self.commands.observe_completion_command(context, command)
                         } else {
@@ -322,6 +325,24 @@ impl NyaTermApp {
                         );
                         root_chrome_dirty |=
                             self.handle_session_tmux_state_event(session_id, *state, cx);
+                    }
+                    SessionEvent::SshRuntimeModeConfirmed { session_id, mode } => {
+                        self.flush_pending_session_frame_outputs(
+                            &mut pending_frame_outputs,
+                            &mut drain_timings,
+                        );
+                        if !self.terminal.session_id_is_retired(&session_id)
+                            && let Some(metadata) = self.session.metadata_mut(&session_id)
+                            && metadata.confirm_ssh_runtime_mode(mode)
+                        {
+                            let startup = metadata.pending_ssh_startup_command.take();
+                            if mode == nyaterm_core::models::ssh_runtime::SshRuntimeMode::Sftp {
+                                self.ensure_sftp_session_view(&session_id, cx);
+                            } else if let Some(startup) = startup {
+                                self.schedule_startup_command(session_id, startup, cx);
+                            }
+                            root_chrome_dirty = true;
+                        }
                     }
                     SessionEvent::Exited { session_id, reason } => {
                         self.flush_pending_session_frame_outputs(
@@ -1059,7 +1080,13 @@ mod notice_tests {
                     },
                 },
             ]);
-            app.drain_session_events(cx);
+            // Each drain has a wall-time budget and can yield even with only
+            // four notices when a CI worker is descheduled between events.
+            while !app.session.pending_events_are_empty() {
+                let pending = app.session.pending_event_count();
+                app.drain_session_events(cx);
+                assert!(app.session.pending_event_count() < pending);
+            }
             (app.terminal.recording_output_fence())().unwrap();
             app.drain_terminal_frame_events(cx);
             assert_eq!(app.terminal.session_output("active").unwrap(), output);

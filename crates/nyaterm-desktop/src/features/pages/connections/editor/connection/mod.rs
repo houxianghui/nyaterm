@@ -1,3 +1,4 @@
+use nyaterm_ui::icons::{CONNECTION_ICON_OPTIONS, resolve_connection_icon};
 mod credentials;
 mod groups;
 mod selectors;
@@ -57,10 +58,9 @@ use self::vnc::connection_editor_vnc_section;
 use super::super::list::{ConnectionEditorChoice, ConnectionEditorFields, editor_field};
 use crate::features::selects::NO_SELECTION_VALUE;
 use crate::features::{
-    NyaTermApp, icons::CONNECTION_ICON_OPTIONS, icons::resolve_connection_icon,
-    text_inputs::ORDINARY_INPUT_SHELL_PADDING_X_PX, text_inputs::ordinary_input_focus_ring,
-    text_inputs::ordinary_input_shell_border_color, view_widgets::modal_dialog_shell,
-    view_widgets::themed_icon,
+    NyaTermApp, text_inputs::ORDINARY_INPUT_SHELL_PADDING_X_PX,
+    text_inputs::ordinary_input_focus_ring, text_inputs::ordinary_input_shell_border_color,
+    view_widgets::modal_dialog_shell, view_widgets::themed_icon,
 };
 use crate::models::{
     ConnectionEditorField, ConnectionEditorSection, ConnectionEditorSelect, ConnectionEditorState,
@@ -158,6 +158,16 @@ impl NyaTermApp {
         viewport: (f32, f32),
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if editor.defaults_mode && self.connection_state.editor_save_in_flight() {
+            return div()
+                .w_full()
+                .h(px(viewport.1.min(680.)))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(t!("common.loading"))
+                .into_any_element();
+        }
         self.connection_state
             .ensure_editor_forwarding_endpoint_fields(cx);
         self.connection_state.sync_editor_password_input(cx);
@@ -194,7 +204,9 @@ impl NyaTermApp {
             }
         }
         let palette = self.theme_palette();
-        let title = if editor.id.is_some() {
+        let title = if editor.defaults_mode {
+            t!("menu.defaultSessionSettings")
+        } else if editor.id.is_some() {
             t!("dialog.editConnection")
         } else {
             t!("dialog.newConnection")
@@ -1078,11 +1090,8 @@ impl NyaTermApp {
                 ))
             })
             .when(editor.kind == ConnectionKindTab::Adb, |this| {
-                this.child(android::section(
-                    section_context,
-                    self.android.tracker.snapshot(),
-                    cx,
-                ))
+                let snapshot = self.android.tracker.snapshot();
+                this.child(android::section(self, section_context, snapshot, cx))
             })
             .when(editor.kind == ConnectionKindTab::Local, |this| {
                 this.child(connection_editor_local_section(section_context, cx))

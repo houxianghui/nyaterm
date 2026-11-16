@@ -35,7 +35,9 @@ class PathSelectionTests(unittest.TestCase):
             ("AGENTS.md", {"run_docs"}),
             ("LICENSE", set()),
             (".github/ISSUE_TEMPLATE/bug_report.yml", set()),
-            ("crates/nyaterm-desktop/locales/ja.json", {"run_rust"}),
+            ("crates/nyaterm-i18n/locales/ja.json", {"run_rust"}),
+            ("crates/nyaterm-completion-runtime/src/runtime.rs", {"run_rust"}),
+            ("crates/nyaterm-i18n/src/lib.rs", {"run_rust"}),
             ("crates/nyaterm-desktop/src/features/settings.rs", {"run_rust"}),
             ("crates/nyaterm-desktop/src/features/tmux.rs", {"run_rust"}),
             ("crates/nyaterm-files/src/sftp/mod.rs", {"run_rust"}),
@@ -45,6 +47,7 @@ class PathSelectionTests(unittest.TestCase):
             ("crates/nyaterm-transport/src/tmux/control.rs", {"run_rust", "run_tmux"}),
             ("crates/nyaterm-transport/src/ssh/worker.rs", {"run_rust", "run_tmux"}),
             ("crates/nyaterm-terminal/src/lib.rs", {"run_rust", "run_tmux"}),
+            ("crates/nyaterm-terminal-runtime/src/lib.rs", {"run_rust"}),
             ("crates/nyaterm-core/src/lib.rs", {"run_rust", "run_tmux", "run_plugin_sdk"}),
             ("crates/nyaterm-plugin-api/wit/plugin.wit", {"run_rust", "run_tmux", "run_plugin_sdk"}),
             ("crates/nyaterm-mcp-protocol/src/lib.rs", {"run_rust", "run_tmux", "run_plugin_sdk"}),
@@ -218,7 +221,7 @@ class GitSelectionTests(unittest.TestCase):
 
     def test_run_tmux_label_applies_on_label_event_and_later_updates(self):
         base = self.commit({})
-        head = self.commit({"crates/nyaterm-desktop/locales/fr.json": b"{}"}, base)
+        head = self.commit({"crates/nyaterm-i18n/locales/fr.json": b"{}"}, base)
         for action in ("labeled", "synchronize"):
             with self.subTest(action=action):
                 event = self.event(base, action=action, labels=("run-tmux",))
@@ -335,7 +338,7 @@ class ManifestCoverageTests(unittest.TestCase):
         self.assertNotIn("nyaterm-transport", dependency_closure(graph, {"nyaterm-recording"}))
 
     def test_every_workspace_crate_is_registered(self):
-        self.assertEqual(set(manifest_graph(ROOT)), selector.KNOWN_CRATES, "Register workspace crates in select_rust_jobs.py")
+        self.assertSetEqual(set(manifest_graph(ROOT)), set(selector.KNOWN_CRATES), "Register workspace crates in select_rust_jobs.py")
 
     def test_heavy_job_sets_cover_transitive_workspace_dependencies(self):
         graph = manifest_graph(ROOT)

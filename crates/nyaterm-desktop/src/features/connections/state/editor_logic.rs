@@ -570,8 +570,18 @@ pub(super) fn set_connection_editor_kind(
         return false;
     };
     editor.kind = kind;
-    editor.section = crate::models::ConnectionEditorSection::Basic;
-    editor.focused_field = ConnectionEditorField::Name;
+    if editor.defaults_mode {
+        // The basic tab does not exist in defaults mode; land on its first
+        // replacement instead.
+        editor.section = crate::models::ConnectionEditorSection::for_kind(kind, true)
+            .first()
+            .copied()
+            .unwrap_or(crate::models::ConnectionEditorSection::Network);
+        editor.focused_field = ConnectionEditorField::Port;
+    } else {
+        editor.section = crate::models::ConnectionEditorSection::Basic;
+        editor.focused_field = ConnectionEditorField::Name;
+    }
     editor.port = match kind {
         ConnectionKindTab::Ssh => {
             if editor.port.trim().is_empty() || editor.port == "23" {
@@ -906,9 +916,9 @@ pub(super) fn editor_field_seeds(
         ),
         (
             ConnectionEditorField::AndroidBitRate,
-            draft.android_screen.bit_rate.to_string(),
+            (f64::from(draft.android_screen.bit_rate) / 1_000_000.0).to_string(),
             false,
-            Literal("8000000"),
+            Literal("8"),
         ),
         (
             ConnectionEditorField::Name,
@@ -1284,7 +1294,12 @@ pub(super) fn set_connection_editor_field_text(
             draft.android_screen.max_fps = text.parse().unwrap_or(0)
         }
         ConnectionEditorField::AndroidBitRate => {
-            draft.android_screen.bit_rate = text.parse().unwrap_or(0)
+            draft.android_screen.bit_rate = text
+                .parse::<f64>()
+                .ok()
+                .filter(|v| v.is_finite() && *v >= 0.1 && *v <= 100.0)
+                .map(|v| (v * 1_000_000.0).round() as u32)
+                .unwrap_or(0)
         }
         ConnectionEditorField::SerialPort => draft.serial_port = text,
         ConnectionEditorField::BaudRate => draft.baud_rate = text,
