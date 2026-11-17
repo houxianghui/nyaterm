@@ -239,8 +239,11 @@ def windows_short_path(path: str) -> str:
     GNU make receives the recipe shell as a bare command-line value; a path
     containing spaces would be split, so hand it the short form when possible.
     """
+    kernel32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+    if kernel32 is None:
+        return str(path)
     buffer = ctypes.create_unicode_buffer(512)
-    if ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer)):
+    if kernel32.GetShortPathNameW(str(path), buffer, len(buffer)):
         return buffer.value
     return str(path)
 
