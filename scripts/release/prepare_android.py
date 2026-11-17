@@ -258,6 +258,24 @@ def windows_msys_shell() -> str:
     return windows_short_path(shell)
 
 
+def repair_msvc_dependency_rule(source: Path) -> None:
+    """Restore the backslash that the MSVC dependency awk program lost.
+
+    configure assembles its dependency command through `eval`, which consumes
+    one level of escaping and leaves `gsub(/\\/, "/")` — an unterminated regex
+    that aborts every compilation. Re-escaping the pattern gives awk a literal
+    backslash to translate into a forward slash.
+    """
+    config = source / "ffbuild" / "config.mak"
+    if not config.is_file():
+        return
+    text = config.read_text()
+    broken = 'gsub(/\\/, "/")'
+    fixed = 'gsub(/\\\\/, "/")'
+    if broken in text and fixed not in text:
+        config.write_text(text.replace(broken, fixed))
+
+
 def prepare_ffmpeg(target: str) -> Path:
     prefix = STAGING / "ffmpeg" / target
     stamp = prefix / "SOURCE.json"
@@ -314,6 +332,8 @@ def prepare_ffmpeg(target: str) -> Path:
         workdir = build
     workdir.mkdir(parents=True, exist_ok=True)
     subprocess.run(configure, cwd=workdir, check=True)
+    if "windows" in target:
+        repair_msvc_dependency_rule(workdir)
     subprocess.run(make, cwd=workdir, check=True)
     subprocess.run(install, cwd=workdir, check=True)
     prefix.mkdir(parents=True, exist_ok=True)

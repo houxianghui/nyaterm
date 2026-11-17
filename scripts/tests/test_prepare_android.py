@@ -307,6 +307,13 @@ class PrepareAndroidTests(unittest.TestCase):
             prepare_android.prepare_ffmpeg(ARM64)
             self.assertEqual(self.commands, [])
 
+    def test_msvc_dependency_rule_restores_lost_backslash(self) -> None:
+        config = self.source / "ffbuild" / "config.mak"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text('CCDEP=awk \'/including/ { gsub(/\\/, "/"); }\' > deps\n')
+        prepare_android.repair_msvc_dependency_rule(self.source)
+        self.assertIn('gsub(/\\\\/, "/")', config.read_text())
+
     def test_x64_keeps_native_configuration(self) -> None:
         with self.preparation():
             prepare_android.prepare_ffmpeg(X64)
