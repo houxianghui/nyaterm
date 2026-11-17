@@ -307,18 +307,17 @@ class PrepareAndroidTests(unittest.TestCase):
             prepare_android.prepare_ffmpeg(ARM64)
             self.assertEqual(self.commands, [])
 
-    def test_msvc_dependency_rule_restores_lost_backslash(self) -> None:
-        config = self.source / "ffbuild" / "config.mak"
-        config.parent.mkdir(parents=True, exist_ok=True)
-        config.write_text('CCDEP=awk \'/including/ { gsub(/\\/, "/"); }\' > deps\n')
-        prepare_android.repair_msvc_dependency_rule(self.source)
-        self.assertIn('gsub(/\\\\/, "/")', config.read_text())
-
     def test_x64_keeps_native_configuration(self) -> None:
         with self.preparation():
             prepare_android.prepare_ffmpeg(X64)
         self.assertNotIn("--enable-cross-compile", self.commands[0])
         self.assertFalse(any(arg.startswith("--as=") for arg in self.commands[0]))
+        # Native make runs through MSYS sh, and the MSVC dependency awk program
+        # cannot survive the Windows quoting layers; dependency generation is
+        # disabled for the one-shot build.
+        self.assertIn("CCDEP=:", self.commands[1])
+        self.assertIn("CXXDEP=:", self.commands[1])
+        self.assertIn("HOSTCCDEP=:", self.commands[1])
 
     def test_unsupported_windows_target_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported Windows FFmpeg target"):

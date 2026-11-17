@@ -258,24 +258,6 @@ def windows_msys_shell() -> str:
     return windows_short_path(shell)
 
 
-def repair_msvc_dependency_rule(source: Path) -> None:
-    """Restore the backslash that the MSVC dependency awk program lost.
-
-    configure assembles its dependency command through `eval`, which consumes
-    one level of escaping and leaves `gsub(/\\/, "/")` — an unterminated regex
-    that aborts every compilation. Re-escaping the pattern gives awk a literal
-    backslash to translate into a forward slash.
-    """
-    config = source / "ffbuild" / "config.mak"
-    if not config.is_file():
-        return
-    text = config.read_text()
-    broken = 'gsub(/\\/, "/")'
-    fixed = 'gsub(/\\\\/, "/")'
-    if broken in text and fixed not in text:
-        config.write_text(text.replace(broken, fixed))
-
-
 def prepare_ffmpeg(target: str) -> Path:
     prefix = STAGING / "ffmpeg" / target
     stamp = prefix / "SOURCE.json"
@@ -322,7 +304,13 @@ def prepare_ffmpeg(target: str) -> Path:
         source = extract_tar(archive, STAGING / "ffmpeg-source")
         shell = windows_msys_shell()
         configure = ["sh", "./configure", *options]
-        make = ["make", "-j4", f"SHELL={shell}"]
+        # configure's MSVC dependency command embeds an awk program whose
+        # backslashes are eaten by the eval/native-make layers, leaving an
+        # invalid regex that aborts every compile. A one-shot release build
+        # does not consume the .d files, so disable dependency generation
+        # instead of fighting the quoting. `:` is the shell no-op.
+        dep = ["CCDEP=:", "CXXDEP=:", "ASDEP=:", "HOSTCCDEP=:"]
+        make = ["make", "-j4", f"SHELL={shell}", *dep]
         install = ["make", "install", f"SHELL={shell}"]
         workdir = source
     else:
@@ -332,8 +320,6 @@ def prepare_ffmpeg(target: str) -> Path:
         workdir = build
     workdir.mkdir(parents=True, exist_ok=True)
     subprocess.run(configure, cwd=workdir, check=True)
-    if "windows" in target:
-        repair_msvc_dependency_rule(workdir)
     subprocess.run(make, cwd=workdir, check=True)
     subprocess.run(install, cwd=workdir, check=True)
     prefix.mkdir(parents=True, exist_ok=True)
