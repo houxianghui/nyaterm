@@ -51,13 +51,21 @@ class PrepareAndroidTests(unittest.TestCase):
         self.source = self.root / "source"
         self.source.mkdir()
         (self.source / "COPYING.LGPLv2.1").write_text("fixture license\n")
+        self.license_present = True
         self.commands = []
+
+    def extract_source(self, _archive, _destination):
+        # Windows builds re-extract the tree; the fixture has to recreate it.
+        self.source.mkdir(parents=True, exist_ok=True)
+        if self.license_present:
+            (self.source / "COPYING.LGPLv2.1").write_text("fixture license\n")
+        return self.source
 
     @contextmanager
     def preparation(self, *, upstream_imports: bool = True):
         def run(command, **kwargs):
             self.commands.append(command)
-            if command == ["make", "install"]:
+            if command[:2] == ["make", "install"]:
                 self.assertFalse((self.prefix / "SOURCE.json").exists())
                 install_fixture(self.prefix, upstream_imports=upstream_imports)
             elif any(arg.startswith("/OUT:") for arg in command):
@@ -66,7 +74,7 @@ class PrepareAndroidTests(unittest.TestCase):
         with (
             mock.patch.object(prepare_android, "STAGING", self.staging),
             mock.patch.object(prepare_android, "download", return_value=self.root / "archive.tar.gz"),
-            mock.patch.object(prepare_android, "extract_tar", return_value=self.source),
+            mock.patch.object(prepare_android, "extract_tar", side_effect=self.extract_source),
             mock.patch.object(prepare_android.subprocess, "run", side_effect=run),
         ):
             yield
@@ -94,7 +102,7 @@ class PrepareAndroidTests(unittest.TestCase):
             self.assertEqual(prepare_android.prepare_ffmpeg(X64), self.prefix)
             tool.assert_not_called()
         self.assert_complete()
-        self.assertEqual(self.commands[-1], ["make", "install"])
+        self.assertEqual(self.commands[-1][:2], ["make", "install"])
         self.assertEqual((self.prefix / "LICENSE.txt").read_text(), "fixture license\n")
         self.assertEqual(json.loads((self.prefix / "SOURCE.json").read_text())["target"], X64)
 
@@ -256,11 +264,11 @@ class PrepareAndroidTests(unittest.TestCase):
 
     def test_missing_license_prevents_new_stamp_and_is_repaired_on_cache_hit(self) -> None:
         with self.preparation():
-            (self.source / "COPYING.LGPLv2.1").unlink()
+            self.license_present = False
             with self.assertRaises(FileNotFoundError):
                 prepare_android.prepare_ffmpeg(X64)
             self.assertFalse((self.prefix / "SOURCE.json").exists())
-            (self.source / "COPYING.LGPLv2.1").write_text("fixture license\n")
+            self.license_present = True
             prepare_android.prepare_ffmpeg(X64)
             (self.prefix / "LICENSE.txt").unlink()
             self.commands.clear()

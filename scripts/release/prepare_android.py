@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -232,6 +233,28 @@ def prepare_scrcpy() -> Path:
     return output
 
 
+def windows_short_path(path: str) -> str:
+    """Return the 8.3 form of a Windows path.
+
+    GNU make receives the recipe shell as a bare command-line value; a path
+    containing spaces would be split, so hand it the short form when possible.
+    """
+    buffer = ctypes.create_unicode_buffer(512)
+    if ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer)):
+        return buffer.value
+    return str(path)
+
+
+def windows_msys_shell() -> str:
+    # FFmpeg's recipes call MSYS tools (`mkdir -p`, `install`, makedef scripts).
+    # Native GNU make defaults to cmd.exe and ignores SHELL from the environment,
+    # so Windows builds pass an explicit MSYS shell on the command line.
+    shell = shutil.which("sh")
+    if shell is None:
+        raise FileNotFoundError("MSYS sh is required to build FFmpeg on Windows")
+    return windows_short_path(shell)
+
+
 def prepare_ffmpeg(target: str) -> Path:
     prefix = STAGING / "ffmpeg" / target
     stamp = prefix / "SOURCE.json"
@@ -239,12 +262,12 @@ def prepare_ffmpeg(target: str) -> Path:
     source = extract_tar(archive, STAGING / "ffmpeg-source")
     build = STAGING / "ffmpeg-build" / target
     build.mkdir(parents=True, exist_ok=True)
-    options = [str(source / "configure"), f"--prefix={prefix}", "--disable-autodetect", "--disable-everything",
+    options = [f"--prefix={prefix.as_posix()}", "--disable-autodetect", "--disable-everything",
                "--enable-avcodec", "--enable-avutil", "--enable-avformat", "--enable-swscale", "--disable-avdevice", "--disable-avfilter", "--disable-swresample", "--enable-decoder=h264",
                "--enable-parser=h264", "--enable-shared", "--disable-static", "--disable-programs",
                "--disable-doc", "--disable-network", "--disable-gpl", "--disable-nonfree", "--disable-x86asm"]
     if "windows" in target:
-        options = ["sh", *options, "--toolchain=msvc", "--target-os=win32", "--extra-cflags=-MT",
+        options = [*options, "--toolchain=msvc", "--target-os=win32", "--extra-cflags=-MT",
                    "--arch=aarch64" if target.startswith("aarch64") else "--arch=x86_64"]
         if target.startswith("aarch64"):
             # Release runners execute on x64. Never execute ARM64 configure probes;
@@ -269,10 +292,27 @@ def prepare_ffmpeg(target: str) -> Path:
         shutil.rmtree(prefix)
     if build.exists():
         shutil.rmtree(build)
-    build.mkdir(parents=True)
-    subprocess.run(options, cwd=build, check=True)
-    subprocess.run(["make", "-j4"], cwd=build, check=True)
-    subprocess.run(["make", "install"], cwd=build, check=True)
+    if "windows" in target:
+        # An out-of-tree configure writes `include <MSYS path>/Makefile` into
+        # the build Makefile, which Windows' native GNU make cannot resolve.
+        # Building in the source tree keeps every path relative; the tree is
+        # re-extracted so a previous attempt cannot leave stale objects.
+        shutil.rmtree(source)
+        source = extract_tar(archive, STAGING / "ffmpeg-source")
+        shell = windows_msys_shell()
+        configure = ["sh", "./configure", *options]
+        make = ["make", "-j4", f"SHELL={shell}"]
+        install = ["make", "install", f"SHELL={shell}"]
+        workdir = source
+    else:
+        configure = [str(source / "configure"), *options]
+        make = ["make", "-j4"]
+        install = ["make", "install"]
+        workdir = build
+    workdir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(configure, cwd=workdir, check=True)
+    subprocess.run(make, cwd=workdir, check=True)
+    subprocess.run(install, cwd=workdir, check=True)
     prefix.mkdir(parents=True, exist_ok=True)
     if "windows" in target:
         ensure_windows_import_libraries(prefix, target)
