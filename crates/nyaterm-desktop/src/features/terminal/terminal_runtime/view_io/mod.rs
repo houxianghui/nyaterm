@@ -4,9 +4,8 @@ use std::time::{Duration, Instant};
 
 use crate::models::{
     EffectiveTerminalPaintPolicy, TerminalFrameActionLinks, TerminalPerformanceMode,
-    TerminalPresentation, TerminalProtocolState, TerminalSearchMode, TerminalSelection,
-    TerminalViewState, TerminalWorkPolicy, terminal_action_link_matcher_key,
-    terminal_snapshot_matches_grid_geometry,
+    TerminalPresentation, TerminalProtocolState, TerminalSelection, TerminalViewState,
+    TerminalWorkPolicy, terminal_action_link_matcher_key, terminal_snapshot_matches_grid_geometry,
 };
 use gpui::{AppContext, Context, Entity, Window};
 #[cfg(test)]
@@ -69,6 +68,17 @@ fn terminal_paint_snapshot_for_view(
         .or(retained_surface_snapshot)
 }
 
+/// Cached and retained scroll snapshots may only be reused while their shared
+/// rows still match the live frame; in-place output keeps history coordinates unchanged.
+pub(super) fn terminal_cached_snapshot_is_current(
+    view: &TerminalViewState,
+    snapshot: &TerminalSnapshot,
+) -> bool {
+    view.frame_snapshot.as_ref().is_none_or(|live| {
+        std::ptr::eq(live.as_ref(), snapshot) || snapshot.content_agrees_with(live)
+    })
+}
+
 fn terminal_cached_scrollback_snapshot_covering_display_offset(
     view: &TerminalViewState,
     display_offset: usize,
@@ -81,6 +91,7 @@ fn terminal_cached_scrollback_snapshot_covering_display_offset(
         && view
             .history_state()
             .preserves_coordinates_from(snapshot.history)
+        && terminal_cached_snapshot_is_current(view, snapshot)
     {
         return Some(snapshot.clone());
     }
@@ -90,6 +101,7 @@ fn terminal_cached_scrollback_snapshot_covering_display_offset(
         .filter(|snapshot| {
             view.history_state()
                 .preserves_coordinates_from(snapshot.history)
+                && terminal_cached_snapshot_is_current(view, snapshot)
                 && terminal_snapshot_covers_display_offset(
                     snapshot.as_ref(),
                     display_offset,
@@ -110,6 +122,7 @@ fn terminal_retained_snapshot_matches_view(
     let scrollback_len = view.scrollback_len_for_ui();
     view.history_state()
         .preserves_coordinates_from(snapshot.history)
+        && terminal_cached_snapshot_is_current(view, snapshot)
         // Folding changes presentation without changing VT history or row text.
         // Once the worker publishes the new layout, a retained surface frame
         // must not take precedence over its replacement scroll snapshot.
@@ -643,7 +656,9 @@ impl NyaTermApp {
                     .clone()
                     .unwrap_or_else(|| view.live_snapshot_with_scroll_window());
             }
-            if let Some(snapshot) = view.scrollback_snapshots.get(&offset).cloned() {
+            if let Some(snapshot) = view.scrollback_snapshots.get(&offset).cloned()
+                && terminal_cached_snapshot_is_current(view, &snapshot)
+            {
                 return snapshot;
             }
             if let Some(snapshot) = view.frame_snapshot.as_ref()
@@ -864,12 +879,8 @@ impl NyaTermApp {
         let performance_overlay = view.performance_overlay;
         let skipped = view.skipped_output_chars;
         let protocol_state = view.protocol_state;
-        let search_matches = if is_active
-            && !input_latency_active
-            && self.terminal.search.open
-            && self.terminal.search.mode == TerminalSearchMode::Buffer
-        {
-            self.terminal_buffer_matches().unwrap_or_default()
+        let search_matches = if is_active && !input_latency_active && self.terminal.search.open {
+            self.terminal_find_highlights()
         } else {
             std::sync::Arc::from([])
         };
@@ -1425,11 +1436,7 @@ impl NyaTermApp {
                     .push((search_match.start_col, search_match.end_col));
             }
         }
-        if enhanced
-            && is_active
-            && self.terminal.search.open
-            && self.terminal.search.mode == TerminalSearchMode::Buffer
-        {
+        if enhanced && is_active && self.terminal.search.open {
             let search_matches = self.terminal_buffer_matches().unwrap_or_default();
             let (abs_start, abs_end) =
                 crate::features::terminal::terminal_surface::terminal_snapshot_absolute_range(
@@ -1444,29 +1451,17 @@ impl NyaTermApp {
                         .min(occurrences.len().saturating_sub(1)),
                 )
                 .cloned();
-            let visible_matches = crate::features::terminal::terminal_search_runtime::terminal_matches_in_absolute_range(
-                &search_matches,
-                abs_start..abs_end,
-            );
-            let first_visible_index =
-                search_matches.partition_point(|search_match| search_match.line_index < abs_start);
-            for (visible_index, search_match) in visible_matches.iter().enumerate() {
-                let match_index = first_visible_index + visible_index;
-                let abs = search_match.line_index;
-                let view_row = abs - abs_start;
-                let range = (search_match.start_col, search_match.end_col);
-                search_ranges_by_line
-                    .entry(view_row)
-                    .or_default()
-                    .push(range);
-                if active_range
-                    .as_ref()
-                    .is_some_and(|active| active.contains(&match_index))
+            let highlights = self.terminal_find_highlights();
+            for hit in crate::features::terminal::terminal_search_runtime::terminal_matches_in_absolute_range(&highlights,abs_start..abs_end) {search_ranges_by_line.entry(hit.line_index-abs_start).or_default().push((hit.start_col,hit.end_col));}
+            if let Some(active) = active_range.and_then(|range| search_matches.get(range)) {
+                for hit in active
+                    .iter()
+                    .filter(|hit| (abs_start..abs_end).contains(&hit.line_index))
                 {
                     active_search_ranges_by_line
-                        .entry(view_row)
+                        .entry(hit.line_index - abs_start)
                         .or_default()
-                        .push(range);
+                        .push((hit.start_col, hit.end_col));
                 }
             }
         }

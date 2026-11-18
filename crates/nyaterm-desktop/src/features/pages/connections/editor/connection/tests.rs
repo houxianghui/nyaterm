@@ -323,6 +323,7 @@ fn group(id: &str, name: &str, parent_id: Option<&str>, sort_order: i32) -> Grou
         id: id.to_string(),
         name: name.to_string(),
         parent_id: parent_id.map(ToOwned::to_owned),
+        tree_order: None,
         sort_order,
         created_at_ms: None,
         updated_at_ms: None,
@@ -391,6 +392,7 @@ fn editor(group_id: Option<&str>, pending_group_name: Option<&str>) -> Connectio
         agent_preview_loading: false,
         backspace_mode: "del".to_string(),
         encoding: String::new(),
+        allow_short_rsa_host_keys: false,
         ssh_compatibility_mode: false,
         ssh_profile: Default::default(),
         terminal_type: None,
@@ -412,6 +414,8 @@ fn editor(group_id: Option<&str>, pending_group_name: Option<&str>) -> Connectio
         working_dir: String::new(),
         serial_port: String::new(),
         baud_rate: "115200".to_string(),
+        serial_prompt_port: false,
+        serial_prompt_baud_rate: false,
         data_bits: "8".to_string(),
         parity: "none".to_string(),
         flow_control: Default::default(),
@@ -2256,6 +2260,8 @@ fn android_save_focuses_invalid_screen_setting_from_basic_page(cx: &mut TestAppC
 
 #[gpui::test]
 fn android_select_escape_closes_popup_before_editor(cx: &mut TestAppContext) {
+    // Selecting Android starts discovery on the real blocking worker pool.
+    cx.executor().allow_parking();
     let test_dir = TestConfigDir::new("nyaterm-android-select-escape");
     let (app, vcx) = hosted_editor(cx, test_dir.path(), 640., 720., 12.);
     vcx.update(|_, cx| {
@@ -2293,4 +2299,54 @@ fn android_select_escape_closes_popup_before_editor(cx: &mut TestAppContext) {
                 && !app.connection_editor_select_menu_is_focused(window, cx)
         }));
     }
+}
+
+/// The baud rate defers through its own popover entry, and the saved rate stays
+/// behind as the default the connect dialog offers.
+#[gpui::test]
+fn the_baud_popover_defers_the_rate_without_losing_the_saved_one(cx: &mut TestAppContext) {
+    let test_dir = TestConfigDir::new("nyaterm-serial-baud-ask");
+    let (app, vcx) = hosted_editor(cx, test_dir.path(), 640., 720., 12.);
+
+    vcx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let mut draft = editor(None, None);
+            draft.kind = ConnectionKindTab::Serial;
+            draft.baud_rate = "76800".to_string();
+            app.connection_state.begin_editor(draft);
+            app.connection_state.build_editor_fields(cx);
+            app.set_connection_editor_section(crate::models::ConnectionEditorSection::Basic, cx);
+            app.set_connection_editor_baud_popover_open(true, cx);
+            cx.notify();
+        });
+    });
+    for _ in 0..3 {
+        draw_editor(&app, vcx);
+    }
+
+    let ask = vcx
+        .debug_bounds("connection-editor-baud-ask")
+        .expect("the deferred option renders in the baud popover");
+    vcx.simulate_click(ask.center(), Modifiers::default());
+    draw_editor(&app, vcx);
+    vcx.update(|_, cx| {
+        let state = &app.read(cx).connection_state;
+        let draft = state.active_editor_draft().unwrap();
+        assert!(draft.serial_prompt_baud_rate);
+        assert_eq!(draft.baud_rate, "76800", "the saved rate stays as default");
+        assert!(!state.editor_baud_popover_is_open());
+    });
+
+    // Choosing a rate is a decision of its own, so it cancels the deferral.
+    vcx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.set_connection_editor_baud_rate("115200".to_string(), cx)
+        });
+    });
+    vcx.update(|_, cx| {
+        let state = &app.read(cx).connection_state;
+        let draft = state.active_editor_draft().unwrap();
+        assert!(!draft.serial_prompt_baud_rate);
+        assert_eq!(draft.baud_rate, "115200");
+    });
 }

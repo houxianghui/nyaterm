@@ -266,6 +266,12 @@ impl NyaTermApp {
             return;
         }
 
+        if let Some(index) = id.strip_prefix("settings.startup.target.") {
+            if let Ok(index) = index.parse::<usize>() {
+                self.set_startup_target(index, value, cx);
+            }
+            return;
+        }
         if id == "connection-editor-kind" {
             if let Some(kind) = [
                 crate::models::ConnectionKindTab::Ssh,
@@ -489,6 +495,9 @@ impl NyaTermApp {
             }
             "temporary-link-serial-port" => {
                 self.apply_temporary_serial_port_name(value.to_string(), cx);
+            }
+            "serial-prompt.port" => {
+                self.select_serial_prompt_port(value.to_string(), cx);
             }
             "cloud-provider-select" => self.update_cloud_sync_provider(value, cx),
             "cloud-conflict-branch" => {

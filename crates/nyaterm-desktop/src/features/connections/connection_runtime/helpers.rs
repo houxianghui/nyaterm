@@ -249,6 +249,7 @@ pub(super) fn connection_editor_from_saved(
         agent_preview_loading: false,
         backspace_mode: "del".to_string(),
         encoding: String::new(),
+        allow_short_rsa_host_keys: connection.allow_short_rsa_host_keys,
         ssh_compatibility_mode: connection.ssh_compatibility_mode,
         ssh_profile: connection.ssh_profile,
         terminal_type: connection.terminal_type,
@@ -270,6 +271,8 @@ pub(super) fn connection_editor_from_saved(
         working_dir: String::new(),
         serial_port: String::new(),
         baud_rate: "115200".to_string(),
+        serial_prompt_port: false,
+        serial_prompt_baud_rate: false,
         data_bits: "8".to_string(),
         parity: "none".to_string(),
         flow_control: Default::default(),
@@ -414,12 +417,15 @@ pub(super) fn connection_editor_from_saved(
             parity,
             flow_control,
             stop_bits,
+            connect_prompt,
             backspace_mode,
             encoding,
             ..
         } => {
             editor.serial_port = port_name;
             editor.baud_rate = baud_rate.to_string();
+            editor.serial_prompt_port = connect_prompt.port;
+            editor.serial_prompt_baud_rate = connect_prompt.baud_rate;
             editor.data_bits = data_bits.to_string();
             editor.parity = parity;
             editor.flow_control = flow_control;
@@ -630,7 +636,9 @@ pub(super) fn build_saved_connection_from_editor(
         }
         ConnectionKindTab::Serial => {
             let port_name = editor.serial_port.trim().to_string();
-            if port_name.is_empty() {
+            // A deferred port is chosen at connect time; only a connection that
+            // never asks needs the device up front.
+            if port_name.is_empty() && !editor.serial_prompt_port {
                 return Err(ConnectionEditorValidationError::SerialPortRequired);
             }
             let baud_rate = editor
@@ -652,6 +660,10 @@ pub(super) fn build_saved_connection_from_editor(
                 parity: non_empty_or(editor.parity.clone(), "none"),
                 flow_control: editor.flow_control,
                 stop_bits: non_empty_or(editor.stop_bits.clone(), "1"),
+                connect_prompt: nyaterm_core::models::connection::SerialConnectPrompt {
+                    port: editor.serial_prompt_port,
+                    baud_rate: editor.serial_prompt_baud_rate,
+                },
                 ai_execution_profile: AiExecutionProfile::Auto,
                 backspace_mode: nyaterm_core::terminal::connection_input::BackspaceMode::parse(
                     &editor.backspace_mode,
@@ -829,7 +841,16 @@ pub(super) fn build_saved_connection_from_editor(
                 format!("{host}:{port}")
             }
             ConnectionType::LocalTerminal { .. } => "Local Terminal".to_string(),
-            ConnectionType::Serial { port_name, .. } => port_name.clone(),
+            // The device and rate name the connection, the same way a quick
+            // serial link is titled. A connection that asks for the device when
+            // connecting has none yet, and an empty title would leave the list
+            // showing a blank row.
+            ConnectionType::Serial {
+                port_name,
+                baud_rate,
+                ..
+            } => crate::models::serial_connection_name(port_name, &baud_rate.to_string())
+                .unwrap_or_else(|| crate::models::SERIAL_FALLBACK_NAME.to_string()),
             ConnectionType::Adb { device, .. } => device.serial(),
         }
     } else {
@@ -1050,6 +1071,7 @@ pub(super) fn build_saved_connection_from_editor(
             .clone()
             .filter(|value| !value.trim().is_empty()),
         description: non_empty_optional(&editor.description),
+        tree_order: None,
         sort_order: 0,
         icon: editor.icon.clone().filter(|value| !value.trim().is_empty()),
         // Only SSH sessions report a remote system, so nothing else can be
@@ -1064,6 +1086,8 @@ pub(super) fn build_saved_connection_from_editor(
         // remains part of the compatibility-sensitive saved connection.
         recording: editor.recording.clone(),
         ssh_algorithms,
+        allow_short_rsa_host_keys: editor.kind == ConnectionKindTab::Ssh
+            && editor.allow_short_rsa_host_keys,
         ssh_compatibility_mode: editor.kind == ConnectionKindTab::Ssh
             && editor.ssh_compatibility_mode,
         ssh_profile: if editor.kind == ConnectionKindTab::Ssh {
@@ -1119,6 +1143,7 @@ pub(super) fn build_default_session_settings(
     let mut built = build_saved_connection_from_editor(&draft)?;
     built.id = editor.id.clone().unwrap_or_else(uuid);
     built.name = String::new();
+    built.allow_short_rsa_host_keys = false;
     built.group_id = None;
     built.description = None;
     built.tags = Vec::new();
@@ -1155,6 +1180,8 @@ pub(super) fn apply_session_defaults(
     editor.terminal_type = defaults.terminal_type;
     editor.ssh_compatibility_mode = defaults.ssh_compatibility_mode;
     editor.ssh_profile = defaults.ssh_profile;
+    // A template must not opt every new connection into weak host keys.
+    editor.allow_short_rsa_host_keys = false;
     editor.sftp_enabled = defaults.sftp_enabled;
     editor.sftp_compatibility_mode = defaults.sftp_compatibility_mode;
     editor.sftp_cwd_follow_mode = defaults.sftp_cwd_follow_mode.clone();
@@ -1362,12 +1389,14 @@ mod tests {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: Some("linux".to_string()),
             icon_auto_detect: None,
             auth: None,
             recording: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -1408,6 +1437,7 @@ mod tests {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -1418,6 +1448,7 @@ mod tests {
             }),
             recording: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -1614,6 +1645,7 @@ mod tests {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -1623,6 +1655,7 @@ mod tests {
             }),
             recording: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -1672,6 +1705,7 @@ mod tests {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -1681,6 +1715,7 @@ mod tests {
             }),
             recording: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -1728,6 +1763,7 @@ mod tests {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -1740,6 +1776,7 @@ mod tests {
                 macs: vec!["hmac-sha2-256".to_string()],
                 host_keys: vec!["ssh-ed25519".to_string()],
             }),
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: SshProfile::NetworkDevice,
             terminal_type: Some(SshTerminalType::Vt220),
@@ -1811,6 +1848,33 @@ mod tests {
     }
 
     #[test]
+    fn short_rsa_opt_in_survives_editor_save_and_can_be_disabled() {
+        let saved: SavedConnection = serde_json::from_value(serde_json::json!({
+            "name":"legacy", "type":"ssh", "host":"example.invalid", "ssh_profile":"network_device",
+            "allow_short_rsa_host_keys":true, "future_field":{"v":7}
+        }))
+        .unwrap();
+        let mut editor = connection_editor_from_saved(saved, false);
+        assert!(editor.allow_short_rsa_host_keys);
+        let saved = build_saved_connection_from_editor(&editor).unwrap();
+        assert!(saved.allow_short_rsa_host_keys);
+        assert!(
+            !build_default_session_settings(&editor)
+                .unwrap()
+                .allow_short_rsa_host_keys
+        );
+        editor.allow_short_rsa_host_keys = false;
+        let saved = build_saved_connection_from_editor(&editor).unwrap();
+        assert!(!saved.allow_short_rsa_host_keys);
+        assert!(
+            serde_json::to_value(saved)
+                .unwrap()
+                .get("allow_short_rsa_host_keys")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn connection_editor_round_trip_preserves_telnet_behavior() {
         let connection = SavedConnection {
             extensions: Default::default(),
@@ -1836,12 +1900,14 @@ mod tests {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
             auth: None,
             recording: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -1992,6 +2058,7 @@ mod tests {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -2001,6 +2068,7 @@ mod tests {
             }),
             recording: Some(expected_recording.clone()),
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -2104,6 +2172,7 @@ mod tests {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -2114,6 +2183,7 @@ mod tests {
             }),
             recording: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -2222,6 +2292,7 @@ mod tests {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -2232,6 +2303,7 @@ mod tests {
             }),
             recording: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -2322,33 +2394,55 @@ impl NyaTermApp {
     }
 
     pub(in crate::features) fn refresh_connection_serial_ports(&mut self) {
-        self.connection_state.replace_serial_ports(
-            self.session
-                .manager()
-                .list_serial_ports()
-                .unwrap_or_default(),
-        );
+        let ports = self
+            .session
+            .manager()
+            .list_serial_ports()
+            .unwrap_or_default();
+        self.connection_state.replace_serial_ports(ports);
+    }
+
+    pub(in crate::features) fn serial_ports_in_use(&self) -> std::collections::HashSet<String> {
+        self.session.serial_ports_in_use(None, None)
+    }
+
+    pub(in crate::features) fn serial_port_in_use(&self, port_name: &str) -> bool {
+        self.serial_ports_in_use().contains(port_name.trim())
     }
 
     pub(in crate::features) fn request_connection_serial_ports_refresh(
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        if !self.connection_state.begin_serial_ports_refresh() {
-            return;
-        }
         let manager = self.session.manager_handle();
-        let scheduler = self.blocking_jobs.clone();
-        cx.spawn(async move |this, cx| {
-            let task = scheduler.submit_task("connection-serial-ports", move |_| {
+        self.request_connection_serial_ports_refresh_with_loader(
+            move || {
                 manager
                     .list_serial_ports()
                     .map_err(|error| error.to_string())
-            });
+            },
+            cx,
+        );
+    }
+
+    pub(in crate::features) fn request_connection_serial_ports_refresh_with_loader(
+        &mut self,
+        loader: impl FnOnce() -> Result<Vec<nyaterm_transport::SerialPortInfo>, String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.connection_state.begin_serial_ports_refresh() {
+            return;
+        }
+        let scheduler = self.blocking_jobs.clone();
+        cx.spawn(async move |this, cx| {
+            let task = scheduler.submit_task("connection-serial-ports", move |_| loader());
             let result = await_blocking_job(task).await.and_then(|result| result);
             let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok(ports) => this.connection_state.replace_serial_ports(ports),
+                    Ok(ports) => {
+                        this.connection_state.replace_serial_ports(ports);
+                        this.seed_serial_connect_prompt_device(cx);
+                    }
                     Err(error) => this.connection_state.fail_serial_ports_refresh(error),
                 }
                 cx.notify();
@@ -2370,6 +2464,7 @@ pub(in crate::features) enum ConnectionEditorToggle {
     SftpEnabled,
     SftpCompatibilityMode,
     SshCompatibilityMode,
+    AllowShortRsaHostKeys,
     RawTcp,
     LocalEcho,
     LocalLineEdit,
@@ -2667,5 +2762,125 @@ mod account_edit_tests {
             assert_eq!(auth.saved_account_id(), Some("account"));
             assert!(auth.password.is_none());
         }
+    }
+
+    /// A serial connection may defer its device to connect time, and only then
+    /// may the saved port be empty.
+    #[test]
+    fn serial_editor_accepts_an_empty_port_only_while_the_device_is_asked_at_connect() {
+        let original: SavedConnection = serde_json::from_value(serde_json::json!({
+            "id":"serial", "name":"Board", "type":"serial",
+            "port_name":"COM7", "baud_rate":115200
+        }))
+        .unwrap();
+        let mut editor = connection_editor_from_saved(original, false);
+        editor.serial_port.clear();
+        assert!(matches!(
+            build_saved_connection_from_editor(&editor),
+            Err(ConnectionEditorValidationError::SerialPortRequired)
+        ));
+
+        editor.serial_prompt_port = true;
+        let saved = build_saved_connection_from_editor(&editor).unwrap();
+        let nyaterm_core::ConnectionType::Serial {
+            port_name,
+            baud_rate,
+            connect_prompt,
+            ..
+        } = &saved.config
+        else {
+            panic!("serial connection expected");
+        };
+        assert_eq!(port_name, "");
+        assert_eq!(*baud_rate, 115200);
+        assert_eq!(
+            *connect_prompt,
+            nyaterm_core::models::connection::SerialConnectPrompt {
+                port: true,
+                baud_rate: false,
+            }
+        );
+
+        // The intent has to survive being reopened, otherwise the connection
+        // silently loses its prompt on the next save.
+        let reopened = connection_editor_from_saved(saved, false);
+        assert!(reopened.serial_prompt_port);
+        assert!(!reopened.serial_prompt_baud_rate);
+        assert!(reopened.serial_port.is_empty());
+
+        // Asking only for the baud rate keeps the device mandatory.
+        let mut baud_only = connection_editor_from_saved(
+            serde_json::from_value(serde_json::json!({
+                "id":"serial", "name":"Board", "type":"serial",
+                "port_name":"", "baud_rate":9600, "connect_prompt":{"baud_rate":true}
+            }))
+            .unwrap(),
+            false,
+        );
+        assert!(baud_only.serial_prompt_baud_rate);
+        assert!(matches!(
+            build_saved_connection_from_editor(&baud_only),
+            Err(ConnectionEditorValidationError::SerialPortRequired)
+        ));
+        baud_only.serial_port = "COM3".into();
+        let saved = build_saved_connection_from_editor(&baud_only).unwrap();
+        let nyaterm_core::ConnectionType::Serial { connect_prompt, .. } = &saved.config else {
+            panic!("serial connection expected");
+        };
+        assert_eq!(
+            *connect_prompt,
+            nyaterm_core::models::connection::SerialConnectPrompt {
+                port: false,
+                baud_rate: true,
+            }
+        );
+
+        // Turning the prompts back off restores the device requirement, so the
+        // editor cannot save a connection that nothing can open.
+        baud_only.serial_port.clear();
+        baud_only.serial_prompt_baud_rate = false;
+        assert!(matches!(
+            build_saved_connection_from_editor(&baud_only),
+            Err(ConnectionEditorValidationError::SerialPortRequired)
+        ));
+    }
+
+    /// An unnamed serial connection is titled the way a quick serial link is —
+    /// device and rate. A connection that picks the device later still gets a
+    /// title the list can show instead of a blank row.
+    #[test]
+    fn an_unnamed_serial_connection_is_titled_after_its_device() {
+        for (port_name, expected) in [
+            ("COM7", "COM7 @ 115200"),
+            (r"\\.\COM10", "COM10 @ 115200"),
+            ("/dev/ttyUSB0", "ttyUSB0 @ 115200"),
+        ] {
+            let editor = connection_editor_from_saved(
+                serde_json::from_value(serde_json::json!({
+                    "id":"serial", "name":"", "type":"serial",
+                    "port_name": port_name, "baud_rate":115200
+                }))
+                .unwrap(),
+                false,
+            );
+            assert_eq!(
+                build_saved_connection_from_editor(&editor).unwrap().name,
+                expected,
+                "{port_name}"
+            );
+        }
+
+        let deferred = connection_editor_from_saved(
+            serde_json::from_value(serde_json::json!({
+                "id":"serial", "name":"", "type":"serial",
+                "port_name":"", "baud_rate":115200, "connect_prompt":{"port":true}
+            }))
+            .unwrap(),
+            false,
+        );
+        assert_eq!(
+            build_saved_connection_from_editor(&deferred).unwrap().name,
+            "Serial"
+        );
     }
 }

@@ -17,6 +17,7 @@ pub mod action_links;
 pub mod agent_capture;
 mod cell_string;
 mod cells;
+pub mod colors;
 pub mod command_blocks;
 pub mod command_navigation;
 pub mod display_rows;
@@ -44,6 +45,8 @@ pub use cells::{
     terminal_text_cell_slice, terminal_text_cells,
 };
 pub use encoding::SessionEncoding;
+
+use colors::{TerminalColorPalette, indexed_color_rgb};
 
 /// OSC 133 shell-integration mark attached to a terminal line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -430,6 +433,44 @@ impl TerminalSnapshot {
         Some(snapshot)
     }
 
+    /// Shared rows must describe the same content.
+    ///
+    /// History coordinates and absolute row keys do not move when output
+    /// repaints the live viewport in place: a cleared screen followed by a new
+    /// prompt keeps `scrollback_len`, `scroll_count` and `total_rows` intact.
+    /// A cached snapshot can therefore still look current while its rows
+    /// predate the latest output. Rows outside either window are not
+    /// comparable; rows both snapshots carry must match.
+    pub fn content_agrees_with(&self, live: &TerminalSnapshot) -> bool {
+        if self.cols != live.cols {
+            return false;
+        }
+        let Some((self_start, self_end)) = snapshot_window::terminal_snapshot_absolute_window(self)
+        else {
+            return true;
+        };
+        let Some((live_start, live_end)) = snapshot_window::terminal_snapshot_absolute_window(live)
+        else {
+            return true;
+        };
+        let start = self_start.max(live_start);
+        let end = self_end.min(live_end);
+        if start >= end {
+            return true;
+        }
+        (start..end).all(|absolute| {
+            match (
+                self.row(absolute - self_start),
+                live.row(absolute - live_start),
+            ) {
+                (Some(ours), Some(theirs)) => {
+                    ours.revision == theirs.revision && ours.signature == theirs.signature
+                }
+                _ => false,
+            }
+        })
+    }
+
     /// Presentation-only displacement; protocol and selection coordinates stay intact.
     pub fn leading_cleared_rows(&self, viewport_anchor_row: usize) -> usize {
         let count = self
@@ -795,6 +836,7 @@ pub struct TerminalCore {
     scroll_region_tracker: scroll_region::ScrollRegionTracker,
     term: Term<NyaTermEventProxy>,
     term_config: Config,
+    color_palette: TerminalColorPalette,
     proxy: NyaTermEventProxy,
     sidecar: NyaTermSidecar,
     pending_effects: TerminalEffects,
@@ -986,6 +1028,7 @@ impl TerminalCore {
             scroll_region_tracker: scroll_region::ScrollRegionTracker::new(rows),
             term,
             term_config: config,
+            color_palette: TerminalColorPalette::default(),
             proxy,
             sidecar: NyaTermSidecar::default(),
             pending_effects: TerminalEffects::default(),
@@ -1015,6 +1058,16 @@ impl TerminalCore {
             #[cfg(test)]
             last_shell_input_commit_count: 0,
         }
+    }
+
+    /// Set the host palette used when answering OSC 4/10/11/12 color queries.
+    /// This leaves program-set OSC overrides and the terminal grid unchanged.
+    pub fn set_color_palette(&mut self, palette: TerminalColorPalette) {
+        self.color_palette = palette;
+    }
+
+    pub fn color_palette(&self) -> TerminalColorPalette {
+        self.color_palette
     }
 
     /// Enable richer frames without changing the protocol grid or VT modes.
@@ -1558,10 +1611,12 @@ impl TerminalCore {
         let session_encoding = self.session_encoding.clone();
         let cell_metrics = (self.cell_width_px, self.cell_height_px);
         let logical_line_snapshots = self.logical_line_snapshots;
+        let color_palette = self.color_palette;
         *self = Self::new_with_config(cols, rows, config);
         self.primary_lines.epoch = next_epoch;
         self.alternate_lines.epoch = next_epoch;
         self.session_encoding = session_encoding;
+        self.color_palette = color_palette;
         self.set_cell_metrics(cell_metrics.0, cell_metrics.1);
         self.set_logical_line_snapshots(logical_line_snapshots);
     }
@@ -2041,13 +2096,32 @@ impl TerminalCore {
         self.search_grid_in_absolute_range(query, 0..self.total_rows())
     }
 
+    /// Line identity for a retained absolute row on the current screen.
+    pub fn search_line_id(&self, row: usize) -> Option<TerminalLineId> {
+        if row >= self.total_rows() {
+            return None;
+        }
+        let state = self.active_line_state();
+        Some(TerminalLineId {
+            epoch: state.epoch,
+            logical_line: state.logical_origin + row as i64 - self.scrollback_len() as i64,
+        })
+    }
+
+    /// Start of the first logical line that can be rewritten by live output.
+    pub fn search_mutable_start(&self) -> usize {
+        let first = self.term.line_search_left(Point::new(Line(0), Column(0)));
+        self.scrollback_len()
+            .saturating_add_signed(first.line.0 as isize)
+    }
+
     pub fn search_grid_occurrences_in_absolute_range(
         &self,
         query: &TerminalSearchQuery,
         absolute_lines: Range<usize>,
         mode: TerminalSearchRangeMode,
     ) -> Result<Vec<TerminalGridOccurrence>, TerminalSearchError> {
-        if query.pattern.trim().is_empty() || query.limit == 0 {
+        if query.pattern.is_empty() || query.limit == 0 {
             return Ok(Vec::new());
         }
         let total_rows = self.total_rows();
@@ -2125,7 +2199,7 @@ impl TerminalCore {
         query: &TerminalSearchQuery,
         absolute_lines: Range<usize>,
     ) -> Result<Vec<TerminalGridMatch>, TerminalSearchError> {
-        if query.pattern.trim().is_empty() || query.limit == 0 {
+        if query.pattern.is_empty() || query.limit == 0 {
             return Ok(Vec::new());
         }
 
@@ -3540,90 +3614,8 @@ impl TerminalCore {
         if let Some(color) = self.term.colors()[index] {
             return color;
         }
-        default_color_rgb(index)
+        self.color_palette.resolve(index)
     }
-}
-
-fn default_color_rgb(index: usize) -> Rgb {
-    match index {
-        0..=15 => ansi16_rgb(index as u8),
-        16..=255 => {
-            let value = indexed_color_rgb(index as u8);
-            Rgb {
-                r: ((value >> 16) & 0xff) as u8,
-                g: ((value >> 8) & 0xff) as u8,
-                b: (value & 0xff) as u8,
-            }
-        }
-        // Foreground / Cursor / BrightForeground
-        256 | 258 | 267 => Rgb {
-            r: 0xcc,
-            g: 0xcc,
-            b: 0xcc,
-        },
-        // Background
-        257 => Rgb {
-            r: 0x12,
-            g: 0x12,
-            b: 0x12,
-        },
-        // DimBlack..DimWhite
-        259..=266 => dim_rgb(ansi16_rgb((index - 259) as u8)),
-        // DimForeground / DimBackground-ish
-        268 => dim_rgb(Rgb {
-            r: 0xcc,
-            g: 0xcc,
-            b: 0xcc,
-        }),
-        _ => Rgb { r: 0, g: 0, b: 0 },
-    }
-}
-
-fn ansi16_rgb(index: u8) -> Rgb {
-    const TABLE: [(u8, u8, u8); 16] = [
-        (0x00, 0x00, 0x00),
-        (0xcd, 0x00, 0x00),
-        (0x00, 0xcd, 0x00),
-        (0xcd, 0xcd, 0x00),
-        (0x00, 0x00, 0xee),
-        (0xcd, 0x00, 0xcd),
-        (0x00, 0xcd, 0xcd),
-        (0xe5, 0xe5, 0xe5),
-        (0x7f, 0x7f, 0x7f),
-        (0xff, 0x00, 0x00),
-        (0x00, 0xff, 0x00),
-        (0xff, 0xff, 0x00),
-        (0x5c, 0x5c, 0xff),
-        (0xff, 0x00, 0xff),
-        (0x00, 0xff, 0xff),
-        (0xff, 0xff, 0xff),
-    ];
-    let (r, g, b) = TABLE[index as usize % 16];
-    Rgb { r, g, b }
-}
-
-fn dim_rgb(color: Rgb) -> Rgb {
-    Rgb {
-        r: color.r / 2,
-        g: color.g / 2,
-        b: color.b / 2,
-    }
-}
-
-fn indexed_color_rgb(index: u8) -> u32 {
-    if index < 16 {
-        return u32::from(index);
-    }
-    if index >= 232 {
-        let gray = 8 + (u32::from(index) - 232) * 10;
-        return (gray << 16) | (gray << 8) | gray;
-    }
-    let idx = u32::from(index) - 16;
-    let r = idx / 36;
-    let g = (idx / 6) % 6;
-    let b = idx % 6;
-    let expand = |v: u32| if v == 0 { 0 } else { 55 + v * 40 };
-    (expand(r) << 16) | (expand(g) << 8) | expand(b)
 }
 
 fn compress_render_row(row: &[RenderCell]) -> Vec<StyledSpan> {

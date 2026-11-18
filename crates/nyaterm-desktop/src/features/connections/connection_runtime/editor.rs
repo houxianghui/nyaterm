@@ -48,6 +48,10 @@ fn save_editor_connection(
         auth.password = original.and_then(|auth| auth.password.clone());
         auth.has_password = original.is_some_and(|auth| auth.has_password);
     }
+    persisted.tree_order = previous
+        .as_ref()
+        .filter(|old| old.group_id == persisted.group_id)
+        .and_then(|old| old.tree_order);
     persisted.sort_order = if let Some(previous) = previous.as_ref()
         && previous.group_id == persisted.group_id
     {
@@ -290,6 +294,7 @@ impl NyaTermApp {
             agent_preview_loading: false,
             backspace_mode: "del".to_string(),
             encoding: String::new(),
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -312,10 +317,13 @@ impl NyaTermApp {
             serial_port: self
                 .connection_state
                 .serial_ports()
-                .first()
-                .cloned()
+                .iter()
+                .find(|port| !self.serial_port_in_use(&port.port_name))
+                .map(|port| port.port_name.clone())
                 .unwrap_or_default(),
             baud_rate: "115200".to_string(),
+            serial_prompt_port: false,
+            serial_prompt_baud_rate: false,
             data_bits: "8".to_string(),
             parity: "none".to_string(),
             flow_control: Default::default(),
@@ -632,6 +640,24 @@ impl NyaTermApp {
             .set_editor_field_text(ConnectionEditorField::BaudRate, value.clone());
         self.connection_state
             .reset_editor_field(ConnectionEditorField::BaudRate, &value, cx);
+        // Choosing a rate is an explicit decision, so the deferred option and
+        // the rate cannot both be in effect.
+        self.connection_state
+            .set_editor_serial_prompt_baud_rate(false);
+        self.connection_state.set_editor_baud_popover_open(false);
+        cx.notify();
+    }
+
+    /// Defer the baud rate to the moment a serial session connects.
+    pub(in crate::features) fn set_connection_editor_baud_prompt(
+        &mut self,
+        ask: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.connection_state
+            .set_editor_serial_prompt_baud_rate(ask);
+        // Picking from the popover always closes it, even when the answer was
+        // already the current one.
         self.connection_state.set_editor_baud_popover_open(false);
         cx.notify();
     }
@@ -1064,6 +1090,30 @@ impl NyaTermApp {
             });
             next.section =
                 crate::models::ConnectionEditorSection::initial_for_kind(kind, next.defaults_mode);
+            // A serial draft may be titled after its device; that title belongs
+            // to the device, not to the kind the user switched to.
+            if current.kind == ConnectionKindTab::Serial && kind != ConnectionKindTab::Serial {
+                crate::features::connections::state::drop_device_name(
+                    &mut next,
+                    &current.serial_port,
+                    &current.baud_rate,
+                );
+            }
+            // The first device in the list counts as picked, so the serial tab
+            // opens with a title instead of an empty name box. A draft that was
+            // built before the device list arrived gets that device now.
+            if kind == ConnectionKindTab::Serial {
+                if next.serial_port.trim().is_empty() && !next.defaults_mode && next.id.is_none() {
+                    next.serial_port = self
+                        .connection_state
+                        .serial_ports()
+                        .iter()
+                        .find(|port| !self.serial_port_in_use(&port.port_name))
+                        .map(|port| port.port_name.clone())
+                        .unwrap_or_default();
+                }
+                crate::features::connections::state::adopt_serial_device_name(&mut next);
+            }
             self.connection_state.replace_editor_kind(next);
             self.connection_state.hide_editor_secrets(cx);
             self.dismiss_connection_editor_menus(cx);
@@ -1453,6 +1503,7 @@ impl NyaTermApp {
             id: uuid(),
             name: name.clone(),
             parent_id: editor.pending_group_parent_id.clone(),
+            tree_order: None,
             sort_order: self.connection_state.groups().len() as i32,
             created_at_ms: None,
             updated_at_ms: None,

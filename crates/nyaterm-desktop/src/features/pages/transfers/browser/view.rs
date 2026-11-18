@@ -352,6 +352,7 @@ pub(in crate::features::pages::transfers) fn transfer_browser_view(
                             transfer_browser_entry_row(
                                 TransferBrowserEntryRowPresentation {
                                     palette,
+                                    cut: browser.cut_paths.contains(&entry.identity_key()),
                                     entry,
                                     selected_remote_path: selected_remote_path.clone(),
                                     selected_remote_paths: &selected_remote_paths,
@@ -447,14 +448,14 @@ pub(in crate::features::pages::transfers) fn transfer_browser_view(
                                         .child(transfer_toolbar_divider(palette))
                                         .child(compact_transfer_upload_menu_button(
                                             palette,
-                                            t!("fileExplorer.upload"),
+                                            format!("{} ({})", t!("fileExplorer.upload"), browser.upload_shortcut),
                                             cx,
                                         ))
                                         .child(compact_transfer_toolbar_button_enabled(
                                             palette,
                                             "transfer-browser-download-selected",
                                             "icons/fe/download.svg",
-                                            t!("fileExplorer.downloadSelected"),
+                                            format!("{} ({})", t!("fileExplorer.downloadSelected"), browser.download_shortcut),
                                             footer_stats.selected_item_count > 0,
                                             cx.listener(|panel, _, window, cx| panel.with_app(cx, |this, cx| {
                                                 this.start_selected_sftp_download_jobs(window, cx);

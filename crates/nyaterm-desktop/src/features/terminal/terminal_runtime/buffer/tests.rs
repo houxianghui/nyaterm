@@ -1,8 +1,7 @@
 use crate::models::WorkspaceSplitDirection;
 use crate::models::{
     TerminalFrameSearchKey, TerminalFrameSearchPurpose, TerminalFrameSearchResult,
-    TerminalPresentation, TerminalSearchMode, TerminalViewState, TerminalWindowNode,
-    TerminalWorkPolicy,
+    TerminalPresentation, TerminalViewState, TerminalWindowNode, TerminalWorkPolicy,
 };
 use nyaterm_terminal::{TerminalClipboardLoad, TerminalEffects};
 use std::sync::Arc;
@@ -32,7 +31,7 @@ fn search_key(query: &str) -> TerminalFrameSearchKey {
 }
 
 #[test]
-fn dropped_find_request_becomes_retryable_and_old_revision_does_not_block() {
+fn dropped_find_request_becomes_retryable_and_output_joins_the_pending_scan() {
     let key = search_key("needle");
     let now = Instant::now();
     assert!(terminal_find_request_still_pending(
@@ -51,7 +50,7 @@ fn dropped_find_request_becomes_retryable_and_old_revision_does_not_block() {
         7,
         now + Duration::from_millis(500),
     ));
-    assert!(!terminal_find_request_still_pending(
+    assert!(terminal_find_request_still_pending(
         Some(&key),
         7,
         Some(now),
@@ -154,7 +153,6 @@ fn terminal_search_frame_notify_targets_active_visible_buffer_query() {
         true,
         Some("active"),
         true,
-        TerminalSearchMode::Buffer,
         TerminalFrameSearchKeys {
             current: Some(&key),
             result: &key,
@@ -180,7 +178,6 @@ fn terminal_search_frame_notify_ignores_non_visible_or_stale_queries() {
             true,
             Some("active"),
             true,
-            TerminalSearchMode::Buffer,
             TerminalFrameSearchKeys {
                 current: Some(&key),
                 result: &key,
@@ -192,7 +189,6 @@ fn terminal_search_frame_notify_ignores_non_visible_or_stale_queries() {
             false,
             Some("active"),
             true,
-            TerminalSearchMode::Buffer,
             TerminalFrameSearchKeys {
                 current: Some(&key),
                 result: &key,
@@ -204,7 +200,6 @@ fn terminal_search_frame_notify_ignores_non_visible_or_stale_queries() {
             true,
             Some("active"),
             true,
-            TerminalSearchMode::Buffer,
             TerminalFrameSearchKeys {
                 current: Some(&key),
                 result: &key,
@@ -216,19 +211,6 @@ fn terminal_search_frame_notify_ignores_non_visible_or_stale_queries() {
             true,
             Some("active"),
             true,
-            TerminalSearchMode::History,
-            TerminalFrameSearchKeys {
-                current: Some(&key),
-                result: &key,
-            },
-        ),
-        terminal_search_frame_apply_result(
-            "active".to_string(),
-            true,
-            true,
-            Some("active"),
-            true,
-            TerminalSearchMode::Buffer,
             TerminalFrameSearchKeys {
                 current: Some(&other),
                 result: &key,
@@ -349,10 +331,8 @@ fn terminal_search_results_keep_find_and_selected_occurrence_slots_independent()
         Some(&selected.key)
     );
 
-    let replacement_find = TerminalFrameSearchResult {
-        key: search_key("replacement"),
-        ..find.clone()
-    };
+    let mut replacement_find = find.clone();
+    replacement_find.key = search_key("replacement");
     assert!(terminal_apply_search_result_to_view(
         &mut view,
         TerminalFrameSearchPurpose::Find,
@@ -574,4 +554,139 @@ fn rotated_history_cache_cannot_suppress_a_priority_scroll_snapshot() {
     assert!(super::terminal_scroll_snapshot_request_should_enqueue(
         &mut view, 3, true
     ));
+}
+
+#[test]
+fn in_place_output_cannot_suppress_scroll_requests_or_live_prefetch() {
+    for exact_cache_key in [true, false] {
+        let mut view = TerminalViewState::new();
+        view.screen = nyaterm_terminal::TerminalScreen::new(20, 6);
+        view.screen.advance(b"old\r\nold\r\n\x1b[2J\x1b[Hroot# ");
+        view.frame_snapshot = Some(Arc::new(view.screen.viewport_snapshot(0)));
+        let offset = super::terminal_live_scrollback_prefetch_request_offset(&view).unwrap();
+        let cached_offset = if exact_cache_key { offset } else { 1 };
+        assert!(exact_cache_key || offset != cached_offset);
+        let cached = Arc::new(
+            view.screen
+                .viewport_snapshot_with_window(cached_offset, 64, 64),
+        );
+        view.scrollback_snapshots
+            .insert(cached_offset, cached.clone());
+        assert!(super::terminal_view_has_cached_scrollback_snapshot_covering_offset(&view, offset));
+        assert!(
+            super::terminal_view_has_cached_scroll_snapshot_ready_for_user_scroll(&view, offset)
+        );
+        assert_eq!(
+            super::terminal_live_scrollback_prefetch_request_offset(&view),
+            None
+        );
+
+        view.screen.advance(b"ls 2\r\n");
+        view.frame_snapshot = Some(Arc::new(view.screen.viewport_snapshot(0)));
+        assert_eq!(cached.history, view.history_state());
+        assert!(
+            !super::terminal_view_has_cached_scrollback_snapshot_covering_offset(&view, offset)
+        );
+        assert!(
+            !super::terminal_view_has_cached_scroll_snapshot_ready_for_user_scroll(&view, offset)
+        );
+        assert_eq!(
+            super::terminal_live_scrollback_prefetch_request_offset(&view),
+            Some(offset)
+        );
+        for priority in [false, true] {
+            assert!(super::terminal_scroll_snapshot_request_should_enqueue(
+                &mut view, offset, priority
+            ));
+            assert!(!super::terminal_scroll_snapshot_request_should_enqueue(
+                &mut view, offset, priority
+            ));
+            view.pending_snapshot_offsets.clear();
+            view.priority_pending_snapshot_offsets.clear();
+        }
+
+        view.scrollback_snapshots.insert(
+            cached_offset,
+            Arc::new(
+                view.screen
+                    .viewport_snapshot_with_window(cached_offset, 64, 64),
+            ),
+        );
+        assert!(super::terminal_view_has_cached_scrollback_snapshot_covering_offset(&view, offset));
+        assert_eq!(
+            super::terminal_live_scrollback_prefetch_request_offset(&view),
+            None
+        );
+        for priority in [false, true] {
+            assert!(!super::terminal_scroll_snapshot_request_should_enqueue(
+                &mut view, offset, priority
+            ));
+        }
+    }
+}
+
+#[test]
+fn terminal_color_queries_follow_theme_preview_and_draft_cancellation_without_visible_panes() {
+    use crate::entities::{OverlayStore, StartupRestoreStore, UiStoreHandles};
+    use crate::features::NyaTermApp;
+    use crate::test_support::TestConfigDir;
+    use gpui::{AppContext as _, TestAppContext};
+    use nyaterm_core::{AppRuntime, RuntimeMode};
+    use nyaterm_terminal_runtime::frame::TerminalFrameEvent;
+
+    let mut cx = TestAppContext::single();
+    let _cleanup = crate::test_support::TestAppCleanup::new(&cx);
+    let dir = TestConfigDir::new("nyaterm-terminal-color-query");
+    let runtime = AppRuntime::from_parts_for_test(
+        RuntimeMode::Portable,
+        dir.path().into(),
+        dir.path().join("config"),
+        dir.path().join("logs"),
+        dir.path().join("cache"),
+        None,
+    );
+    let stores = UiStoreHandles {
+        startup_restore: cx.new(|_| StartupRestoreStore::default()),
+        overlays: cx.new(|_| OverlayStore::default()),
+    };
+    let app = cx.new(|cx| NyaTermApp::new(runtime, stores, cx));
+    let pipeline = app.update(&mut cx, |app, _| {
+        assert!(app.terminal.view.surfaces.is_empty());
+        app.terminal.view.frame_pipeline.clone()
+    });
+    let ask = || {
+        pipeline.submit_output("color-query", b"\x1b]11;?\x07".to_vec(), "UTF-8", 100);
+        pipeline.flush_for_test();
+        let replies: Vec<u8> = pipeline
+            .take_events_for_transfer(&["color-query".into()])
+            .into_iter()
+            .filter_map(|event| match event {
+                TerminalFrameEvent::Output(frame) => Some(frame.effects.pty_write.concat()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        String::from_utf8(replies).unwrap()
+    };
+    let background = app.update(&mut cx, |app, _| app.terminal_theme_palette().terminal_bg);
+    let initial = format!(
+        "\x1b]11;rgb:{0:02x}{0:02x}/{1:02x}{1:02x}/{2:02x}{2:02x}\x07",
+        (background >> 16) & 0xff,
+        (background >> 8) & 0xff,
+        background & 0xff
+    );
+    assert_eq!(ask(), initial);
+    app.update(&mut cx, |app, cx| {
+        app.begin_settings_draft(cx);
+        app.set_terminal_theme(None, cx);
+        app.update_appearance_theme("github-light", cx);
+    });
+    assert_eq!(ask(), "\x1b]11;rgb:ffff/ffff/ffff\x07");
+    app.update(&mut cx, |app, cx| {
+        app.set_terminal_theme(Some("dracula"), cx);
+        app.update_appearance_theme("nya-high-contrast-white", cx);
+    });
+    assert_eq!(ask(), "\x1b]11;rgb:2828/2a2a/3636\x07");
+    app.update(&mut cx, |app, cx| app.cancel_settings(cx));
+    assert_eq!(ask(), initial);
 }

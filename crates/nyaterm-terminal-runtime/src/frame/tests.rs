@@ -30,6 +30,7 @@ use super::{
 };
 use nyaterm_core::ActionLinksMatcherSettings;
 use nyaterm_recording::pipeline::RecordingWritePipeline;
+use nyaterm_terminal::colors::TerminalColorPalette;
 use nyaterm_terminal::output::terminal_screen_from_output;
 
 use nyaterm_terminal::{
@@ -45,6 +46,98 @@ use nyaterm_terminal::snapshot_window::{
     terminal_frame_scroll_window_extra_rows, terminal_frame_snapshot_with_scroll_window,
     terminal_snapshot_matches_grid_geometry,
 };
+
+fn frame_color_query_replies(pipeline: &TerminalFramePipeline, session_id: &str) -> String {
+    pipeline.submit_output(session_id, b"\x1b]11;?\x07".to_vec(), "UTF-8", 100);
+    pipeline.finish_pending_output().unwrap();
+    let replies: Vec<u8> = pipeline
+        .take_events_for_transfer(&[session_id.into()])
+        .into_iter()
+        .filter_map(|event| match event {
+            TerminalFrameEvent::Output(frame) => Some(frame.effects.pty_write.concat()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    String::from_utf8(replies).unwrap()
+}
+
+#[test]
+fn frame_color_palette_reaches_existing_background_new_and_seeded_sessions() {
+    let pipeline = TerminalFramePipeline::default();
+    pipeline.ensure_session("existing", "UTF-8", 100);
+    pipeline.set_snapshot_priority(Vec::new());
+    pipeline.set_color_palette(TerminalColorPalette {
+        background: 0xffffff,
+        ..TerminalColorPalette::default()
+    });
+    pipeline.ensure_session("new", "UTF-8", 100);
+    pipeline.seed_session("seeded", "\x1b]11;?\x07", "UTF-8", 100);
+    for id in ["existing", "new", "seeded", "from-output"] {
+        let reply = frame_color_query_replies(&pipeline, id);
+        let expected = "\x1b]11;rgb:ffff/ffff/ffff\x07";
+        assert_eq!(
+            reply,
+            expected.repeat(if id == "seeded" { 2 } else { 1 }),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn frame_color_palette_updates_are_ordered_with_queries() {
+    let pipeline = TerminalFramePipeline::default();
+    pipeline.set_color_palette(TerminalColorPalette {
+        background: 0xffffff,
+        ..TerminalColorPalette::default()
+    });
+    pipeline.submit_output("s1", b"\x1b]11;?\x07".to_vec(), "UTF-8", 100);
+    pipeline.set_color_palette(TerminalColorPalette {
+        background: 0x102030,
+        ..TerminalColorPalette::default()
+    });
+    assert_eq!(
+        frame_color_query_replies(&pipeline, "s1"),
+        "\x1b]11;rgb:ffff/ffff/ffff\x07\x1b]11;rgb:1010/2020/3030\x07"
+    );
+}
+
+#[test]
+fn transferred_and_rekeyed_sessions_use_destination_palette_without_losing_overrides() {
+    let source = TerminalFramePipeline::default();
+    source.seed_session("plain", "hello", "UTF-8", 100);
+    source.seed_session("override", "\x1b]11;#abcdef\x07", "UTF-8", 100);
+    let plain = source.take_session_for_transfer("plain").unwrap().unwrap();
+    let overridden = source
+        .take_session_for_transfer("override")
+        .unwrap()
+        .unwrap();
+    let target = TerminalFramePipeline::default();
+    target.set_color_palette(TerminalColorPalette {
+        background: 0xfafafa,
+        ..TerminalColorPalette::default()
+    });
+    target
+        .insert_sessions_from_transfer(vec![
+            ("plain".into(), plain),
+            ("override".into(), overridden),
+        ])
+        .unwrap();
+    assert_eq!(
+        frame_color_query_replies(&target, "plain"),
+        "\x1b]11;rgb:fafa/fafa/fafa\x07"
+    );
+    assert_eq!(
+        frame_color_query_replies(&target, "override"),
+        "\x1b]11;rgb:abab/cdcd/efef\x07"
+    );
+    assert!(target.rekey_session("plain", "reconnected", "UTF-8", 100));
+    assert_eq!(
+        frame_color_query_replies(&target, "reconnected"),
+        "\x1b]11;rgb:fafa/fafa/fafa\x07"
+    );
+}
+
 #[test]
 fn frame_worker_wrap_preference_applies_to_created_seeded_and_transferred_sessions() {
     let pipeline = TerminalFramePipeline::default();
@@ -818,11 +911,8 @@ fn terminal_frame_set_snapshot_priority_compacts_to_latest() {
 #[test]
 fn terminal_frame_visible_text_event_keeps_only_tail_for_ui() {
     let mut session = TerminalFrameSession::new("UTF-8", 1000);
-    let mut recording_pipeline =
+    let recording_pipeline =
         RecordingWritePipeline::spawn(nyaterm_recording::recording::DEFAULT_MEMORY_LIMIT_BYTES);
-    let mut recording_events = recording_pipeline
-        .take_event_receiver()
-        .expect("recording events should be available");
     let input = format!(
         "{}tail",
         "x".repeat(TERMINAL_FRAME_VISIBLE_TEXT_TAIL_CAP + 1024)
@@ -842,31 +932,24 @@ fn terminal_frame_visible_text_event_keeps_only_tail_for_ui() {
         event.recording_text_bytes,
         TERMINAL_FRAME_VISIBLE_TEXT_TAIL_CAP + 1028
     );
-    recording_pipeline.request_history_search(
-        nyaterm_recording::pipeline::RecordingHistorySearchKey {
-            session_id: "s1".to_string(),
-            query: "tail".to_string(),
-            case_sensitive: false,
-            regex: false,
-            whole_word: false,
-            limit: Some(10),
-            context_before: Some(0),
-            context_after: Some(0),
-            max_lines: None,
-        },
+    let dir = nyaterm_core::test_support::TestTempDir::new("nyaterm-frame-tail");
+    let path = dir.path().join("capture.log");
+    recording_pipeline
+        .writer()
+        .save_transcript(
+            "s1".into(),
+            path.to_string_lossy().into_owned(),
+            false,
+            false,
+            1024 * 1024,
+        )
+        .unwrap();
+    assert!(
+        std::fs::read_to_string(path)
+            .unwrap()
+            .trim_end()
+            .ends_with("tail")
     );
-    recording_pipeline.writer().flush();
-    let recorded = loop {
-        let event = recording_events
-            .try_recv()
-            .expect("recording search result should be available");
-        if let nyaterm_recording::pipeline::RecordingWriteEvent::HistorySearch(event) = event {
-            break event
-                .result
-                .expect("recording history search should succeed");
-        }
-    };
-    assert_eq!(recorded.total, 1);
 }
 
 #[test]
@@ -1917,19 +2000,55 @@ fn terminal_frame_command_pressure_can_drop_a_find_request() {
 }
 
 #[test]
-fn find_search_cancels_when_output_changes_the_screen_revision() {
+fn find_search_finishes_while_output_rotates_and_rechecks_the_live_tail() {
     let mut session = selected_occurrence_test_session(80, 600, "plain");
+    session.screen.advance(b"needle\r\n");
+    session.screen.advance("plain\r\n".repeat(700).as_bytes());
+    session.screen.advance(b"needle");
     let job = FindSearchJob::new(
-        "s1".to_string(),
-        selected_occurrence_test_key("needle", 1000, 0),
+        "s1".into(),
+        selected_occurrence_test_key("needle", 1000, 1),
         &session,
     );
-    session.revision += 1;
     let mut jobs = VecDeque::from([job]);
-    let sessions = HashMap::from([("s1".to_string(), session)]);
-    let event = process_next_find_search_chunk(&mut jobs, &sessions).unwrap();
-    assert!(event.result.matches.is_err());
-    assert!(jobs.is_empty());
+    let mut sessions = HashMap::from([("s1".into(), session)]);
+    for _ in 0..10 {
+        let session = sessions.get_mut("s1").unwrap();
+        session.screen.advance(b"\r\x1b[2Knew\r\n");
+        session.revision += 1;
+        if let Some(event) = process_next_find_search_chunk(&mut jobs, &sessions) {
+            assert_eq!(event.result.occurrences.len(), 1);
+            assert!(event.result.partial);
+            return;
+        }
+    }
+    panic!("continuous output starved find");
+}
+
+#[test]
+fn dense_find_keeps_the_viewport_match_after_full_scan() {
+    let session = selected_occurrence_test_session(80, 2200, "needle");
+    let anchor = session.screen.total_rows() - 5;
+    let job = FindSearchJob::from_anchor(
+        "s1".into(),
+        selected_occurrence_test_key("needle", 1000, 1),
+        &session,
+        anchor,
+    );
+    let mut jobs = VecDeque::from([job]);
+    let sessions = HashMap::from([("s1".into(), session)]);
+    loop {
+        if let Some(event) = process_next_find_search_chunk(&mut jobs, &sessions) {
+            assert!(event.result.truncated);
+            let hits = event.result.matches.unwrap();
+            assert!(hits.iter().any(|m| m.line_index == anchor));
+            assert!(
+                hits.windows(2)
+                    .all(|pair| pair[0].line_index <= pair[1].line_index)
+            );
+            break;
+        }
+    }
 }
 
 #[test]

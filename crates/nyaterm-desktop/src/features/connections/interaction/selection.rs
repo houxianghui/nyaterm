@@ -107,6 +107,7 @@ impl NyaTermApp {
 fn duplicate_saved_connection(connection: &SavedConnection) -> SavedConnection {
     let mut copy = connection.clone();
     copy.id = uuid();
+    copy.tree_order = None;
     copy.name = format!("{} (copy)", connection.name);
     copy.created_at_ms = None;
     copy.updated_at_ms = None;
@@ -138,6 +139,7 @@ mod tests {
             group_id: None,
             description: None,
             tags: Vec::new(),
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -146,6 +148,7 @@ mod tests {
             post_login: None,
             recording: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,

@@ -748,6 +748,54 @@ fn new_protocol_inherits_identity_once_and_preserves_each_protocol_draft() {
     });
 }
 
+/// Device and baud changes preserve the name in both the draft and input.
+#[test]
+fn serial_device_and_baud_changes_preserve_the_name_input() {
+    use crate::features::test_support::app_with_visible_local_session;
+    use crate::models::{ConnectionEditorField, ConnectionEditorSelect, ConnectionKindTab};
+    use crate::test_support::TestAppCleanup;
+    let root = TestTempDir::new("nyaterm-serial-title");
+    let mut cx = gpui::TestAppContext::single();
+    let _cleanup = TestAppCleanup::new(&cx);
+    let app = app_with_visible_local_session(&mut cx, root.path(), "local");
+    app.update(&mut cx, |app, cx| {
+        let draft = app.new_connection_editor_state(None, false);
+        app.connection_state.begin_editor(draft);
+        app.connection_state.build_editor_fields(cx);
+        app.set_connection_editor_kind(ConnectionKindTab::Serial, cx);
+        let initial_name = app.connection_state.active_editor_draft().unwrap().name;
+        app.set_connection_editor_select_value(
+            ConnectionEditorSelect::SerialPort,
+            Some("COM9"),
+            cx,
+        );
+        assert_eq!(
+            app.connection_state.active_editor_draft().unwrap().name,
+            initial_name
+        );
+        // The input retains the initial name.
+        assert_eq!(
+            app.connection_state.editor_fields()[&ConnectionEditorField::Name]
+                .read(cx)
+                .value(cx),
+            initial_name
+        );
+        // The baud popover also preserves both values.
+        app.set_connection_editor_baud_rate("921600".to_string(), cx);
+        assert_eq!(
+            app.connection_state.active_editor_draft().unwrap().name,
+            initial_name
+        );
+        assert_eq!(
+            app.connection_state.editor_fields()[&ConnectionEditorField::Name]
+                .read(cx)
+                .value(cx),
+            initial_name
+        );
+        app.connection_state.close_editor();
+    });
+}
+
 #[test]
 fn default_session_changes_ignore_navigation_and_freeze_while_saving() {
     use crate::features::test_support::app_with_visible_local_session;

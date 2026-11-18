@@ -15,10 +15,6 @@ use super::super::{
 const DIAGNOSTICS_LEVELS: [&str; 3] = ["warn", "info", "debug"];
 const DIAGNOSTICS_RETENTION_DAYS: [u32; 4] = [3, 7, 14, 30];
 
-fn startup_restore_nested_row() -> gpui::Div {
-    div().pl_3().ml_1()
-}
-
 impl SettingsPanel {
     pub(in crate::features) fn general_settings_section(
         &mut self,
@@ -119,36 +115,6 @@ impl SettingsPanel {
                     .gap_3()
                     .child(settings_form_row(
                         palette,
-                        t!("settings.startupRestore"),
-                        Some(SharedString::from(t!("settings.startupRestoreDesc"))),
-                        settings_switch(
-                            palette,
-                            "general-startup-restore",
-                            self.settings.summary().startup_restore,
-                            cx.listener(|this, _, _, cx| {
-                                this.toggle_startup_restore(cx);
-                            }),
-                        ),
-                    ))
-                    .when(self.settings.summary().startup_restore, |this| {
-                        this.child(startup_restore_nested_row().child(settings_form_row(
-                            palette,
-                            t!("settings.startupRestoreWindowLayout"),
-                            Some(SharedString::from(t!(
-                                "settings.startupRestoreWindowLayoutDesc"
-                            ))),
-                            settings_switch(
-                                palette,
-                                "general-startup-restore-window-layout",
-                                self.settings.summary().startup_restore_window_layout,
-                                cx.listener(|this, _, _, cx| {
-                                    this.toggle_startup_restore_window_layout(cx);
-                                }),
-                            ),
-                        )))
-                    })
-                    .child(settings_form_row(
-                        palette,
                         t!("settings.minimizeToTray"),
                         Some(SharedString::from(t!("settings.minimizeToTrayDesc"))),
                         settings_switch(
@@ -174,6 +140,7 @@ impl SettingsPanel {
                         ),
                     )),
             ))
+            .child(self.startup_settings_section(cx))
             .child(self.data_directory_section(cx))
             .child(settings_form_section(
                 palette,
@@ -271,43 +238,3 @@ impl SettingsPanel {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use gpui::{
-        Background, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
-        VisualTestContext, div, px, rgb,
-    };
-
-    struct NestedRowFixture;
-
-    impl Render for NestedRowFixture {
-        fn render(
-            &mut self,
-            _window: &mut gpui::Window,
-            _cx: &mut gpui::Context<Self>,
-        ) -> impl IntoElement {
-            div().child(
-                super::startup_restore_nested_row()
-                    .size(px(40.))
-                    .bg(rgb(0xffffff)),
-            )
-        }
-    }
-
-    #[gpui::test]
-    fn startup_restore_nested_row_paints_without_a_vertical_border(cx: &mut TestAppContext) {
-        let _cleanup = crate::test_support::TestAppCleanup::new(cx);
-        let (_, cx) = cx.add_window_view(|_, _| NestedRowFixture);
-        let cx: &mut VisualTestContext = cx;
-        cx.run_until_parked();
-        cx.update(|window, cx| {
-            _ = window.draw(cx);
-            let quad = window
-                .painted_quads()
-                .into_iter()
-                .find(|quad| quad.background == Background::from(rgb(0xffffff)))
-                .expect("test background should be painted");
-            assert_eq!(quad.border_widths.left, px(0.).scale(window.scale_factor()));
-        });
-    }
-}

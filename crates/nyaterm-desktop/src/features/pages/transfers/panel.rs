@@ -37,10 +37,13 @@ pub(in crate::features) struct TransferChrome {
 /// it. The costly field -- the listing -- is shared rather than copied; the rest are
 /// short paths and small sets.
 pub(in crate::features) struct TransferBrowserPresentation {
+    pub cut_paths: HashSet<String>,
     pub view_mode: TransferBrowserViewMode,
     pub tree: crate::features::transfers::TransferTreePresentation,
     pub tree_focus: FocusHandle,
     pub local_backend: bool,
+    pub upload_shortcut: String,
+    pub download_shortcut: String,
     pub path: String,
     pub terminal_cwd: Option<String>,
     pub home_dir: String,
@@ -2286,6 +2289,8 @@ mod tests {
                     snapshot.has_session = true;
                     snapshot.queue.download_path = "E:/Downloads/".repeat(20);
                     snapshot.queue.rows = Arc::from([TransferJobRowSnapshot {
+                        operation_label: None,
+                        source_type: None,
                         id: "long-name".to_string(),
                         kind: TransferJobKind::Download {
                             remote_path: "/remote/file.bin".to_string(),

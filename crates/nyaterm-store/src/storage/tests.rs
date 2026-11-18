@@ -1,3 +1,5 @@
+mod startup;
+
 use aes_gcm::{Aes256Gcm, Key, KeyInit, aead::Aead};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use nyaterm_core::test_support::TestTempDir;
@@ -640,6 +642,7 @@ fn round_trips_sessions_in_redb_compatible_tables() {
             id: "group-1".to_string(),
             name: "Servers".to_string(),
             parent_id: None,
+            tree_order: None,
             sort_order: 0,
             created_at_ms: None,
             updated_at_ms: None,
@@ -664,6 +667,7 @@ fn round_trips_sessions_in_redb_compatible_tables() {
             },
             group_id: Some("group-1".to_string()),
             description: Some("Primary".to_string()),
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -673,6 +677,7 @@ fn round_trips_sessions_in_redb_compatible_tables() {
                 ..Default::default()
             }),
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -723,6 +728,7 @@ fn exports_and_imports_native_redb_backup() {
             id: "ops".to_string(),
             name: "Ops".to_string(),
             parent_id: None,
+            tree_order: None,
             sort_order: 0,
             created_at_ms: None,
             updated_at_ms: None,
@@ -742,11 +748,13 @@ fn exports_and_imports_native_redb_backup() {
             },
             group_id: Some("ops".to_string()),
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
             auth: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -811,6 +819,7 @@ fn exports_and_imports_portable_snapshot() {
                 id: "group-1".to_string(),
                 name: "Servers".to_string(),
                 parent_id: None,
+                tree_order: None,
                 sort_order: 0,
                 created_at_ms: None,
                 updated_at_ms: None,
@@ -835,6 +844,7 @@ fn exports_and_imports_portable_snapshot() {
                 },
                 group_id: Some("group-1".to_string()),
                 description: Some("Primary".to_string()),
+                tree_order: None,
                 sort_order: 0,
                 icon: None,
                 icon_auto_detect: None,
@@ -844,6 +854,7 @@ fn exports_and_imports_portable_snapshot() {
                     ..Default::default()
                 }),
                 ssh_algorithms: None,
+                allow_short_rsa_host_keys: false,
                 ssh_compatibility_mode: false,
                 ssh_profile: Default::default(),
                 terminal_type: None,
@@ -1115,11 +1126,13 @@ fn encrypted_portable_snapshot_requires_master_password() {
                 },
                 group_id: None,
                 description: None,
+                tree_order: None,
                 sort_order: 0,
                 icon: None,
                 icon_auto_detect: None,
                 auth: None,
                 ssh_algorithms: None,
+                allow_short_rsa_host_keys: false,
                 ssh_compatibility_mode: false,
                 ssh_profile: Default::default(),
                 terminal_type: None,
@@ -1170,11 +1183,13 @@ fn encrypted_portable_snapshot_requires_master_password() {
                 },
                 group_id: None,
                 description: None,
+                tree_order: None,
                 sort_order: 0,
                 icon: None,
                 icon_auto_detect: None,
                 auth: None,
                 ssh_algorithms: None,
+                allow_short_rsa_host_keys: false,
                 ssh_compatibility_mode: false,
                 ssh_profile: Default::default(),
                 terminal_type: None,
@@ -2158,11 +2173,13 @@ fn rejects_invalid_backup_without_replacing_current_database() {
                 },
                 group_id: None,
                 description: None,
+                tree_order: None,
                 sort_order: 0,
                 icon: None,
                 icon_auto_detect: None,
                 auth: None,
                 ssh_algorithms: None,
+                allow_short_rsa_host_keys: false,
                 ssh_compatibility_mode: false,
                 ssh_profile: Default::default(),
                 terminal_type: None,
@@ -2237,11 +2254,13 @@ fn save_and_delete_connection_updates_store() {
         },
         group_id: None,
         description: None,
+        tree_order: None,
         sort_order: 0,
         icon: None,
         icon_auto_detect: None,
         auth: None,
         ssh_algorithms: None,
+        allow_short_rsa_host_keys: false,
         ssh_compatibility_mode: false,
         ssh_profile: Default::default(),
         terminal_type: None,
@@ -2271,6 +2290,7 @@ fn save_group_and_connection_persists_both_records() {
         id: "group-1".to_string(),
         name: "Servers".to_string(),
         parent_id: None,
+        tree_order: None,
         sort_order: 0,
         created_at_ms: None,
         updated_at_ms: None,
@@ -2290,11 +2310,13 @@ fn save_group_and_connection_persists_both_records() {
         },
         group_id: Some(group.id.clone()),
         description: None,
+        tree_order: None,
         sort_order: 0,
         icon: None,
         icon_auto_detect: None,
         auth: None,
         ssh_algorithms: None,
+        allow_short_rsa_host_keys: false,
         ssh_compatibility_mode: false,
         ssh_profile: Default::default(),
         terminal_type: None,
@@ -2334,6 +2356,7 @@ fn deleting_group_removes_descendants_and_grouped_connections() {
         id: "root".to_string(),
         name: "Root".to_string(),
         parent_id: None,
+        tree_order: None,
         sort_order: 0,
         created_at_ms: None,
         updated_at_ms: None,
@@ -2342,6 +2365,7 @@ fn deleting_group_removes_descendants_and_grouped_connections() {
         id: "child".to_string(),
         name: "Child".to_string(),
         parent_id: Some(root.id.clone()),
+        tree_order: None,
         sort_order: 0,
         created_at_ms: None,
         updated_at_ms: None,
@@ -2369,11 +2393,13 @@ fn deleting_group_removes_descendants_and_grouped_connections() {
                 },
                 group_id: Some(group_id),
                 description: None,
+                tree_order: None,
                 sort_order: 0,
                 icon: None,
                 icon_auto_detect: None,
                 auth: None,
                 ssh_algorithms: None,
+                allow_short_rsa_host_keys: false,
                 ssh_compatibility_mode: false,
                 ssh_profile: Default::default(),
                 terminal_type: None,
@@ -2420,6 +2446,7 @@ fn load_sessions_decrypts_legacy_connection_password_record() {
         },
         group_id: None,
         description: None,
+        tree_order: None,
         sort_order: 0,
         icon: None,
         icon_auto_detect: None,
@@ -2428,6 +2455,7 @@ fn load_sessions_decrypts_legacy_connection_password_record() {
             ..Default::default()
         }),
         ssh_algorithms: None,
+        allow_short_rsa_host_keys: false,
         ssh_compatibility_mode: false,
         ssh_profile: Default::default(),
         terminal_type: None,
@@ -3310,13 +3338,13 @@ fn save_general_and_diagnostics_settings_roundtrip() {
     let dir = unique_temp_dir("settings-general-diag");
     let store = ConnectionStore::open(&dir).expect("store");
     let mut summary = store.load_app_settings_summary().expect("load");
-    summary.startup_restore = true;
+    summary.startup_mode = nyaterm_core::models::startup::StartupMode::LastSession;
     summary.startup_restore_window_layout = false;
     summary.minimize_to_tray = true;
     summary.confirm_on_close = false;
     summary.language = "zh-CN".to_string();
     let saved = store.save_general_settings(&summary).expect("save general");
-    assert!(saved.startup_restore);
+    assert!(saved.startup_mode.restores_last_session());
     assert!(!saved.startup_restore_window_layout);
     assert!(saved.minimize_to_tray);
     assert!(!saved.confirm_on_close);
@@ -4071,7 +4099,7 @@ fn app_settings_summary_reads_and_updates_host_key_policy() {
         nyaterm_core::diagnostics::DEFAULT_LOG_SHARD_BYTES,
         "legacy documents without diagnostics.shard_bytes keep the 10 MiB default"
     );
-    assert!(summary.startup_restore);
+    assert!(summary.startup_mode.restores_last_session());
     assert!(summary.minimize_to_tray);
     assert!(!summary.confirm_on_close);
     assert!(summary.enable_screen_lock);
@@ -6634,6 +6662,7 @@ fn sync_snapshot_strips_device_local_ssh_agent_settings() {
             },
             group_id: None,
             description: None,
+            tree_order: None,
             sort_order: 0,
             icon: None,
             icon_auto_detect: None,
@@ -6645,6 +6674,7 @@ fn sync_snapshot_strips_device_local_ssh_agent_settings() {
             post_login: None,
             recording: None,
             ssh_algorithms: None,
+            allow_short_rsa_host_keys: false,
             ssh_compatibility_mode: false,
             ssh_profile: Default::default(),
             terminal_type: None,
@@ -7343,6 +7373,7 @@ fn ssh_connection_for_asset(id: &str) -> SavedConnection {
         },
         group_id: None,
         description: None,
+        tree_order: None,
         sort_order: 0,
         icon: None,
         icon_auto_detect: None,
@@ -7351,6 +7382,7 @@ fn ssh_connection_for_asset(id: &str) -> SavedConnection {
         post_login: None,
         recording: None,
         ssh_algorithms: None,
+        allow_short_rsa_host_keys: false,
         ssh_compatibility_mode: false,
         ssh_profile: Default::default(),
         terminal_type: None,
@@ -7461,6 +7493,7 @@ fn save_group_and_connection_encrypts_inline_password() {
         id: "group-secret".to_string(),
         name: "Servers".to_string(),
         parent_id: None,
+        tree_order: None,
         sort_order: 0,
         created_at_ms: None,
         updated_at_ms: None,
@@ -9382,4 +9415,85 @@ fn default_session_batch_commits_all_protocols_or_preserves_the_entire_catalog()
     assert_eq!(after["ssh"]["encoding"], "GBK");
     assert_eq!(after["ssh"]["future"]["version"], 8);
     assert_eq!(after["telnet"], before.unwrap()["telnet"]);
+}
+
+#[test]
+fn short_rsa_opt_in_survives_portable_backup_and_clears_after_restore() {
+    let root = nyaterm_core::test_support::TestTempDir::new("nyaterm-short-rsa-backup");
+    let source = root.join("source");
+    let target = root.join("restored");
+    let backup = root.join("backup.nya");
+    let mut connection: SavedConnection = serde_json::from_value(serde_json::json!({
+        "id":"legacy", "name":"legacy", "type":"ssh", "host":"example.invalid", "ssh_profile":"network_device",
+        "allow_short_rsa_host_keys":true, "future_field":{"v":7}
+    })).unwrap();
+    let store = ConnectionStore::open(&source).unwrap();
+    store.save_connection(&connection).unwrap();
+    drop(store);
+    ConnectionStore::export_portable_snapshot(&source, None, &backup, "fixture", "2.0.6").unwrap();
+    ConnectionStore::import_portable_snapshot(&target, None, &backup).unwrap();
+    let store = ConnectionStore::open_existing(&target).unwrap();
+    connection = store.list_connections().unwrap().remove(0);
+    assert!(connection.allow_short_rsa_host_keys);
+    assert_eq!(
+        serde_json::to_value(&connection).unwrap()["future_field"]["v"],
+        7
+    );
+    connection.allow_short_rsa_host_keys = false;
+    store.save_connection(&connection).unwrap();
+    drop(store);
+    let store = ConnectionStore::open_existing(&target).unwrap();
+    let connection = store.list_connections().unwrap().remove(0);
+    assert!(!connection.allow_short_rsa_host_keys);
+    assert!(
+        serde_json::to_value(connection)
+            .unwrap()
+            .get("allow_short_rsa_host_keys")
+            .is_none()
+    );
+}
+
+#[test]
+fn successfully_repaired_database_is_validated_and_keeps_saved_connections() {
+    use std::io::{Read as _, Seek as _, Write as _};
+    let root = nyaterm_core::test_support::TestTempDir::new("nyaterm-repaired-database");
+    let store = ConnectionStore::open(root.path()).unwrap();
+    let connection: SavedConnection = serde_json::from_value(serde_json::json!({
+        "id":"retained", "name":"retained", "type":"ssh", "host":"example.invalid"
+    }))
+    .unwrap();
+    store.save_connection(&connection).unwrap();
+    // Both committed header slots contain the same user data.
+    store.save_connection(&connection).unwrap();
+    drop(store);
+    let path = root.join("nyaterm.redb");
+    let database = redb::Database::open(&path).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    file.seek(std::io::SeekFrom::Start(9)).unwrap();
+    let mut god_byte = [0u8; 1];
+    file.read_exact(&mut god_byte).unwrap();
+    // Simulate an interrupted commit that permits fallback to the other slot.
+    god_byte[0] = (god_byte[0] | 2) & !4;
+    file.seek(std::io::SeekFrom::Start(9)).unwrap();
+    file.write_all(&god_byte).unwrap();
+    // redb's supported file header has two 128-byte transaction slots.
+    // Damaging the primary checksum exercises check_integrity's repaired result.
+    let checksum_offset = if god_byte[0] & 1 == 0 {
+        64 + 112
+    } else {
+        192 + 112
+    };
+    file.seek(std::io::SeekFrom::Start(checksum_offset))
+        .unwrap();
+    file.write_all(&[0u8; 16]).unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+    let (database, repaired) = ConnectionStore::validate_opened_database(database, &path).unwrap();
+    assert!(repaired);
+    let store = ConnectionStore::from_database(database, path, None).unwrap();
+    assert_eq!(store.list_connections().unwrap()[0].id, "retained");
 }

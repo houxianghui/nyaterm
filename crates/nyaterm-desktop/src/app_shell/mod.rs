@@ -115,7 +115,11 @@ impl AppShell {
         session_hub: Entity<SessionHub>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let startup_restore = cx.new(|_| StartupRestoreStore::default());
+        let startup_restore = cx.new(|_| {
+            let mut store = StartupRestoreStore::default();
+            store.configure_specified_startup(startup.run_specified_startup);
+            store
+        });
         let overlays = cx.new(|_| OverlayStore::default());
 
         // Do not observe UI stores for parent notify: AppShell only hosts the
@@ -171,7 +175,9 @@ impl AppShell {
             let subscription = cx.observe_self(|_, cx| native_menu::request_refresh(cx));
             self._subscriptions.push(subscription);
         }
-        self.start_main_window_state_persistence(window, cx);
+        if self.store_runtime.is_some() {
+            self.start_main_window_state_persistence(window, cx);
+        }
         // A pending data-directory switch that could not be applied falls back
         // to the previous directory. Surface that once per window instead of
         // retrying the switch on every launch.

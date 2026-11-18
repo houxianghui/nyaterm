@@ -81,6 +81,41 @@ pub(super) fn set_connection_editor_icon_auto_detect(
     true
 }
 
+/// Identify a device-derived name when switching away from the serial kind.
+fn name_restates_device(name: &str, port: &str, baud_rate: &str) -> bool {
+    crate::models::serial_name_restates_device(name, port, baud_rate.parse().unwrap_or_default())
+}
+
+/// Forget a title that only restated the device, unless the user typed it.
+///
+/// Switching kind would otherwise carry `COM7 @ 115200` into an SSH draft as if
+/// it were the name the user chose there.
+pub(in crate::features) fn drop_device_name(
+    editor: &mut ConnectionEditorState,
+    previous_port: &str,
+    previous_baud_rate: &str,
+) {
+    if name_restates_device(&editor.name, previous_port, previous_baud_rate) {
+        editor.name.clear();
+    }
+}
+
+/// Title a brand-new serial draft shows before any device is picked for it.
+///
+/// The first device in the list counts as picked, so the title is there from the
+/// moment the serial tab opens rather than only after a manual change.
+pub(in crate::features) fn adopt_serial_device_name(editor: &mut ConnectionEditorState) {
+    if editor.defaults_mode
+        || editor.id.is_some()
+        || editor.kind != ConnectionKindTab::Serial
+        || !editor.name.trim().is_empty()
+    {
+        return;
+    }
+    editor.name = crate::models::serial_connection_name(&editor.serial_port, &editor.baud_rate)
+        .unwrap_or_default();
+}
+
 pub(super) fn set_connection_editor_select_value(
     draft: &mut Option<ConnectionEditorState>,
     select: ConnectionEditorSelect,
@@ -252,7 +287,19 @@ pub(super) fn set_connection_editor_select_value(
         ConnectionEditorSelect::Shell => {
             editor.shell_path = value.unwrap_or_else(|| "powershell.exe".to_string());
         }
-        ConnectionEditorSelect::SerialPort => editor.serial_port = value.unwrap_or_default(),
+        ConnectionEditorSelect::SerialPort => {
+            match value.as_deref() {
+                // The saved device stays as the connect-time default; the flag is
+                // what decides whether the user is asked at all.
+                Some(crate::models::SERIAL_PORT_ASK_AT_CONNECT) => {
+                    editor.serial_prompt_port = true;
+                }
+                port => {
+                    editor.serial_prompt_port = false;
+                    editor.serial_port = port.unwrap_or_default().to_string();
+                }
+            }
+        }
         ConnectionEditorSelect::BaudRate => {
             editor.baud_rate = value.unwrap_or_else(|| "115200".to_string());
         }
@@ -649,6 +696,20 @@ pub(super) fn commit_connection_editor_new_group(
     true
 }
 
+pub(super) fn set_connection_editor_serial_prompt_baud_rate(
+    draft: &mut Option<ConnectionEditorState>,
+    ask: bool,
+) -> bool {
+    let Some(editor) = draft.as_mut() else {
+        return false;
+    };
+    if editor.serial_prompt_baud_rate == ask {
+        return false;
+    }
+    editor.serial_prompt_baud_rate = ask;
+    true
+}
+
 pub(super) fn toggle_connection_editor_flag(
     draft: &mut Option<ConnectionEditorState>,
     flag: ConnectionEditorToggle,
@@ -662,6 +723,9 @@ pub(super) fn toggle_connection_editor_flag(
         }
         ConnectionEditorToggle::DynamicTabTitle => {
             editor.dynamic_tab_title = !editor.dynamic_tab_title;
+        }
+        ConnectionEditorToggle::AllowShortRsaHostKeys => {
+            editor.allow_short_rsa_host_keys = !editor.allow_short_rsa_host_keys;
         }
         ConnectionEditorToggle::SshCompatibilityMode => {
             editor.ssh_compatibility_mode = !editor.ssh_compatibility_mode;

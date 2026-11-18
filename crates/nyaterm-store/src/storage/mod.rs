@@ -30,6 +30,7 @@ mod cloud_sync_v4;
 mod command_history;
 mod completion_history;
 mod config_backup;
+mod connection_tree;
 mod history_retention;
 mod keyword_highlights;
 mod known_hosts;
@@ -131,6 +132,21 @@ const PROXY_SECRET_PREFIX: &str = "nyaterm-proxy-secret-v4:";
 
 #[derive(Debug, Error)]
 pub enum StorageError {
+    #[error("database is missing: {0}")]
+    MissingDatabase(PathBuf),
+    #[error("database is empty: {0}")]
+    EmptyDatabase(PathBuf),
+    #[error("invalid redb file header: {0}")]
+    InvalidDatabaseHeader(PathBuf),
+    #[error("database is not a regular file: {0}")]
+    NotRegularDatabase(PathBuf),
+    #[error("unsupported NyaTerm database layout: {0}")]
+    UnsupportedDatabaseLayout(PathBuf),
+    #[error("failed to inspect database {path}: {source}")]
+    InspectDatabase {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to create storage directory {path}: {source}")]
     CreateDir {
         path: PathBuf,
@@ -206,6 +222,7 @@ pub struct ConnectionStore {
     portable_key_path: Option<PathBuf>,
     completion_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     history_retention: std::sync::Mutex<history_retention::RetentionState>,
+    repaired_on_open: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -252,6 +269,7 @@ impl ConnectionStore {
             portable_key_path,
             completion_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             history_retention: std::sync::Mutex::new(history_retention::RetentionState::default()),
+            repaired_on_open: false,
         };
         store.ensure_tables()?;
         store.initialize_completion_history()?;
@@ -265,28 +283,71 @@ impl ConnectionStore {
     /// Opens only existing user data. Never initializes a missing/empty file.
     pub fn open_existing(config_dir: &Path) -> Result<Self, StorageError> {
         let path = config_dir.join(DATABASE_FILE);
-        let db = Self::validate_existing_file(&path)?;
-        Self::from_database(db, path, None)
+        let (db, repaired) = Self::validate_existing_file_status(&path)?;
+        let mut store = Self::from_database(db, path, None)?;
+        store.repaired_on_open = repaired;
+        Ok(store)
+    }
+
+    pub fn repaired_on_open(&self) -> bool {
+        self.repaired_on_open
     }
 
     pub(crate) fn validate_existing_file(path: &Path) -> Result<Database, StorageError> {
-        if !std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0) {
-            return Err(StorageError::InvalidData(
-                "existing database is missing or not a regular file".into(),
-            ));
+        Self::validate_existing_file_status(path).map(|(db, _)| db)
+    }
+
+    fn validate_existing_file_status(path: &Path) -> Result<(Database, bool), StorageError> {
+        let metadata = std::fs::symlink_metadata(path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                StorageError::MissingDatabase(path.into())
+            } else {
+                StorageError::InspectDatabase {
+                    path: path.into(),
+                    source,
+                }
+            }
+        })?;
+        if !metadata.is_file() {
+            return Err(StorageError::NotRegularDatabase(path.into()));
         }
-        let mut db = Database::open(path).map_err(|source| StorageError::Open {
+        if metadata.len() == 0 {
+            return Err(StorageError::EmptyDatabase(path.into()));
+        }
+        let db = Database::open(path).map_err(|source| {
+            // redb reports its magic mismatch as I/O InvalidData. Independently
+            // confirm that fixed file marker rather than matching error strings
+            // or treating every I/O/record decoding failure as corruption.
+            if matches!(&source, redb::DatabaseError::Storage(redb::StorageError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData) {
+                use std::io::Read as _;
+                let header = (|| {
+                    let mut file = std::fs::File::open(path)?;
+                    let mut marker = [0u8; 9];
+                    match file.read_exact(&mut marker) {
+                        Ok(()) => Ok(marker != [b'r', b'e', b'd', b'b', 0x1A, 0x0A, 0xA9, 0x0D, 0x0A]),
+                        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(true),
+                        Err(error) => Err(error),
+                    }
+                })();
+                match header {
+                    Ok(true) => return StorageError::InvalidDatabaseHeader(path.into()),
+                    Err(source) => return StorageError::InspectDatabase { path: path.into(), source },
+                    Ok(false) => {}
+                }
+            }
+            StorageError::Open { path: path.into(), source }
+        })?;
+        Self::validate_opened_database(db, path)
+    }
+
+    fn validate_opened_database(
+        mut db: Database,
+        path: &Path,
+    ) -> Result<(Database, bool), StorageError> {
+        let repaired = !db.check_integrity().map_err(|source| StorageError::Open {
             path: path.into(),
             source,
         })?;
-        if !db.check_integrity().map_err(|source| StorageError::Open {
-            path: path.into(),
-            source,
-        })? {
-            return Err(StorageError::InvalidData(
-                "database integrity check required repair".into(),
-            ));
-        }
         let txn = db.begin_read()?;
         let tables = txn
             .list_tables()?
@@ -296,9 +357,7 @@ impl ConnectionStore {
             .iter()
             .any(|name| matches!(name.as_str(), "settings" | "connections" | "text_docs"))
         {
-            return Err(StorageError::InvalidData(
-                "unsupported NyaTerm database layout".into(),
-            ));
+            return Err(StorageError::UnsupportedDatabaseLayout(path.into()));
         }
         for definition in [
             GROUPS_TABLE,
@@ -330,7 +389,7 @@ impl ConnectionStore {
             }
         }
         drop(txn);
-        Ok(db)
+        Ok((db, repaired))
     }
 
     /// Content identity excludes redb's mutable allocator/header bookkeeping.
@@ -1936,6 +1995,13 @@ fn save_group_in_txn(txn: &redb::WriteTransaction, group: &Group) -> Result<(), 
         .get(key.as_str())?
         .map(|raw| serde_json::from_slice::<serde_json::Value>(raw.value()))
         .transpose()?;
+    let reparented = current.as_ref().is_some_and(|old| {
+        old.get("parent_id").and_then(serde_json::Value::as_str) != group.parent_id.as_deref()
+    });
+    if reparented || (current.is_none() && group.tree_order.is_none()) {
+        group.tree_order =
+            connection_tree::append_tree_order_in_txn(txn, group.parent_id.as_deref())?;
+    }
     let mut next = serde_json::to_value(&group)?;
     if let (Some(current), Some(next)) = (
         current.as_ref().and_then(serde_json::Value::as_object),
@@ -1946,7 +2012,12 @@ fn save_group_in_txn(txn: &redb::WriteTransaction, group: &Group) -> Result<(), 
         for (field, value) in current {
             if !matches!(
                 field.as_str(),
-                "id" | "name" | "parent_id" | "sort_order" | "created_at_ms" | "updated_at_ms"
+                "id" | "name"
+                    | "parent_id"
+                    | "sort_order"
+                    | "tree_order"
+                    | "created_at_ms"
+                    | "updated_at_ms"
             ) {
                 next.insert(field.clone(), value.clone());
             }
@@ -2012,6 +2083,20 @@ fn save_connection_with_clean_indexes_checked_in_txn(
     }
     let now = current_time_ms();
     let connection_key = entity_key(CONNECTION_PREFIX, &connection.id);
+    let previous: Option<SavedConnection> = txn
+        .open_table(CONNECTIONS_TABLE)?
+        .get(connection_key.as_str())?
+        .map(|raw| deserialize_json(raw.value()))
+        .transpose()?;
+    if previous
+        .as_ref()
+        .is_some_and(|old| old.group_id != connection.group_id)
+        || (previous.is_none() && connection.tree_order.is_none())
+    {
+        connection.tree_order =
+            connection_tree::append_tree_order_in_txn(txn, connection.group_id.as_deref())?;
+    }
+
     if connection.created_at_ms.is_none() {
         connection.created_at_ms =
             existing_connection_created_at(txn, &connection_key)?.or(Some(now));

@@ -27,11 +27,12 @@ use nyaterm_recording::pipeline::RecordingWriteHandle;
 use nyaterm_terminal::action_links::{
     TerminalActionLinkBuildStats, prepare_terminal_frame_action_links,
 };
+use nyaterm_terminal::colors::TerminalColorPalette;
+use nyaterm_terminal::search::TerminalBufferMatch;
 use nyaterm_terminal::{
     TerminalEffects, TerminalOutputDecoder, TerminalScreen, TerminalSearchDirection,
     TerminalSearchQuery, TerminalSearchRangeMode, TerminalSnapshotBuildStats,
 };
-use nyaterm_terminal::{output::terminal_screen_from_output, search::TerminalBufferMatch};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -40,6 +41,7 @@ pub struct TerminalFrameSession {
     pub(super) output_decoder: TerminalOutputDecoder,
     pub(super) recording_decoder: TerminalOutputDecoder,
     pub(super) revision: u64,
+    find_viewport: usize,
     /// When false, output frames omit full viewport_snapshot (hidden tabs).
     pub(super) include_live_snapshot: bool,
     pub(super) action_link_cache: Option<TerminalFrameActionLinks>,
@@ -75,6 +77,7 @@ impl TerminalFrameSession {
             output_decoder,
             recording_decoder,
             revision: 0,
+            find_viewport: 0,
             // New sessions start high-priority until UI reports visibility.
             include_live_snapshot: true,
             action_link_cache: None,
@@ -105,7 +108,10 @@ impl TerminalFrameSession {
     }
 
     pub(super) fn seed(&mut self, output: String, encoding: &str, scrollback_limit: usize) {
-        self.screen = terminal_screen_from_output(&output);
+        let palette = self.screen.color_palette();
+        self.screen = TerminalScreen::default();
+        self.screen.set_color_palette(palette);
+        self.screen.advance(output.as_bytes());
         if let Err(error) = self.screen.set_encoding(encoding) {
             tracing::warn!(%error, "terminal encoding configuration rejected");
         }
@@ -303,7 +309,7 @@ impl TerminalFrameSession {
         } = purpose
         {
             let visible_query = TerminalSearchQuery {
-                limit: key.limit.saturating_add(1),
+                limit: usize::MAX,
                 ..query
             };
             let occurrences = self
@@ -314,10 +320,27 @@ impl TerminalFrameSession {
                     TerminalSearchRangeMode::Intersects,
                 )
                 .map_err(|error| error.to_string());
+            let overflow = occurrences
+                .as_ref()
+                .ok()
+                .filter(|hits| hits.len() > key.limit)
+                .map(|hits| {
+                    hits.iter()
+                        .flat_map(|hit| &hit.segments)
+                        .filter(|seg| (absolute_start..absolute_end).contains(&seg.line_index))
+                        .map(|seg| nyaterm_terminal::search::TerminalBufferMatch {
+                            line_index: seg.line_index,
+                            start_col: seg.start_col,
+                            end_col: seg.end_col,
+                        })
+                        .collect::<std::sync::Arc<[_]>>()
+                });
+            let mut result = TerminalFrameSearchResult::new_find(key, self.revision, occurrences);
+            result.viewport_highlights = overflow;
             return TerminalFrameSearchEvent {
                 session_id,
                 purpose,
-                result: TerminalFrameSearchResult::new_find(key, self.revision, occurrences),
+                result,
                 process_duration: started_at.elapsed(),
             };
         }
@@ -450,6 +473,7 @@ pub(super) fn run_terminal_frame_processor(
     recording_writer: RecordingWriteHandle,
 ) {
     let mut sessions: HashMap<String, TerminalFrameSession> = HashMap::new();
+    let mut color_palette = TerminalColorPalette::default();
     let mut logical_line_snapshots = false;
     let mut rekeyed_old_ids: HashSet<String> = HashSet::new();
     let mut rekeyed_old_order = VecDeque::new();
@@ -459,6 +483,7 @@ pub(super) fn run_terminal_frame_processor(
     let mut snapshot_priority: HashSet<String> = HashSet::new();
     let mut priority_initialized = false;
     let mut pending_commands = VecDeque::new();
+    let mut commands_since_find = 0usize;
     let mut find_search_jobs = VecDeque::new();
     let mut selected_occurrence_search_jobs = VecDeque::new();
     loop {
@@ -470,6 +495,20 @@ pub(super) fn run_terminal_frame_processor(
             command = command_rx.recv();
             if command.is_none() {
                 break;
+            }
+        }
+        if command.is_some() && !find_search_jobs.is_empty() {
+            commands_since_find += 1;
+            if commands_since_find >= 8 {
+                commands_since_find = 0;
+                if let Some(event) =
+                    process_next_find_search_chunk(&mut find_search_jobs, &sessions)
+                {
+                    push_terminal_frame_worker_event(
+                        &event_queue,
+                        TerminalFrameEvent::Search(event),
+                    );
+                }
             }
         }
         let Some(command) = command else {
@@ -488,6 +527,14 @@ pub(super) fn run_terminal_frame_processor(
             push_terminal_frame_worker_event(queue, event);
         };
         match command {
+            TerminalFrameCommand::SetColorPalette { palette } => {
+                if color_palette != palette {
+                    color_palette = palette;
+                    for session in sessions.values_mut() {
+                        session.screen.set_color_palette(palette);
+                    }
+                }
+            }
             TerminalFrameCommand::SetCollapsedCommands { session_id, ids } => {
                 if let Some(session) = sessions.get_mut(&session_id) {
                     session.screen.set_collapsed_commands(ids);
@@ -535,6 +582,7 @@ pub(super) fn run_terminal_frame_processor(
                     .entry(session_id)
                     .or_insert_with(|| TerminalFrameSession::new(&encoding, scrollback_limit));
                 session.set_encoding_and_limit(&encoding, scrollback_limit);
+                session.screen.set_color_palette(color_palette);
                 session
                     .screen
                     .set_logical_line_snapshots(logical_line_snapshots);
@@ -559,6 +607,7 @@ pub(super) fn run_terminal_frame_processor(
                 let session = sessions
                     .entry(session_id.clone())
                     .or_insert_with(|| TerminalFrameSession::new(&encoding, scrollback_limit));
+                session.screen.set_color_palette(color_palette);
                 session.seed(output, &encoding, scrollback_limit);
                 session
                     .screen
@@ -765,6 +814,7 @@ pub(super) fn run_terminal_frame_processor(
                 sessions: transferred,
             } => {
                 for (session_id, mut session) in transferred {
+                    session.screen.set_color_palette(color_palette);
                     session
                         .screen
                         .set_logical_line_snapshots(logical_line_snapshots);
@@ -815,6 +865,7 @@ pub(super) fn run_terminal_frame_processor(
                 let session = sessions
                     .entry(session_id.clone())
                     .or_insert_with(|| TerminalFrameSession::new(&encoding, scrollback_limit));
+                session.screen.set_color_palette(color_palette);
                 session
                     .screen
                     .set_logical_line_snapshots(logical_line_snapshots);
@@ -878,8 +929,18 @@ pub(super) fn run_terminal_frame_processor(
             } => {
                 if let Some(session) = sessions.get_mut(&session_id) {
                     if purpose == TerminalFrameSearchPurpose::Find {
-                        find_search_jobs.clear();
-                        find_search_jobs.push_back(FindSearchJob::new(session_id, key, session));
+                        if !find_search_jobs
+                            .iter()
+                            .any(|job| job.session_id == session_id && job.key == key)
+                        {
+                            find_search_jobs.retain(|job| job.session_id != session_id);
+                            find_search_jobs.push_back(FindSearchJob::from_anchor(
+                                session_id,
+                                key,
+                                session,
+                                session.find_viewport,
+                            ));
+                        }
                     } else if purpose == TerminalFrameSearchPurpose::SelectedOccurrence {
                         let job = SelectedOccurrenceSearchJob::new(session_id, key, session);
                         if let Some(stale) = replace_selected_occurrence_search_job(
@@ -889,9 +950,12 @@ pub(super) fn run_terminal_frame_processor(
                             push_event(&event_queue, TerminalFrameEvent::Search(stale));
                         }
                     } else {
-                        if matches!(purpose, TerminalFrameSearchPurpose::FindVisible { .. }) {
+                        if let TerminalFrameSearchPurpose::FindVisible { absolute_start, .. } =
+                            purpose
+                        {
+                            session.find_viewport = absolute_start;
                             find_search_jobs
-                                .retain(|job| job.session_id == session_id && job.key == key);
+                                .retain(|job| job.session_id != session_id || job.key == key);
                         }
                         let event = session.search_event(session_id, purpose, key);
                         push_event(&event_queue, TerminalFrameEvent::Search(event));
