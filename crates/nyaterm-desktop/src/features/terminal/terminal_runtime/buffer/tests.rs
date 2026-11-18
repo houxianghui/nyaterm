@@ -668,25 +668,32 @@ fn terminal_color_queries_follow_theme_preview_and_draft_cancellation_without_vi
             .collect();
         String::from_utf8(replies).unwrap()
     };
+    let theme_bg_reply = |background: u32| {
+        format!(
+            "\x1b]11;rgb:{0:02x}{0:02x}/{1:02x}{1:02x}/{2:02x}{2:02x}\x07",
+            (background >> 16) & 0xff,
+            (background >> 8) & 0xff,
+            background & 0xff
+        )
+    };
     let background = app.update(&mut cx, |app, _| app.terminal_theme_palette().terminal_bg);
-    let initial = format!(
-        "\x1b]11;rgb:{0:02x}{0:02x}/{1:02x}{1:02x}/{2:02x}{2:02x}\x07",
-        (background >> 16) & 0xff,
-        (background >> 8) & 0xff,
-        background & 0xff
-    );
+    let initial = theme_bg_reply(background);
     assert_eq!(ask(), initial);
     app.update(&mut cx, |app, cx| {
         app.begin_settings_draft(cx);
         app.set_terminal_theme(None, cx);
         app.update_appearance_theme("github-light", cx);
     });
-    assert_eq!(ask(), "\x1b]11;rgb:ffff/ffff/ffff\x07");
+    // The fork rewrites `github-light` as macOS Light, so derive the expected
+    // reply from the palette rather than assuming upstream's pure white.
+    let light_bg = nyaterm_ui::theme_palette("github-light").terminal_bg;
+    assert_eq!(ask(), theme_bg_reply(light_bg));
     app.update(&mut cx, |app, cx| {
         app.set_terminal_theme(Some("dracula"), cx);
         app.update_appearance_theme("nya-high-contrast-white", cx);
     });
-    assert_eq!(ask(), "\x1b]11;rgb:2828/2a2a/3636\x07");
+    let dracula_bg = nyaterm_ui::theme_palette("dracula").terminal_bg;
+    assert_eq!(ask(), theme_bg_reply(dracula_bg));
     app.update(&mut cx, |app, cx| app.cancel_settings(cx));
     assert_eq!(ask(), initial);
 }

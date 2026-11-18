@@ -64,18 +64,27 @@ fn minimum_contrast_updates_render_policy_without_recoloring_the_palette() {
 #[test]
 fn terminal_color_query_palette_follows_terminal_theme_and_custom_colors() {
     let mut state = settings_state();
+    // The fork rewrites `github-light` as macOS Light, so derive the expected
+    // background from the palette rather than assuming upstream's pure white.
+    let light_bg = nyaterm_ui::theme_palette("github-light").terminal_bg;
     state.set_appearance_theme("github-light".into());
-    assert_eq!(state.terminal_color_palette().background, 0xffffff);
+    assert_eq!(state.terminal_color_palette().background, light_bg);
     assert_eq!(
         SettingsFeatureState::resolve_terminal_color_palette(state.summary()),
         state.terminal_color_palette()
     );
     state.set_terminal_theme(Some("dracula".into()));
-    assert_eq!(state.terminal_color_palette().background, 0x282a36);
+    assert_eq!(
+        state.terminal_color_palette().background,
+        nyaterm_ui::theme_palette("dracula").terminal_bg
+    );
     state.set_appearance_theme("nya-high-contrast-white".into());
-    assert_eq!(state.terminal_color_palette().background, 0x282a36);
+    assert_eq!(
+        state.terminal_color_palette().background,
+        nyaterm_ui::theme_palette("dracula").terminal_bg
+    );
     state.set_terminal_theme(Some("missing-theme".into()));
-    assert_eq!(state.terminal_color_palette().background, 0xffffff);
+    assert_eq!(state.terminal_color_palette().background, light_bg);
 
     let mut theme =
         nyaterm_core::themes::resolve_theme("github-light", &state.summary.custom_themes);

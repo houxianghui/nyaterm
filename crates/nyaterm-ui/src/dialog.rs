@@ -400,6 +400,7 @@ impl NyaDialogWindowExt for Window {
         // next-frame callback uses the first completed rendered frame instead.
         let focus_guard = Rc::new(Cell::new(false));
         let shell_focus = Rc::new(RefCell::new(None));
+        let shell_focus_slot = Rc::clone(&shell_focus);
         let lifecycle = self.open_tracked_dialog(cx, move |dialog, window, cx| {
             let _lifetime = &marker;
             if shell_focus.borrow().is_none() {
@@ -419,6 +420,14 @@ impl NyaDialogWindowExt for Window {
                 .into_component()
                 .shadow(gpui_base::Theme::global(cx).tokens.shadow.lg)
         });
+        // `gpui-kit` focuses the dialog's shell handle before returning, but
+        // callers commonly focus their first content control immediately
+        // afterwards. The builder first runs on the next render, so sampling
+        // focus inside it would mistake that control for the shell and turn a
+        // control's Enter into Cancel. Capture the real shell handle here.
+        if shell_focus_slot.borrow().is_none() {
+            *shell_focus_slot.borrow_mut() = self.focused(cx);
+        }
         let handle = NyaDialogHandle {
             window: self.window_handle().window_id(),
             marker: weak,

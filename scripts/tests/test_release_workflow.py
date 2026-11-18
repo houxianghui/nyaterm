@@ -15,6 +15,14 @@ def jobs() -> dict[str, str]:
     return dict(zip(parts[1::2], parts[2::2]))
 
 
+def package_jobs() -> dict[str, str]:
+    snapshot = WORKFLOW.with_name("main-snapshot.yml").read_text(encoding="utf-8")
+    return {
+        "release": jobs()["package"],
+        "snapshot": snapshot.split("  package:\n", 1)[1].split("\n  publish:", 1)[0],
+    }
+
+
 def gate(job: str, values: dict[str, object]) -> bool:
     condition = re.search(r"^    if: (.+(?:\n      [^\n]+)*)", job, flags=re.M).group(1)
     condition = condition.removeprefix(">-").strip().replace("\n", " ")
@@ -31,34 +39,27 @@ def gate(job: str, values: dict[str, object]) -> bool:
 
 class ReleaseWorkflowTests(unittest.TestCase):
     def test_packaged_portable_zip_runs_the_updater_round_trip_test(self) -> None:
-        package = WORKFLOW.with_name("native-package.yml").read_text(encoding="utf-8")
-        validation = re.search(
-            r"      - name: Test portable updater against packaged ZIP\n(.*?)(?=      - name:)",
-            package, re.S,
-        ).group(1)
-        self.assertIn("if: runner.os == 'Windows'", validation)
-        self.assertIn("NYATERM_TEST_PORTABLE_ARCHIVE = (Resolve-Path", validation)
-        self.assertIn("NYATERM_TEST_PORTABLE_ARCH =", validation)
-        self.assertIn(
-            "cargo test -p nyaterm-updater --lib --locked portable_release_archive_round_trip -- --ignored",
-            validation,
-        )
+        for name, package in package_jobs().items():
+            with self.subTest(package=name):
+                validation = re.search(
+                    r"      - name: Test portable updater against packaged ZIP\n(.*?)(?=      - name:)",
+                    package, re.S,
+                ).group(1)
+                self.assertIn("shell: pwsh", validation)
+                self.assertIn("NYATERM_TEST_PORTABLE_ARCHIVE = (Resolve-Path", validation)
+                self.assertIn("NYATERM_TEST_PORTABLE_ARCH =", validation)
+                self.assertIn(
+                    "cargo test -p nyaterm-updater --lib --locked portable_release_archive_round_trip -- --ignored",
+                    validation,
+                )
 
     def test_windows_packaging_preserves_msvc_path_in_release_and_snapshot(self) -> None:
-        for workflow in (WORKFLOW.with_name("native-package.yml"),):
-            with self.subTest(workflow=workflow.name):
-                content = workflow.read_text(encoding="utf-8")
-                linux_macos = re.search(
-                    r"      - name: Package native application\n(.*?)(?=      - name:)",
-                    content, re.S,
-                ).group(1)
+        for name, content in package_jobs().items():
+            with self.subTest(package=name):
                 windows = re.search(
                     r"      - name: Package native application \(Windows MSVC\)\n(.*?)(?=      - name:)",
                     content, re.S,
                 ).group(1)
-                self.assertIn("if: runner.os != 'Windows'", linux_macos)
-                self.assertIn("shell: bash", linux_macos)
-                self.assertIn("if: runner.os == 'Windows'", windows)
                 self.assertIn("shell: pwsh", windows)
                 self.assertIn("Get-Command link.exe -CommandType Application", windows)
                 self.assertIn("Select-Object -First 1).Source", windows)
@@ -76,9 +77,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertIn("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }", windows)
 
     def test_stable_windows_packages_install_pinned_wix_and_sign_msi(self) -> None:
-        package = WORKFLOW.with_name("native-package.yml").read_text(encoding="utf-8")
+        package = package_jobs()["release"]
         install = re.search(r"      - name: Install WiX\n(.*?)(?=      - name:)", package, re.S).group(1)
-        self.assertIn("runner.os == 'Windows' && inputs.release_type == 'release' && !contains(inputs.version, '-')", install)
+        self.assertIn("needs.preflight.outputs.prerelease == 'false'", install)
         self.assertIn("./scripts/ci/install-wix.ps1", install)
         preparation = jobs()["prepare_release"]
         self.assertIn('if [[ "${PRERELEASE}" == \'false\' ]]; then', preparation)
@@ -89,6 +90,35 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("$version = '6.0.2'", installer.read_text(encoding="utf-8"))
         snapshot = WORKFLOW.with_name("main-snapshot.yml").read_text(encoding="utf-8")
         self.assertNotIn("install-wix", snapshot)
+
+    def test_ci_packages_only_windows_and_disables_unsupported_auto_channels(self) -> None:
+        expected = [
+            ("windows-x64", "windows-2025", "x86_64-pc-windows-msvc"),
+            ("windows-arm64", "windows-2025", "aarch64-pc-windows-msvc"),
+        ]
+        for name, package in package_jobs().items():
+            with self.subTest(package=name):
+                entries = re.findall(
+                    r"- \{ label: ([^,]+), os: ([^,]+), target: ([^}]+) \}",
+                    package,
+                )
+                self.assertEqual(entries, expected)
+                self.assertIn("release_provenance.record_v2", package)
+                self.assertNotIn("native-package.yml", package)
+
+        preparation = jobs()["prepare_release"]
+        self.assertNotIn("_macos_", preparation)
+        self.assertNotIn("_linux_", preparation)
+        self.assertNotIn("--include-focal", preparation)
+        self.assertNotIn("pattern: NyaTerm-*", preparation)
+        self.assertNotIn("pattern: provenance-*", preparation)
+        self.assertEqual(preparation.count("pattern: NyaTerm-windows-*"), 1)
+        self.assertEqual(preparation.count("pattern: provenance-windows-*"), 1)
+        self.assertIn("package_native.CI_TARGETS", preparation)
+        for name in ("homebrew", "aur"):
+            workflow = WORKFLOW.with_name(f"publish-{name}.yml").read_text(encoding="utf-8")
+            self.assertNotIn("workflow_run:", workflow)
+            self.assertIn("workflow_dispatch:", workflow)
 
     def test_rehearsal_never_enables_publication(self) -> None:
         blocks = jobs()
@@ -105,7 +135,6 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     "needs.preflight.outputs.publish": str(publish).lower(),
                     "inputs.verify_release": verify,
                     "needs.package.result": package,
-                    "needs.focal.result": package,
                     "inputs.source_run_id": reuse,
                     "needs.release.result": "success",
                     "needs.prepare_release.result": "success",
@@ -127,21 +156,26 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_later_checkouts_cannot_follow_a_moving_branch(self) -> None:
         blocks = jobs()
-        for name in ("prepare_release", "release", "r2", "publish"):
+        for name in ("package", "prepare_release", "release", "r2", "publish"):
             self.assertIn("ref: ${{ needs.preflight.outputs.source_sha }}", blocks[name])
-        self.assertIn("source_sha: ${{ needs.preflight.outputs.source_sha }}", blocks["package"])
-        self.assertIn("source_ref: ${{ needs.preflight.outputs.source_sha }}", blocks["focal"])
-        self.assertIn("uses: ./.github/workflows/native-package.yml", blocks["package"])
+            self.assertNotIn("inputs.source_ref", blocks[name])
+        self.assertNotIn("focal", blocks)
         snapshot = WORKFLOW.with_name("main-snapshot.yml").read_text(encoding="utf-8")
-        self.assertIn("uses: ./.github/workflows/native-package.yml", snapshot)
+        self.assertIn("ref: ${{ needs.prepare.outputs.main_sha }}", snapshot)
         self.assertIn("cancel-in-progress: false", snapshot)
 
     def test_downstream_channels_use_the_shared_published_release_resolver(self) -> None:
         publication = jobs()["publish"]
-        self.assertLess(publication.index("release_channel.py commit"), publication.index("release_receipt.py create"))
+        self.assertLess(publication.index("name: Publish verified draft"), publication.index("release_receipt.py create"))
         self.assertLess(publication.index("release_receipt.py create"), publication.index("name: published-release"))
         self.assertIn("name: published-release-tag", publication)
-        for filename, channel in (("homebrew", "homebrew"), ("aur", "aur"), ("gitee-release", "gitee"), ("nix", "nix")):
+        self.assertIn("path: published-release-tag.txt", publication)
+        for filename, channel in (
+            ("homebrew", "homebrew"),
+            ("aur", "aur"),
+            ("gitee-release", "gitee"),
+            ("nix", "nix"),
+        ):
             workflow = WORKFLOW.with_name(f"publish-{filename}.yml").read_text(encoding="utf-8")
             self.assertIn(f"release_receipt.py resolve --channel {channel}", workflow)
             self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
@@ -149,12 +183,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         gitee = WORKFLOW.with_name("publish-gitee-release.yml").read_text(encoding="utf-8")
         self.assertIn("github.event_name != 'workflow_dispatch' || inputs.upload_small_assets", gitee)
 
-    def test_publication_lock_covers_channel_commit_and_receipt(self) -> None:
+    def test_publication_lock_covers_publish_and_receipt(self) -> None:
         publication = jobs()["publish"]
         self.assertIn("group: release-channel-", publication)
         self.assertIn("cancel-in-progress: false", publication)
-        self.assertLess(publication.index("Retain preimage before"), publication.index("release_channel.py commit"))
-        self.assertIn("if: always()", publication)
+        self.assertLess(publication.index("name: Publish verified draft"), publication.index("release_receipt.py create"))
         # Parallel builds, including manual runs from main, must not cancel one another.
         self.assertNotRegex(WORKFLOW.read_text(encoding="utf-8"), r"(?m)^concurrency:")
         self.assertNotIn("cancel-in-progress: true", WORKFLOW.with_name("linux-focal.yml").read_text(encoding="utf-8"))
@@ -165,7 +198,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("source_conclusion", preflight)
         preparation = jobs()["prepare_release"]
         self.assertIn("name: release-candidate", preparation)
-        self.assertIn("scripts/release/verify_candidate.py", preparation)
+        self.assertIn("release_channel.checksums", preparation)
+        self.assertIn("generate_release_metadata.expected_artifacts", preparation)
+        self.assertIn("minisign", preparation)
+        self.assertNotIn("scripts/release/verify_candidate.py", preparation)
 
     def test_draft_notes_are_preserved_until_publish_gate(self) -> None:
         blocks = jobs()
@@ -178,7 +214,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("gh release create", blocks["release"])
         self.assertNotIn("body=@release-notes.md", blocks["release"])
         self.assertNotIn("--draft=false", blocks["release"])
-        self.assertIn("release_channel.py commit", blocks["publish"])
+        self.assertIn("--draft=false", blocks["publish"])
         values = {
             "needs.preflight.result": "success",
             "needs.preflight.outputs.publish": "true",
