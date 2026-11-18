@@ -84,7 +84,10 @@ fn terminal_color_query_palette_follows_terminal_theme_and_custom_colors() {
         nyaterm_ui::theme_palette("dracula").terminal_bg
     );
     state.set_terminal_theme(Some("missing-theme".into()));
-    assert_eq!(state.terminal_color_palette().background, light_bg);
+    assert_eq!(
+        state.terminal_color_palette().background,
+        nyaterm_ui::theme_palette("nya-high-contrast-white").terminal_bg
+    );
 
     let mut theme =
         nyaterm_core::themes::resolve_theme("github-light", &state.summary.custom_themes);
