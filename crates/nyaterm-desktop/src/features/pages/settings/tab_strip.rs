@@ -63,19 +63,20 @@ impl NyaTermApp {
             .id(SharedString::from("settings-tab"))
             .debug_selector(|| "settings-tab".into())
             .group(tab_group.clone())
-            .h(px(36.))
+            // Safari-style capsule, compacted to sit inside the 36px strip
+            // like the session tabs while leaving vertical breathing room.
+            .h(px(28.))
             .min_w(px(118.))
             .max_w(px(236.))
             .flex_none()
+            .mx_1()
+            .rounded_full()
             .pl_3()
             .pr_2()
             .flex()
             .items_center()
             .gap_2()
             .relative()
-            .border_r_1()
-            .border_color(rgb(palette.border))
-            .when(!selected, |this| this.border_b_1())
             .bg(if selected {
                 self.shell_surface_color(palette.bg)
             } else {
@@ -123,15 +124,10 @@ impl NyaTermApp {
                 }),
             )
             .when(selected, |this| {
-                this.child(
+                this.border_1().border_color(rgba(0x00000000)).child(
                     div()
                         .debug_selector(|| "settings-tab-active".into())
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(2.))
-                        .bg(rgb(palette.primary)),
+                        .size(px(0.)),
                 )
             })
             .child(
