@@ -15,6 +15,15 @@ pub(crate) struct WindowMaterialCapabilities {
     pub blurred: bool,
 }
 
+/// Ask DWM for Windows 11 rounded corners on a custom-framed window.
+///
+/// Returns `false` on unsupported builds or when the native call fails; callers
+/// keep the square frame instead of treating this as an error.
+#[cfg(windows)]
+pub(crate) fn apply_rounded_window_corners(window: &gpui::Window) -> bool {
+    windows::apply_rounded_window_corners(window)
+}
+
 /// Local client session information, never a property of the remote server.
 pub(crate) fn is_remote_session() -> Option<bool> {
     #[cfg(windows)]

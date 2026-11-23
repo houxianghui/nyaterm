@@ -158,6 +158,10 @@ impl DesktopController {
                     flavor.desktop_id(),
                     flavor.display_name(),
                 );
+                // GPUI's undecorated windows stay square on Windows 11 unless
+                // DWM is asked for rounded corners explicitly.
+                #[cfg(target_os = "windows")]
+                crate::platform::apply_rounded_window_corners(window);
                 let shell = cx.new(|cx| {
                     AppShell::new(
                         runtime,

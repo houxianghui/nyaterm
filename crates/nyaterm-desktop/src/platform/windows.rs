@@ -1,5 +1,11 @@
 use std::sync::Once;
 
+use gpui::Window;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Graphics::Dwm::{
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+};
 use windows_sys::Win32::System::LibraryLoader::{
     GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
@@ -128,12 +134,72 @@ pub(super) fn enable_native_menu_dark_mode() {
     });
 }
 
+/// Windows 11 introduced the DWM corner-preference attribute.
+const WINDOWS_11_MIN_BUILD: u32 = 22000;
+
+fn rounded_corners_supported(build: u32) -> bool {
+    build >= WINDOWS_11_MIN_BUILD
+}
+
+/// Round the custom-framed workspace windows through DWM.
+///
+/// GPUI hides the native caption but keeps `WS_THICKFRAME`, and Windows 11
+/// leaves such undecorated windows square unless `DWMWCP_ROUND` is requested
+/// explicitly. The attribute reports `DWMWCP_DEFAULT` before the call, so the
+/// default path cannot be relied on. Failures are non-fatal: the window keeps
+/// its square corners instead of blocking creation.
+pub(super) fn apply_rounded_window_corners(window: &Window) -> bool {
+    let Some(version) = windows_version() else {
+        return false;
+    };
+    if !rounded_corners_supported(version.dwBuildNumber) {
+        return false;
+    }
+    // `Window` has an inherent typed `window_handle()`; call the raw-handle
+    // trait explicitly to reach the native HWND.
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return false;
+    };
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        return false;
+    };
+    // SAFETY: the HWND belongs to the live gpui window. `DWMWA_WINDOW_CORNER_PREFERENCE`
+    // takes a reference to one `DWM_WINDOW_CORNER_PREFERENCE` (`i32`).
+    let hwnd: HWND = win32.hwnd.get() as *mut core::ffi::c_void;
+    let preference: i32 = DWMWCP_ROUND;
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            &preference as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of_val(&preference) as u32,
+        )
+    };
+    result == 0
+}
+
 #[cfg(test)]
 mod tests {
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
     use windows_sys::core::w;
 
-    use super::{DarkMenuApi, enable_native_menu_dark_mode, windows_version};
+    use super::{
+        DarkMenuApi, enable_native_menu_dark_mode, rounded_corners_supported, windows_version,
+    };
+
+    #[test]
+    fn rounded_window_corners_require_windows_11() {
+        for (build, expected) in [
+            (0, false),
+            (19045, false),
+            (21999, false),
+            (22000, true),
+            (22631, true),
+            (26100, true),
+        ] {
+            assert_eq!(rounded_corners_supported(build), expected, "build {build}");
+        }
+    }
 
     #[test]
     fn native_window_material_requires_supported_build_composition_and_accent_api() {

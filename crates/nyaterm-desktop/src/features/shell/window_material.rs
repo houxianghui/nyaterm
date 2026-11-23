@@ -101,6 +101,10 @@ impl NyaTermApp {
         cx.defer(move |cx| {
             let _ = handle.update(cx, |root, window, cx| {
                 window.set_background_appearance(appearance);
+                // Background-appearance changes can reset DWM composition state,
+                // so re-assert the rounded-corner preference for this frame.
+                #[cfg(target_os = "windows")]
+                crate::platform::apply_rounded_window_corners(window);
                 nyaterm_ui::set_nya_root_transparent(
                     root,
                     appearance != WindowBackgroundAppearance::Opaque,
