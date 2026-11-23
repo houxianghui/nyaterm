@@ -4,6 +4,7 @@ use gpui::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Dwm::{
+    DWMNCRP_DISABLED, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_NCRENDERING_POLICY,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows_sys::Win32::System::LibraryLoader::{
@@ -143,10 +144,12 @@ fn rounded_corners_supported(build: u32) -> bool {
 
 /// Round the custom-framed workspace windows through DWM.
 ///
-/// GPUI hides the native caption but keeps `WS_THICKFRAME`, and Windows 11
-/// leaves such undecorated windows square unless `DWMWCP_ROUND` is requested
-/// explicitly. The attribute reports `DWMWCP_DEFAULT` before the call, so the
-/// default path cannot be relied on. Failures are non-fatal: the window keeps
+/// GPUI hides the native caption but keeps `WS_THICKFRAME`. With DWM's default
+/// non-client rendering, Windows 11 draws the (unpainted) frame area around the
+/// client and leaves the visible content square; requesting `DWMWCP_ROUND`
+/// alone changes nothing. Disabling non-client rendering
+/// (`DWMNCRP_DISABLED`) together with `DWMWCP_ROUND` makes the rounded client
+/// edge visible (verified 2026-11-23). Failures are non-fatal: the window keeps
 /// its square corners instead of blocking creation.
 pub(super) fn apply_rounded_window_corners(window: &Window) -> bool {
     let Some(version) = windows_version() else {
@@ -163,11 +166,21 @@ pub(super) fn apply_rounded_window_corners(window: &Window) -> bool {
     let RawWindowHandle::Win32(win32) = handle.as_raw() else {
         return false;
     };
-    // SAFETY: the HWND belongs to the live gpui window. `DWMWA_WINDOW_CORNER_PREFERENCE`
-    // takes a reference to one `DWM_WINDOW_CORNER_PREFERENCE` (`i32`).
+    // SAFETY: the HWND belongs to the live gpui window. Each attribute takes a
+    // reference to one value of its documented type.
     let hwnd: HWND = win32.hwnd.get() as *mut core::ffi::c_void;
+    let nc_rendering: i32 = DWMNCRP_DISABLED;
     let preference: i32 = DWMWCP_ROUND;
-    let result = unsafe {
+    let border_color: u32 = DWMWA_COLOR_NONE;
+    let nc_result = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY as u32,
+            &nc_rendering as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of_val(&nc_rendering) as u32,
+        )
+    };
+    let corner_result = unsafe {
         DwmSetWindowAttribute(
             hwnd,
             DWMWA_WINDOW_CORNER_PREFERENCE as u32,
@@ -175,7 +188,16 @@ pub(super) fn apply_rounded_window_corners(window: &Window) -> bool {
             std::mem::size_of_val(&preference) as u32,
         )
     };
-    result == 0
+    // Keep the DWM 1px border from painting a straight edge over the rounded outline.
+    let _ = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR as u32,
+            &border_color as *const u32 as *const core::ffi::c_void,
+            std::mem::size_of_val(&border_color) as u32,
+        )
+    };
+    nc_result == 0 && corner_result == 0
 }
 
 #[cfg(test)]

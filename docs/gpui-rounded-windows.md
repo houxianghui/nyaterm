@@ -49,10 +49,16 @@
 ## 3. 主窗口 / 工作区窗口圆角（原生 DWM）
 
 主窗口与独立设置窗口不是同一路径，由 `app_shell/controller/workspaces.rs` 创建。GPUI
-隐藏原生 caption 后，Windows 11 默认不会给这种无边框窗口套用圆角
-（`DWMWA_WINDOW_CORNER_PREFERENCE` 读回 `DWMWCP_DEFAULT`，实际表现为直角，
-2026-11-23 实测）。现在由 `platform/windows.rs` 的
-`apply_rounded_window_corners()` 显式设置 `DWMWCP_ROUND`：
+隐藏原生 caption 但保留 `WS_THICKFRAME`：默认的非客户区渲染会让 Windows 11 在 client
+外围画一圈不可见的 frame，仅设置 `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND`
+不会产生可见圆角（2026-11-23 实测：四角仍为直角）。现在由
+`platform/windows.rs` 的 `apply_rounded_window_corners()` 同时设置：
+
+- `DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED`（关键：否则圆角不可见）
+- `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND`
+- `DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE`（避免 1px 直角边框压在圆角外缘）
+
+应用时机：
 
 - 窗口创建时应用一次（所有工作区窗口，含拖出标签产生的新窗口）。
 - `sync_native_window_material()` 修改窗口材质后重新应用一次。
