@@ -1133,8 +1133,8 @@ mod tests {
             let fits = |label| super::activity_label_fits(label, gpui::font("Inter"), window);
             assert!(fits("AI"));
             assert!(fits("文件"));
-            // Five CJK glyphs need three lines inside the 32px content lane.
-            assert!(!fits("资源管理器"));
+            // A long CJK label must fall back regardless of platform font fallback.
+            assert!(!fits("资源管理器资源管理器资源管理器资源管理器"));
             assert!(!fits("WWWWWWWWWW"));
             assert!(!fits("Source Control"));
             assert!(!fits("A very long activity entry label that cannot fit"));
