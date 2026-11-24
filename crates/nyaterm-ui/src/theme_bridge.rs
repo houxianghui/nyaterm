@@ -8,7 +8,7 @@ use gpui_kit::component::{Theme, ThemeMode, ThemeTokens};
 
 use crate::root::refresh_nya_root_fonts;
 use crate::sizing::{radius_lg, radius_md};
-use crate::theme::ThemePalette;
+use crate::theme::{ThemePalette, solid_button_color, solid_button_state_colors};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ComponentTypography {
@@ -117,30 +117,52 @@ pub fn apply_component_theme(
     component_theme.colors.button_active = color(palette.hover);
     component_theme.colors.button_foreground = color(palette.text);
     component_theme.colors.button_hover = color(palette.hover);
-    component_theme.colors.button_danger = color(palette.danger);
-    component_theme.colors.button_danger_active = color(palette.danger);
+    let (danger_fill, danger_hover_fill) =
+        solid_button_state_colors(palette.danger, palette.danger_hover, palette.on_primary);
+    component_theme.colors.button_danger = color(danger_fill);
+    component_theme.colors.button_danger_active = color(danger_fill);
     component_theme.colors.button_danger_foreground = color(palette.on_primary);
-    component_theme.colors.button_danger_hover = color(palette.danger_hover);
-    component_theme.colors.button_primary = color(palette.primary);
-    component_theme.colors.button_primary_active = color(palette.primary_hover);
+    component_theme.colors.button_danger_hover = color(danger_hover_fill);
+    component_theme.colors.button_primary =
+        color(solid_button_color(palette.primary, palette.on_primary));
+    component_theme.colors.button_primary_active = color(solid_button_color(
+        palette.primary_hover,
+        palette.on_primary,
+    ));
     component_theme.colors.button_primary_foreground = color(palette.on_primary);
-    component_theme.colors.button_primary_hover = color(palette.primary_hover);
+    component_theme.colors.button_primary_hover = color(solid_button_color(
+        palette.primary_hover,
+        palette.on_primary,
+    ));
     component_theme.colors.button_secondary = color(palette.surface_elevated);
     component_theme.colors.button_secondary_active = color(palette.hover);
     component_theme.colors.button_secondary_foreground = color(palette.text);
     component_theme.colors.button_secondary_hover = color(palette.hover);
-    component_theme.colors.button_success = color(palette.success);
-    component_theme.colors.button_success_active = color(palette.success);
+    component_theme.colors.button_success =
+        color(solid_button_color(palette.success, palette.on_primary));
+    component_theme.colors.button_success_active =
+        color(solid_button_color(palette.success, palette.on_primary));
     component_theme.colors.button_success_foreground = color(palette.on_primary);
-    component_theme.colors.button_success_hover = color(palette.success);
-    component_theme.colors.button_warning = color(palette.warning);
-    component_theme.colors.button_warning_active = color(palette.warning);
+    component_theme.colors.button_success_hover =
+        color(solid_button_color(palette.success, palette.on_primary));
+    component_theme.colors.button_warning =
+        color(solid_button_color(palette.warning, palette.on_primary));
+    component_theme.colors.button_warning_active =
+        color(solid_button_color(palette.warning, palette.on_primary));
     component_theme.colors.button_warning_foreground = color(palette.on_primary);
-    component_theme.colors.button_warning_hover = color(palette.warning);
-    component_theme.colors.button_info = color(palette.primary);
-    component_theme.colors.button_info_active = color(palette.primary_hover);
+    component_theme.colors.button_warning_hover =
+        color(solid_button_color(palette.warning, palette.on_primary));
+    component_theme.colors.button_info =
+        color(solid_button_color(palette.primary, palette.on_primary));
+    component_theme.colors.button_info_active = color(solid_button_color(
+        palette.primary_hover,
+        palette.on_primary,
+    ));
     component_theme.colors.button_info_foreground = color(palette.on_primary);
-    component_theme.colors.button_info_hover = color(palette.primary_hover);
+    component_theme.colors.button_info_hover = color(solid_button_color(
+        palette.primary_hover,
+        palette.on_primary,
+    ));
     component_theme.colors.group_box = color(palette.surface);
     component_theme.colors.group_box_foreground = color(palette.text);
     component_theme.colors.input = color(palette.border);
@@ -176,7 +198,7 @@ pub fn apply_component_theme(
     // (`--df-primary` / `--df-on-primary`), not the muted hover grey.
     // Ghost-button hover does not read this token (gpui-kit Button has its own
     // `hover` field), so toolbars keep their grey hover.
-    component_theme.colors.accent = color(palette.primary);
+    component_theme.colors.accent = color(solid_button_color(palette.primary, palette.on_primary));
     component_theme.colors.accent_foreground = color(palette.on_primary);
     component_theme.colors.accordion = color(palette.surface);
     component_theme.colors.description_list_label = color(palette.surface_elevated);
@@ -333,6 +355,69 @@ mod tests {
             let typography = component_typography(cx);
             assert_eq!(typography.font, ui_font);
             assert_eq!(typography.font_size, px(19.));
+        });
+    }
+
+    fn token_rgb(color: gpui::Hsla) -> u32 {
+        let rgb = color.to_rgb();
+        (((rgb.r * 255.).round() as u32) << 16)
+            | (((rgb.g * 255.).round() as u32) << 8)
+            | ((rgb.b * 255.).round() as u32)
+    }
+
+    #[test]
+    fn solid_control_fills_support_on_primary_text() {
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            for id in ["github-dark", "github-light"] {
+                let palette = theme_palette(id);
+                apply_component_theme(palette, cx);
+                let tokens = &Theme::global(cx).tokens;
+                for (role, fill) in [
+                    ("accent", tokens.accent),
+                    ("primary", tokens.button_primary),
+                    ("danger", tokens.button_danger),
+                    ("success", tokens.button_success),
+                    ("warning", tokens.button_warning),
+                ] {
+                    let fill = token_rgb(fill.color);
+                    let ratio = crate::theme::contrast_ratio(fill, palette.on_primary);
+                    assert!(
+                        ratio >= 4.5,
+                        "{id} {role} fill has only {ratio:.2}:1 against on_primary"
+                    );
+                }
+                for (role, base, raw_hover, rest, hover) in [
+                    (
+                        "primary",
+                        palette.primary,
+                        palette.primary_hover,
+                        tokens.button_primary.color,
+                        tokens.button_primary_hover.color,
+                    ),
+                    (
+                        "danger",
+                        palette.danger,
+                        palette.danger_hover,
+                        tokens.button_danger.color,
+                        tokens.button_danger_hover.color,
+                    ),
+                ] {
+                    let hover_rgb = token_rgb(hover);
+                    assert!(
+                        crate::theme::contrast_ratio(hover_rgb, palette.on_primary) >= 4.5,
+                        "{id} {role} hover must keep on_primary readable"
+                    );
+                    let raw_lightens = crate::theme::contrast_ratio(raw_hover, 0)
+                        > crate::theme::contrast_ratio(base, 0);
+                    let actual_lightens = crate::theme::contrast_ratio(token_rgb(hover), 0)
+                        > crate::theme::contrast_ratio(token_rgb(rest), 0);
+                    assert_eq!(
+                        actual_lightens, raw_lightens,
+                        "{id} {role} hover reverses the theme's lightening direction"
+                    );
+                }
+            }
         });
     }
 
@@ -519,9 +604,11 @@ mod tests {
             let tokens = &Theme::global(cx).tokens;
             assert_eq!(
                 tokens.accent.color,
-                color(palette.primary),
-                "menu hover/selected reads tokens.accent; it must name the primary \
-                 blue block rather than the muted hover grey"
+                color(crate::theme::solid_button_color(
+                    palette.primary,
+                    palette.on_primary,
+                )),
+                "menu selection uses an accessible primary-derived blue block"
             );
             assert_eq!(
                 tokens.accent_foreground.color,

@@ -1,0 +1,5 @@
+# Migration tracker for literal text_size(px(...)) calls.
+# Scope: crates/**/*.rs, excluding tests/benches and lines marked `// dense-data`.
+# The counting rules live in scripts/count_text_size_px.sh; this file only records
+# the number the script must match under --check.
+baseline=638

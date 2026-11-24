@@ -936,7 +936,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn dangerous_confirm_uses_primary_fill_without_danger_fill(cx: &mut TestAppContext) {
+    fn dangerous_confirm_uses_danger_fill_without_primary_fill(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
         let (_, cx) = cx.add_window_view(|window, cx| {
             let content = cx.new(|_| RootContentFixture);
@@ -972,9 +972,9 @@ mod tests {
             assert!(
                 !quads.iter().any(|quad| {
                     quad.bounds.intersects(&action)
-                        && quad.background == gpui::Background::from(danger)
+                        && quad.background == gpui::Background::from(primary)
                 }),
-                "the dangerous action must not paint a solid danger fill"
+                "the dangerous action must not keep the ordinary primary fill"
             );
             let action_backgrounds = quads
                 .iter()
@@ -982,8 +982,55 @@ mod tests {
                 .map(|quad| quad.background)
                 .collect::<Vec<_>>();
             assert!(
+                action_backgrounds.contains(&gpui::Background::from(danger)),
+                "the dangerous action uses the theme's danger fill; danger={danger:?}, action_backgrounds={action_backgrounds:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn ordinary_confirm_keeps_primary_fill_without_danger_fill(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| RootContentFixture);
+            nya_root(content, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.open_nya_dialog(cx, |dialog, _, _| {
+                NyaConfirmDialog::new(
+                    dialog.title("Save").width(384.),
+                    NyaDialogFooter::new("Cancel", "Save"),
+                )
+                .content(div().child("Save the current changes?"))
+                .into_dialog()
+            });
+        });
+        draw(cx);
+        cx.background_executor
+            .advance_clock(*gpui_kit::component::dialog::ANIMATION_DURATION);
+        draw(cx);
+
+        let action = cx
+            .debug_bounds("nya-dialog-action-button")
+            .expect("the action button draws");
+        let (primary, danger) = cx.update(|_, cx| {
+            let theme = gpui_kit::component::ActiveTheme::theme(cx);
+            (theme.tokens.button_primary, theme.tokens.button_danger)
+        });
+        cx.update(|window, _| {
+            let action = action.scale(window.scale_factor());
+            let quads = window.painted_quads();
+            assert!(!quads.iter().any(|quad| {
+                quad.bounds.intersects(&action) && quad.background == gpui::Background::from(danger)
+            }));
+            let action_backgrounds = quads
+                .iter()
+                .filter(|quad| quad.bounds.intersects(&action))
+                .map(|quad| quad.background)
+                .collect::<Vec<_>>();
+            assert!(
                 action_backgrounds.contains(&gpui::Background::from(primary)),
-                "the dangerous action keeps the theme's prominent fill; primary={primary:?}, action_backgrounds={action_backgrounds:?}"
+                "ordinary confirmation keeps primary; action_backgrounds={action_backgrounds:?}"
             );
         });
     }

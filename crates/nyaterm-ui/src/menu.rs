@@ -16,6 +16,7 @@ use gpui_kit::component::{
 };
 
 use crate::sizing::radius_sm;
+use crate::text_style;
 
 type MenuClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 type MenuOpenChangeHandler = Rc<dyn Fn(&bool, &mut Window, &mut App)>;
@@ -80,10 +81,10 @@ fn submenu_direction_probe_width(
     (pointer_x + parent_and_child > window_width).then_some(parent_and_child)
 }
 
-pub(crate) fn nya_popup_menu_appearance() -> PopupMenuAppearance {
+pub(crate) fn nya_popup_menu_appearance(cx: &App) -> PopupMenuAppearance {
     PopupMenuAppearance::new()
         .row_height(px(28.))
-        .font_size(px(12.))
+        .font_size(text_style::ui(cx, text_style::footnote()))
         .icon_size(px(16.))
         .icon_slot_width(px(NYA_MENU_ICON_SLOT_WIDTH))
         .horizontal_padding(px(8.))
@@ -129,7 +130,7 @@ pub(crate) fn style_nya_popup_menu(
         .or_default()
         .push(entry);
     let (min_width, max_width) = resolved_menu_widths(min_width, max_width);
-    menu.appearance(nya_popup_menu_appearance())
+    menu.appearance(nya_popup_menu_appearance(cx))
         .when_some(min_width, |menu, width| menu.min_w(width))
         .when_some(max_width, |menu, width| menu.max_w(width))
 }
@@ -406,7 +407,7 @@ impl NyaMenuItem {
                                             div()
                                                 .w_full()
                                                 .text_center()
-                                                .text_size(px(10.))
+                                                .text_size(text_style::dense_px(cx))
                                                 .child(label),
                                         ),
                                 );
@@ -518,7 +519,7 @@ impl NyaMenuItem {
                         this.child(
                             div()
                                 .flex_none()
-                                .text_size(px(10.))
+                                .text_size(text_style::dense_px(cx))
                                 .text_color(rgb(color))
                                 .child(label),
                         )

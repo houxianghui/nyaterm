@@ -518,10 +518,44 @@ impl NyaTermApp {
                         Err(error) => {
                             app.fail_start_preparation(&options, error.clone(), cx);
                             app.shell.set_status(error.clone());
-                            app.notify_operation(
+                            // The failed request stays retryable; let the toast
+                            // offer it instead of requiring the user to reopen
+                            // the connection from scratch.
+                            let retry_app = cx.entity().downgrade();
+                            let request_id = options.request_id.clone();
+                            let action = nyaterm_ui::notification::NyaNotificationAction::new(
+                                rust_i18n::t!("common.retry").to_string(),
+                                move |_, window, cx| {
+                                    let Some(retry_app) = retry_app.upgrade() else {
+                                        return;
+                                    };
+                                    let Some(request_id) = request_id.clone() else {
+                                        return;
+                                    };
+                                    // The toast may live in a child editor window;
+                                    // workspace focus handoff must run in the main window.
+                                    let main_window =
+                                        retry_app.read_with(cx, |app, _| app.shell.main_window());
+                                    if let Some(main_window) = main_window {
+                                        let _ = main_window.update(cx, |_, window, cx| {
+                                            retry_app.update(cx, |app, cx| {
+                                                app.retry_failed_session_start(
+                                                    request_id, window, cx,
+                                                );
+                                            });
+                                        });
+                                    } else {
+                                        retry_app.update(cx, |app, cx| {
+                                            app.retry_failed_session_start(request_id, window, cx);
+                                        });
+                                    }
+                                },
+                            );
+                            app.notify_operation_with_action(
                                 "remote-route",
                                 nyaterm_ui::notification::NyaNotificationKind::Error,
                                 error,
+                                action,
                                 cx,
                             );
                         }

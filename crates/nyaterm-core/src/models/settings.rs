@@ -1037,12 +1037,33 @@ fn default_ui_font_family() -> String {
     "Inter".to_string()
 }
 
+pub const MIN_UI_FONT_SIZE: u16 = 13;
+pub const MAX_UI_FONT_SIZE: u16 = 24;
+
+/// Keep every UI surface on the same baseline range. The 13px floor preserves
+/// the ordering between dense data (10px minimum) and 13px body text.
+pub fn clamp_ui_font_size(size: u16) -> u16 {
+    size.clamp(MIN_UI_FONT_SIZE, MAX_UI_FONT_SIZE)
+}
+
 fn default_ui_font_size() -> u16 {
     16
 }
 
 fn default_terminal_font_weight() -> u16 {
     400
+}
+
+#[cfg(test)]
+mod ui_font_size_bounds_tests {
+    #[test]
+    fn ui_font_size_is_clamped_to_the_dense_safe_range() {
+        assert_eq!(super::clamp_ui_font_size(0), 13);
+        assert_eq!(super::clamp_ui_font_size(12), 13);
+        assert_eq!(super::clamp_ui_font_size(16), 16);
+        assert_eq!(super::clamp_ui_font_size(24), 24);
+        assert_eq!(super::clamp_ui_font_size(25), 24);
+    }
 }
 
 fn default_terminal_font_weight_bold() -> u16 {

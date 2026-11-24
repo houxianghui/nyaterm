@@ -53,7 +53,7 @@ impl Render for QuickCommandWindow {
             (
                 app.theme_palette(),
                 app.gpui_ui_font().font(),
-                app.settings.summary().ui_font_size.clamp(12, 24) as f32,
+                nyaterm_core::clamp_ui_font_size(app.settings.summary().ui_font_size) as f32,
                 app.quick_command_editor_title().to_string(),
             )
         });

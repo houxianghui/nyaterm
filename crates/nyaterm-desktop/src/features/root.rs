@@ -239,6 +239,41 @@ impl NyaTermApp {
         }
     }
 
+    /// Same target resolution as [`Self::notify_operation_at`], but keeps the
+    /// toast on screen with an action such as retry or view details.
+    pub(in crate::features) fn notify_operation_with_action(
+        &self,
+        key: &'static str,
+        kind: nyaterm_ui::notification::NyaNotificationKind,
+        message: String,
+        action: nyaterm_ui::notification::NyaNotificationAction,
+        cx: &mut Context<Self>,
+    ) {
+        let target = cx
+            .active_window()
+            .or_else(|| self.shell.main_window().map(Into::into));
+        self.notify_operation_with_action_at(target, key, kind, message, action, cx);
+    }
+
+    pub(in crate::features) fn notify_operation_with_action_at(
+        &self,
+        target: Option<gpui::AnyWindowHandle>,
+        key: &'static str,
+        kind: nyaterm_ui::notification::NyaNotificationKind,
+        message: String,
+        action: nyaterm_ui::notification::NyaNotificationAction,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(target) = target {
+            cx.defer(move |cx| {
+                let _ = target.update(cx, |_, window, cx| {
+                    use nyaterm_ui::notification::NyaNotificationWindowExt as _;
+                    window.notify_operation_with_action(key, kind, message, action, cx);
+                });
+            });
+        }
+    }
+
     /// Run an app update after the current GPUI entity leases are released.
     ///
     /// The weak handle lets the deferred work disappear normally during application
@@ -361,7 +396,9 @@ impl NyaTermApp {
             .bg(self.shell_background().root_color(palette.bg))
             .text_color(rgb(palette.text))
             .font(self.gpui_ui_font().font())
-            .text_size(px(self.settings.summary().ui_font_size.clamp(12, 24) as f32))
+            .text_size(px(
+                nyaterm_core::clamp_ui_font_size(self.settings.summary().ui_font_size) as f32,
+            ))
             .child(self.session_tab_drag_listener_layer(cx))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.cancel_internal_drag_on_escape(event, window, cx);
@@ -604,7 +641,7 @@ impl NyaTermApp {
                 .gap(px(3.))
                 .bg(self.shell_transparent_color(palette.bg))
                 .when(has_left_activity_items, |this| {
-                    this.child(self.activity_bar(ActivitySide::Left, cx))
+                    this.child(self.activity_bar(ActivitySide::Left, window, cx))
                 })
                 .when(
                     has_left_activity_items
@@ -628,7 +665,7 @@ impl NyaTermApp {
                     },
                 )
                 .when(has_right_activity_items, |this| {
-                    this.child(self.activity_bar(ActivitySide::Right, cx))
+                    this.child(self.activity_bar(ActivitySide::Right, window, cx))
                 });
 
             if let Some(panel) = left_floating {

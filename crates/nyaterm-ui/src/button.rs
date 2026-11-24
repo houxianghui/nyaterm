@@ -7,6 +7,7 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{Disableable, Icon, Selectable, Sizable};
 
 use crate::sizing::{form_control_height, form_control_size};
+use crate::text_style;
 
 type NyaButtonClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
@@ -193,27 +194,28 @@ impl RenderOnce for NyaButton {
                 .clone()
         });
         let debug_selector = self.id.to_string();
+        let label_debug_selector = format!("{debug_selector}-label");
         let mut button = Button::new(self.id).loading(self.loading);
         if icon_only {
             // An empty label would create a second content slot and offset the icon.
             if let Some(tooltip) = &self.tooltip {
                 button = button.accessibility_label(tooltip.clone());
             }
-        } else if self.text_color.is_some()
-            || self.text_size.is_some()
-            || self.font_weight.is_some()
-            || self.label_left
-        {
-            // Kit's label container sets its own size. Style the label itself,
-            // retaining one visible label and its accessible name.
+        } else if !self.label.is_empty() {
+            // Kit's content container overrides inherited text size. Always
+            // style the inner label so the semantic default actually scales.
+            let text_size = self
+                .text_size
+                .unwrap_or_else(|| text_style::ui(cx, text_style::body()));
             button = button.accessibility_label(self.label.clone()).child(
                 div()
                     .min_w_0()
                     .whitespace_nowrap()
                     .text_ellipsis()
+                    .text_size(text_size)
+                    .debug_selector(move || label_debug_selector.clone())
                     .when(self.label_left, |this| this.flex_1().text_left())
                     .when_some(self.text_color, |this, color| this.text_color(color))
-                    .when_some(self.text_size, |this, size| this.text_size(size))
                     .when_some(self.font_weight, |this, weight| this.font_weight(weight))
                     .child(self.label),
             );
@@ -362,7 +364,7 @@ mod tests {
     use gpui::{
         Context, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, KeyUpEvent,
         Keystroke, ParentElement as _, Render, Styled as _, TestAppContext, VisualTestContext,
-        Window, div,
+        Window, div, font,
     };
 
     use super::NyaButton;
@@ -441,6 +443,40 @@ mod tests {
         });
         press_enter(cx);
         assert_eq!(host.read_with(cx, |host, _| host.clicks), 2);
+    }
+
+    #[gpui::test]
+    fn default_label_width_follows_the_ui_font_baseline(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let mut widths = Vec::new();
+        for baseline in [13., 24.] {
+            cx.update(|cx| {
+                crate::apply_component_theme(
+                    crate::theme::theme_palette("github-dark"),
+                    font("Inter"),
+                    gpui::px(baseline),
+                    cx,
+                );
+            });
+            let (_, cx) = cx.add_window_view(|_, cx| AutofocusHost {
+                show_button: true,
+                other_focus: cx.focus_handle(),
+                clicks: 0,
+            });
+            cx.update(|window, cx| {
+                let _ = window.draw(cx);
+            });
+            widths.push(f32::from(
+                cx.debug_bounds("paste-label")
+                    .expect("the default button label renders")
+                    .size
+                    .width,
+            ));
+        }
+        assert!(
+            widths[1] > widths[0],
+            "ordinary labels must scale with the UI baseline: {widths:?}"
+        );
     }
 
     #[test]

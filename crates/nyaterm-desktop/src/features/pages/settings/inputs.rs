@@ -308,7 +308,12 @@ impl NyaTermApp {
         self.ensure_number_input(
             "appearance.number.ui-font-size",
             &ui_font_size,
-            NyaNumberInputOptions::default().range(12.0, 24.0).step(1.0),
+            NyaNumberInputOptions::default()
+                .range(
+                    f64::from(nyaterm_core::MIN_UI_FONT_SIZE),
+                    f64::from(nyaterm_core::MAX_UI_FONT_SIZE),
+                )
+                .step(1.0),
             cx,
         );
     }

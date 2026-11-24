@@ -3,7 +3,7 @@ use crate::features::android::labels::{file_error_message, log_file_error};
 use crate::features::transfers::FileTransferSession;
 use gpui::Context;
 use nyaterm_files::file_browser::{FileBrowserBackendKind, FileTransferEntryError};
-use nyaterm_ui::notification::NyaNotificationKind;
+use nyaterm_ui::notification::{NyaNotificationAction, NyaNotificationKind};
 
 impl NyaTermApp {
     pub(in crate::features) fn browser_transfer_session(
@@ -46,10 +46,22 @@ impl NyaTermApp {
         let message = file_error_message(error);
         self.shell.set_status(message.clone());
         self.transfer.set_browser_status(message.clone());
-        self.notify_operation(
+        // The toast only carries a short, user-facing message; "View Logs"
+        // keeps the full error available through the runtime log directory.
+        let app = cx.entity().downgrade();
+        let action = NyaNotificationAction::new(
+            rust_i18n::t!("menu.viewLogs").to_string(),
+            move |_, _, cx| {
+                if let Some(app) = app.upgrade() {
+                    app.update(cx, |app, cx| app.reveal_log_dir(cx));
+                }
+            },
+        );
+        self.notify_operation_with_action(
             "file-transfer-error",
             NyaNotificationKind::Error,
             message,
+            action,
             cx,
         );
         cx.notify();

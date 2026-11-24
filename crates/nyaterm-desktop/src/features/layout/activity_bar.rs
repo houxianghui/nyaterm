@@ -4,18 +4,69 @@ use std::borrow::Cow;
 
 use gpui::{
     Context, FontWeight, IntoElement, MouseButton, MouseDownEvent, SharedString, div, prelude::*,
-    px, rgb, rgba, svg,
+    px, relative, rgb, rgba, svg,
 };
 
 use crate::features::NyaTermApp;
 use crate::features::runtime_jobs::ActivitySide;
 use crate::features::shell::{ActivityBarDragPayload, ActivityBarDragPreview};
-use crate::features::view_widgets::activity_icon;
+use crate::features::view_widgets::mono_icon;
 use crate::models::{
     ActivityBarContextTarget, ActivityBarEntry, ActivityBarZone, PanelOpenMode, PanelSide,
 };
 use nyaterm_ui::NyaTooltip;
 use nyaterm_ui::{radius_md, radius_sm};
+
+/// Activity bar lane width. Labels must fit inside its horizontal padding.
+const ACTIVITY_BAR_WIDTH_PX: f32 = 40.;
+/// Functional label text. The old 8px label was unreadable at normal DPI.
+const ACTIVITY_BAR_LABEL_PX: f32 = 11.;
+const ACTIVITY_BAR_LABEL_HORIZONTAL_PADDING_PX: f32 = 8.;
+const ACTIVITY_BAR_LABEL_MAX_LINES: usize = 2;
+
+/// Measure the real font at the real content width. A label is visible only if
+/// GPUI wraps it into at most two lines without any unbroken word overflowing.
+fn activity_label_fits(label: &str, font: gpui::Font, window: &gpui::Window) -> bool {
+    let inner_width =
+        px((ACTIVITY_BAR_WIDTH_PX - ACTIVITY_BAR_LABEL_HORIZONTAL_PADDING_PX).max(1.));
+    let run = gpui::TextRun {
+        font: gpui::Font {
+            weight: FontWeight(500.),
+            ..font
+        },
+        len: label.len(),
+        ..Default::default()
+    };
+    window
+        .text_system()
+        .shape_text(
+            label.to_owned().into(),
+            px(ACTIVITY_BAR_LABEL_PX),
+            &[run],
+            Some(inner_width),
+            None,
+        )
+        .map(|lines| {
+            !lines.is_empty()
+                && lines.len() <= ACTIVITY_BAR_LABEL_MAX_LINES
+                && lines.iter().all(|line| line.width() <= inner_width)
+        })
+        .unwrap_or(false)
+}
+
+/// A visible press cue on top of the hover fill: hover darkened by ~4%.
+fn activity_pressed_background(hover: u32) -> u32 {
+    let channel = |shift: u32| (((hover >> shift) & 0xff) as f32 * 0.96).round() as u32;
+    (channel(16) << 16) | (channel(8) << 8) | channel(0)
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::features) struct ActivityEntryLayout {
+    side: ActivitySide,
+    zone: ActivityBarZone,
+    index: usize,
+    show_labels: bool,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ActivityBarMenuRow {
@@ -482,6 +533,7 @@ impl NyaTermApp {
     pub(in crate::features) fn activity_bar(
         &mut self,
         side: ActivitySide,
+        window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let (top_zone, bottom_zone) = match side {
@@ -500,10 +552,13 @@ impl NyaTermApp {
         for (index, entry) in top_entries.into_iter().enumerate() {
             top = top.child(self.activity_entry_button(
                 entry,
-                side,
-                top_zone,
-                index,
-                show_labels,
+                ActivityEntryLayout {
+                    side,
+                    zone: top_zone,
+                    index,
+                    show_labels,
+                },
+                window,
                 cx,
             ));
         }
@@ -520,10 +575,13 @@ impl NyaTermApp {
         for (index, entry) in bottom_entries.into_iter().enumerate() {
             bottom = bottom.child(self.activity_entry_button(
                 entry,
-                side,
-                bottom_zone,
-                index,
-                show_labels,
+                ActivityEntryLayout {
+                    side,
+                    zone: bottom_zone,
+                    index,
+                    show_labels,
+                },
+                window,
                 cx,
             ));
         }
@@ -597,12 +655,16 @@ impl NyaTermApp {
     pub(in crate::features) fn activity_entry_button(
         &self,
         entry: ActivityBarEntry,
-        side: ActivitySide,
-        zone: ActivityBarZone,
-        index: usize,
-        show_labels: bool,
+        layout: ActivityEntryLayout,
+        window: &gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let ActivityEntryLayout {
+            side,
+            zone,
+            index,
+            show_labels,
+        } = layout;
         let selected = self.activity_entry_selected(entry);
         let icon_path = entry.icon_path();
         let tooltip = entry
@@ -624,6 +686,14 @@ impl NyaTermApp {
         } else {
             rgba(0x00000000)
         };
+        // A label that cannot fit two wrapped lines inside the 40px lane would
+        // be clipped, so that entry shows its icon only and relies on the tooltip.
+        let label_visible =
+            show_labels && activity_label_fits(&tooltip, self.gpui_ui_font().font(), window);
+        let hover_group: SharedString = format!("activity-entry-{entry_id}").into();
+        let hover_background = rgb(palette.hover);
+        let pressed_background = rgb(activity_pressed_background(palette.hover));
+        let hover_text_color = rgb(palette.text);
 
         div()
             .id(SharedString::from(format!("activity-{entry_id}")))
@@ -632,9 +702,10 @@ impl NyaTermApp {
                 move || format!("activity-{entry_id}")
             })
             .relative()
-            .when(show_labels, |this| {
+            .group(hover_group.clone())
+            .when(label_visible, |this| {
                 this.w_full()
-                    .min_h(px(48.))
+                    .min_h(px(54.))
                     .px_1()
                     .py_1()
                     .flex()
@@ -642,7 +713,7 @@ impl NyaTermApp {
                     .items_center()
                     .gap(px(2.))
             })
-            .when(!show_labels, |this| {
+            .when(!label_visible, |this| {
                 this.w_full()
                     .h(px(36.))
                     .flex()
@@ -660,6 +731,12 @@ impl NyaTermApp {
                 rgb(palette.text_muted)
             })
             .bg(rgba(0x00000000))
+            // Selected entries keep their primary treatment; hover and press
+            // only style an unselected entry, so selection outranks them.
+            .when(!selected, |this| {
+                this.hover(move |style| style.bg(hover_background).text_color(hover_text_color))
+                    .active(move |style| style.bg(pressed_background).text_color(hover_text_color))
+            })
             .child(
                 div()
                     .absolute()
@@ -671,19 +748,32 @@ impl NyaTermApp {
                     .when(side == ActivitySide::Left, |this| this.left_0())
                     .when(side == ActivitySide::Right, |this| this.right_0()),
             )
-            .child(activity_icon(icon_path, icon_color.into(), 18.))
-            .when(show_labels, |this| {
+            .child({
+                let icon = mono_icon(icon_path, icon_color.into(), 18.);
+                if selected {
+                    icon.into_any_element()
+                } else {
+                    icon.group_hover(hover_group.clone(), move |style| {
+                        style.text_color(hover_text_color)
+                    })
+                    .into_any_element()
+                }
+            })
+            .when(label_visible, |this| {
+                let label_group = hover_group.clone();
                 this.child(
                     div()
                         .w_full()
-                        .text_size(px(8.))
+                        .text_size(px(ACTIVITY_BAR_LABEL_PX))
+                        .line_height(relative(1.15))
                         .font_weight(FontWeight(500.))
                         .text_center()
                         .whitespace_normal()
-                        .text_color(if selected {
-                            active_color
-                        } else {
-                            rgb(palette.text_muted)
+                        .line_clamp(ACTIVITY_BAR_LABEL_MAX_LINES)
+                        .when(!selected, |this| {
+                            this.group_hover(label_group, move |style| {
+                                style.text_color(hover_text_color)
+                            })
                         })
                         .child(tooltip.clone()),
                 )
@@ -774,7 +864,7 @@ mod tests {
     impl Render for AppHost {
         fn render(
             &mut self,
-            _window: &mut gpui::Window,
+            window: &mut gpui::Window,
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
             let has_menu = self
@@ -784,8 +874,12 @@ mod tests {
                 .activity_bar_context_menu()
                 .is_some();
             let bar = self.app.update(cx, |app, cx| {
-                app.activity_bar(crate::features::runtime_jobs::ActivitySide::Left, cx)
-                    .into_any_element()
+                app.activity_bar(
+                    crate::features::runtime_jobs::ActivitySide::Left,
+                    window,
+                    cx,
+                )
+                .into_any_element()
             });
             let overlay = has_menu.then(|| {
                 self.app.update(cx, |app, cx| {
@@ -1025,5 +1119,38 @@ mod tests {
                 before
             );
         });
+    }
+
+    #[test]
+    fn activity_labels_use_eleven_px_and_fall_back_when_two_lines_cannot_fit() {
+        assert_eq!(super::ACTIVITY_BAR_LABEL_PX, 11.);
+        assert_eq!(super::ACTIVITY_BAR_LABEL_MAX_LINES, 2);
+        assert_eq!(super::ACTIVITY_BAR_WIDTH_PX, 40.);
+
+        let mut cx = gpui::TestAppContext::single();
+        let window = cx.add_empty_window();
+        window.update(|window, _| {
+            let fits = |label| super::activity_label_fits(label, gpui::font("Inter"), window);
+            assert!(fits("AI"));
+            assert!(fits("文件"));
+            // Five CJK glyphs need three lines inside the 32px content lane.
+            assert!(!fits("资源管理器"));
+            assert!(!fits("WWWWWWWWWW"));
+            assert!(!fits("Source Control"));
+            assert!(!fits("A very long activity entry label that cannot fit"));
+        });
+    }
+
+    #[test]
+    fn pressed_state_is_a_deeper_variant_of_hover() {
+        let hover = 0x34343a_u32;
+        let pressed = super::activity_pressed_background(hover);
+        let channel_sum =
+            |color: u32| ((color >> 16) & 0xff) + ((color >> 8) & 0xff) + (color & 0xff);
+        assert!(
+            channel_sum(pressed) < channel_sum(hover),
+            "pressed {pressed:#08x} must be darker than hover {hover:#08x}"
+        );
+        assert_eq!(super::activity_pressed_background(0x000000), 0x000000);
     }
 }

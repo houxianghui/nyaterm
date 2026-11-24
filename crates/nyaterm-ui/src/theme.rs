@@ -226,11 +226,33 @@ fn relative_luminance(rgb: u32) -> f32 {
     0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-fn contrast_ratio(a: u32, b: u32) -> f32 {
+pub(crate) fn contrast_ratio(a: u32, b: u32) -> f32 {
     let la = relative_luminance(a);
     let lb = relative_luminance(b);
     let (lighter, darker) = if la > lb { (la, lb) } else { (lb, la) };
     (lighter + 0.05) / (darker + 0.05)
+}
+
+/// Adjust only a solid control fill so its label stays readable. Semantic
+/// colors used for icons, links and status text remain unchanged.
+pub(crate) fn solid_button_color(fill: u32, on_primary: u32) -> u32 {
+    ensure_contrast(fill, on_primary, 4.5)
+}
+
+pub(crate) fn solid_button_state_colors(fill: u32, hover: u32, on_primary: u32) -> (u32, u32) {
+    let resting = solid_button_color(fill, on_primary);
+    let hovering = solid_button_color(hover, on_primary);
+    let raw_lightens = relative_luminance(hover) > relative_luminance(fill);
+    let actual_lightens = relative_luminance(hovering) > relative_luminance(resting);
+    if actual_lightens == raw_lightens {
+        return (resting, hovering);
+    }
+    if raw_lightens {
+        // Leave enough contrast headroom for a lighter, still-readable hover.
+        (ensure_contrast(fill, on_primary, 5.0), resting)
+    } else {
+        (resting, ensure_contrast(fill, on_primary, 5.0))
+    }
 }
 
 fn ensure_contrast(fg: u32, bg: u32, min_ratio: f32) -> u32 {
@@ -354,9 +376,9 @@ fn builtin_palette(theme: &str) -> ThemePalette {
             section_header: 0x262629,
             hover: 0x34343a,
             input: 0x232326,
-            border: 0x3a3a40,
+            border: 0x5a5a64,
             text: 0xf5f5f7,
-            text_muted: 0x98989d,
+            text_muted: 0xa0a0a8,
             text_dimmed: 0x6e6e73,
             primary: 0x0a84ff,
             primary_hover: 0x0071e3,
@@ -761,9 +783,9 @@ fn builtin_palette(theme: &str) -> ThemePalette {
             section_header: 0xf2f2f7,
             hover: 0xe8e8ed,
             input: 0xffffff,
-            border: 0xd2d2d7,
+            border: 0xaeaeb5,
             text: 0x1d1d1f,
-            text_muted: 0x6e6e73,
+            text_muted: 0x66666b,
             text_dimmed: 0x98989d,
             primary: 0x0a84ff,
             primary_hover: 0x0071e3,
@@ -771,9 +793,9 @@ fn builtin_palette(theme: &str) -> ThemePalette {
             focus_ring: 0x0a84ff,
             link: 0x0a84ff,
             accent: 0xaf52de,
-            success: 0x34c759,
-            warning: 0xff9f0a,
-            danger: 0xff3b30,
+            success: 0x248a3d,
+            warning: 0xb45f06,
+            danger: 0xd70015,
             terminal_bg: 0xf5f5f7,
             terminal_fg: 0x1d1d1f,
             terminal_cursor: 0x1d1d1f,

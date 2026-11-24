@@ -6,6 +6,8 @@ pub mod chat;
 pub mod child_window;
 mod command;
 mod compact_menu;
+#[cfg(test)]
+mod contrast;
 mod dialog;
 mod document_editor;
 pub mod document_snapshot;
@@ -33,6 +35,7 @@ mod sizing;
 pub mod tab_close;
 mod tabs;
 pub mod text;
+pub mod text_style;
 mod theme;
 mod theme_bridge;
 mod tooltip;

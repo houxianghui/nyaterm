@@ -105,7 +105,9 @@ fn session_tab_title_color(
     disconnected: bool,
 ) -> u32 {
     if disconnected {
-        palette.text_dimmed
+        // A disconnected title is functional copy, not decoration; it must stay
+        // at the secondary-text tier instead of the dimmed tier.
+        palette.text_muted
     } else if active {
         palette.text
     } else {
@@ -1638,7 +1640,7 @@ mod tests {
         );
         assert_eq!(
             session_tab_title_color(&palette, false, true),
-            palette.text_dimmed
+            palette.text_muted
         );
     }
 

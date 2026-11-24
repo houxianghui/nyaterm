@@ -93,11 +93,6 @@ pub fn nyaterm_app_icon(_palette: ThemePalette, size_px: f32) -> impl IntoElemen
         .child(img("color/app/app-icon.png").size(px(size_px)).flex_none())
 }
 
-/// Activity-bar icon.
-pub fn activity_icon(path: &'static str, color: Hsla, size_px: f32) -> AnyElement {
-    mono_icon(path, color, size_px).into_any_element()
-}
-
 /// Faded NyaTerm logo used by empty workspace (Tauri EmptyWorkspaceState).
 pub fn nyaterm_logo_mark(palette: ThemePalette, size_px: f32, opacity: f32) -> impl IntoElement {
     div()

@@ -2223,7 +2223,7 @@ mod tests {
         let _test_app_cleanup = crate::test_support::TestAppCleanup::new(&cx);
         let (app, vcx) = hosted(&mut cx, test_dir.path());
 
-        for font_size in [12, 24, 18] {
+        for (font_size, expected) in [(12, 13), (24, 24), (18, 18)] {
             vcx.update(|_, cx| {
                 app.update(cx, |app, cx| app.set_ui_font_size_from_input(font_size, cx));
             });
@@ -2232,7 +2232,7 @@ mod tests {
                 let panel = app.read(cx).transfer_panel.read(cx);
                 assert_eq!(
                     panel.snapshot().unwrap().chrome.ui_font_size,
-                    font_size as f32
+                    expected as f32
                 );
             });
         }

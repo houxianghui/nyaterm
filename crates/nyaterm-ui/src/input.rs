@@ -15,6 +15,7 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, IconName, Si
 
 use crate::input_focus::{preserve_nya_input_focus_on_pointer_down, register_nya_input_focus};
 use crate::menu::{NyaContextMenu, NyaMenuItem};
+use crate::text_style;
 use crate::theme_bridge::input_surface_color;
 use std::rc::Rc;
 
@@ -950,7 +951,7 @@ impl RenderOnce for NyaInput {
                 .disabled(disabled)
                 .readonly(readonly)
                 .h_full()
-                .text_xs()
+                .text_size(text_style::ui(cx, text_style::footnote()))
                 .when_some(self.font_size, |this, font_size| this.text_size(font_size))
                 .into_any_element(),
             ComponentState::Editor(state) => Editor::new(&state)
@@ -959,7 +960,7 @@ impl RenderOnce for NyaInput {
                 .disabled(disabled)
                 .readonly(readonly)
                 .h_full()
-                .text_xs()
+                .text_size(text_style::ui(cx, text_style::footnote()))
                 .when_some(self.font_size, |this, font_size| this.text_size(font_size))
                 .into_any_element(),
         };
@@ -1336,7 +1337,7 @@ impl RenderOnce for NyaInputShell {
                 } else {
                     height.unwrap_or(px(168.)).into()
                 })
-                .text_size(px(14.))
+                .text_size(text_style::ui(cx, text_style::body()))
                 .into_any_element(),
         };
 

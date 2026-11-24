@@ -292,15 +292,28 @@ impl NyaDialogFooter {
         self.into_footer(Rc::new(Cell::new(false)))
     }
 
+    /// The action button's variant for both footer construction paths.
+    ///
+    /// Destructive confirmations paint the same danger styling the rest of the
+    /// app uses, while ordinary dialogs keep the established blue primary look.
+    fn action_variant(&self) -> ButtonVariant {
+        if self.danger {
+            ButtonVariant::Danger
+        } else {
+            ButtonVariant::Primary
+        }
+    }
+
     fn button_props(&self) -> DialogButtonProps {
         DialogButtonProps::default()
             .cancel_text(self.cancel_label.clone())
             .ok_text(self.action_label.clone())
             .show_cancel(true)
-            .ok_variant(ButtonVariant::Primary)
+            .ok_variant(self.action_variant())
     }
 
     fn into_footer(self, pointer_confirm: Rc<Cell<bool>>) -> DialogFooter {
+        let action_variant = self.action_variant();
         let cancel = Button::new("nya-dialog-cancel")
             .outline()
             .label(self.cancel_label)
@@ -309,7 +322,7 @@ impl NyaDialogFooter {
             .debug_selector(|| "nya-dialog-cancel-button".to_string());
         let action = Button::new("nya-dialog-action")
             .label(self.action_label)
-            .primary()
+            .with_variant(action_variant)
             .loading(self.loading)
             .disabled(self.disabled || self.action_disabled)
             .key_context(ACTION_BUTTON_CONTEXT)
@@ -463,5 +476,42 @@ impl NyaDialogWindowExt for Window {
 
     fn close_all_nya_dialogs(&mut self, cx: &mut App) {
         self.close_all_dialogs(cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::component::button::ButtonVariant;
+
+    use super::NyaDialogFooter;
+
+    // `DialogButtonProps` and `Button` keep their variant fields private to
+    // gpui-kit, so the observable contract here is the single `action_variant`
+    // both footer paths feed into the component.
+
+    #[test]
+    fn danger_footer_button_props_use_the_danger_variant() {
+        let footer = NyaDialogFooter::new("Cancel", "Delete").danger();
+        // `button_props` calls `.ok_variant(self.action_variant())`.
+        assert_eq!(footer.action_variant(), ButtonVariant::Danger);
+    }
+
+    #[test]
+    fn ordinary_footer_button_props_keep_the_primary_variant() {
+        let footer = NyaDialogFooter::new("Cancel", "Save");
+        assert_eq!(footer.action_variant(), ButtonVariant::Primary);
+    }
+
+    #[test]
+    fn danger_footer_into_footer_uses_the_danger_variant() {
+        let footer = NyaDialogFooter::new("Cancel", "Delete").danger();
+        // `into_footer` calls `.with_variant(self.action_variant())`.
+        assert_eq!(footer.action_variant(), ButtonVariant::Danger);
+    }
+
+    #[test]
+    fn ordinary_footer_into_footer_keeps_the_primary_variant() {
+        let footer = NyaDialogFooter::new("Cancel", "Save");
+        assert_eq!(footer.action_variant(), ButtonVariant::Primary);
     }
 }

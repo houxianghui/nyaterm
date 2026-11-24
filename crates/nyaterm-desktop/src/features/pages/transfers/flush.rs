@@ -48,7 +48,8 @@ impl NyaTermApp {
             transparent_section_header: self.shell_transparent_color(palette.section_header),
             surface: self.shell_surface_color(palette.surface),
             panel_width,
-            ui_font_size: self.settings.summary().ui_font_size.clamp(12, 24) as f32,
+            ui_font_size: nyaterm_core::clamp_ui_font_size(self.settings.summary().ui_font_size)
+                as f32,
             palette,
         }
     }

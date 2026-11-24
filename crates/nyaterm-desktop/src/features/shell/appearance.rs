@@ -91,7 +91,7 @@ impl NyaTermApp {
         apply_component_theme(
             self.theme_palette(),
             self.gpui_ui_font().font(),
-            px(self.settings.summary().ui_font_size.clamp(12, 24) as f32),
+            px(nyaterm_core::clamp_ui_font_size(self.settings.summary().ui_font_size) as f32),
             cx,
         );
     }
@@ -714,7 +714,10 @@ impl NyaTermApp {
         size: u16,
         cx: &mut Context<Self>,
     ) {
-        if !self.settings.set_ui_font_size(size.clamp(12, 24)) {
+        if !self
+            .settings
+            .set_ui_font_size(nyaterm_core::clamp_ui_font_size(size))
+        {
             return;
         }
         self.sync_component_theme(cx);

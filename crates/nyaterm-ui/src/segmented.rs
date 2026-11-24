@@ -1,14 +1,22 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Axis, FocusHandle, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
-    SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, relative,
+    App, Axis, FocusHandle, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
+    RenderOnce, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, relative,
 };
 use gpui_base::{Toggle, ToggleGroup, h_flex};
 use gpui_kit::component::ActiveTheme;
 
 type NyaIndexSelectHandler = Box<dyn Fn(&usize, &mut Window, &mut App)>;
 type NyaSharedIndexSelectHandler = Rc<dyn Fn(&usize, &mut Window, &mut App)>;
+
+/// Accent wash used for a hovered-but-unselected segment. It stays well below
+/// the solid accent of a selected segment so the two states read differently.
+const SEGMENTED_HOVER_TINT_ALPHA: f32 = 0.08;
+
+fn segmented_hover_background(accent: Hsla) -> Hsla {
+    accent.opacity(SEGMENTED_HOVER_TINT_ALPHA)
+}
 
 #[derive(IntoElement)]
 pub struct NyaSegmentedControl {
@@ -70,7 +78,11 @@ impl RenderOnce for NyaSegmentedControl {
         let rounding = cx.theme().radius;
         let border = cx.theme().border;
         let background = cx.theme().tokens.background;
-        let pressed_background = cx.theme().tokens.accent;
+        // Selected items keep the solid accent fill; hovered-but-unselected
+        // items get only a faint accent wash so the two states never look the
+        // same.
+        let selected_background = cx.theme().tokens.accent;
+        let hover_background = segmented_hover_background(selected_background.color);
         let pressed_foreground = cx.theme().accent_foreground;
         let items = self
             .items
@@ -105,13 +117,11 @@ impl RenderOnce for NyaSegmentedControl {
                     .border_color(border)
                     .bg(background)
                     .when(!disabled && !checked, |this| {
-                        this.hover(|this| {
-                            this.bg(pressed_background).text_color(pressed_foreground)
-                        })
+                        this.hover(|this| this.bg(hover_background))
                     })
                     .styles(|styles| {
                         styles.pressed(|style| {
-                            style.bg(pressed_background).text_color(pressed_foreground)
+                            style.bg(selected_background).text_color(pressed_foreground)
                         })
                     });
                 if item_count == 1 {
@@ -173,6 +183,17 @@ mod tests {
     };
 
     use super::NyaSegmentedControl;
+
+    #[test]
+    fn hover_wash_and_selected_fill_are_distinct() {
+        let accent = gpui::hsla(0.62, 0.75, 0.6, 1.0);
+        let hover = super::segmented_hover_background(accent);
+
+        assert_ne!(hover, accent, "hover must not reuse the selected fill");
+        assert_eq!(super::SEGMENTED_HOVER_TINT_ALPHA, 0.08);
+        assert!((hover.a - 0.08).abs() < 1e-6);
+        assert_eq!(accent.a, 1.0, "selected segments stay fully opaque");
+    }
 
     struct SegmentedHarness {
         selected_index: Option<usize>,

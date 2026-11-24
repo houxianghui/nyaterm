@@ -188,7 +188,11 @@ impl ConnectionStore {
                 }
             },
             ui_font_family: json_string(&value, &["appearance", "ui_font_family"], "Inter"),
-            ui_font_size: json_u16(&value, &["appearance", "ui_font_size"], 16).clamp(12, 24),
+            ui_font_size: nyaterm_core::clamp_ui_font_size(json_u16(
+                &value,
+                &["appearance", "ui_font_size"],
+                16,
+            )),
             terminal_font_weight: {
                 let w = json_u16(&value, &["appearance", "font_weight"], 400);
                 match w {
@@ -1337,7 +1341,7 @@ impl ConnectionStore {
         set_nested_json_value(
             &mut value,
             &["appearance", "ui_font_size"],
-            serde_json::Value::from(settings.ui_font_size.clamp(12, 24)),
+            serde_json::Value::from(nyaterm_core::clamp_ui_font_size(settings.ui_font_size)),
         );
         let font_weight = match settings.terminal_font_weight {
             300 | 400 | 500 | 600 | 700 | 800 => settings.terminal_font_weight,
