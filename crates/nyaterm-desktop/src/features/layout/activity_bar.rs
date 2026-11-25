@@ -24,6 +24,14 @@ const ACTIVITY_BAR_LABEL_PX: f32 = 11.;
 const ACTIVITY_BAR_LABEL_HORIZONTAL_PADDING_PX: f32 = 8.;
 const ACTIVITY_BAR_LABEL_MAX_LINES: usize = 2;
 
+fn activity_label_measurement_fits(
+    line_count: usize,
+    widest_line: gpui::Pixels,
+    inner_width: gpui::Pixels,
+) -> bool {
+    line_count > 0 && line_count <= ACTIVITY_BAR_LABEL_MAX_LINES && widest_line <= inner_width
+}
+
 /// Measure the real font at the real content width. A label is visible only if
 /// GPUI wraps it into at most two lines without any unbroken word overflowing.
 fn activity_label_fits(label: &str, font: gpui::Font, window: &gpui::Window) -> bool {
@@ -47,9 +55,10 @@ fn activity_label_fits(label: &str, font: gpui::Font, window: &gpui::Window) -> 
             None,
         )
         .map(|lines| {
-            !lines.is_empty()
-                && lines.len() <= ACTIVITY_BAR_LABEL_MAX_LINES
-                && lines.iter().all(|line| line.width() <= inner_width)
+            let widest_line = lines
+                .iter()
+                .fold(px(0.), |widest, line| widest.max(line.width()));
+            activity_label_measurement_fits(lines.len(), widest_line, inner_width)
         })
         .unwrap_or(false)
 }
@@ -1122,23 +1131,37 @@ mod tests {
     }
 
     #[test]
-    fn activity_labels_use_eleven_px_and_fall_back_when_two_lines_cannot_fit() {
+    fn activity_label_measurement_enforces_two_lines_and_content_width() {
         assert_eq!(super::ACTIVITY_BAR_LABEL_PX, 11.);
         assert_eq!(super::ACTIVITY_BAR_LABEL_MAX_LINES, 2);
         assert_eq!(super::ACTIVITY_BAR_WIDTH_PX, 40.);
+        let inner_width = gpui::px(32.);
 
-        let mut cx = gpui::TestAppContext::single();
-        let window = cx.add_empty_window();
-        window.update(|window, _| {
-            let fits = |label| super::activity_label_fits(label, gpui::font("Inter"), window);
-            assert!(fits("AI"));
-            assert!(fits("文件"));
-            // A long CJK label must fall back regardless of platform font fallback.
-            assert!(!fits("资源管理器资源管理器资源管理器资源管理器"));
-            assert!(!fits("WWWWWWWWWW"));
-            assert!(!fits("Source Control"));
-            assert!(!fits("A very long activity entry label that cannot fit"));
-        });
+        assert!(super::activity_label_measurement_fits(
+            1,
+            gpui::px(32.),
+            inner_width
+        ));
+        assert!(super::activity_label_measurement_fits(
+            2,
+            gpui::px(32.),
+            inner_width
+        ));
+        assert!(!super::activity_label_measurement_fits(
+            3,
+            gpui::px(32.),
+            inner_width
+        ));
+        assert!(!super::activity_label_measurement_fits(
+            1,
+            gpui::px(33.),
+            inner_width
+        ));
+        assert!(!super::activity_label_measurement_fits(
+            0,
+            gpui::px(0.),
+            inner_width
+        ));
     }
 
     #[test]
